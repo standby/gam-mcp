@@ -1,0 +1,36 @@
+import { describe, it, expect } from 'vitest';
+import { gzipSync } from 'node:zlib';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { revenueSummaryTool } from '../../src/tools/revenue_summary.js';
+import { createMockGamClient } from '../../src/gam-client.js';
+import { createOutputManager } from '../../src/output.js';
+
+describe('revenue_summary', () => {
+  it('groups by advertiser when group_by=advertiser', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rs-'));
+    const csv = 'advertiser_name,total_line_item_level_revenue,total_line_item_level_impressions\nAcme,5000,1000\n';
+    const ctx = {
+      client: createMockGamClient({
+        reports: [{
+          query: {
+            dimensions: ['ADVERTISER_NAME'],
+            metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE', 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS'],
+          },
+          csvGz: gzipSync(Buffer.from(csv)),
+        }],
+      }),
+      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
+      timezone: 'America/Los_Angeles',
+      now: new Date('2026-04-30T12:00:00Z'),
+    };
+    const r = await revenueSummaryTool.handler(
+      { date_range: { start: '2026-04-01', end: '2026-04-29' }, group_by: 'advertiser' },
+      ctx,
+    );
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.row_count).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
