@@ -20,6 +20,7 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'CREATIVE_TYPE',         type: 'string', description: 'IMAGE, VIDEO, HTML5, NATIVE, etc.' },
     { name: 'COUNTRY_NAME',          type: 'string', description: 'Country of impression.' },
     { name: 'DEVICE_CATEGORY_NAME',  type: 'string', description: 'DESKTOP, MOBILE, TABLET, etc.' },
+    { name: 'LINE_ITEM_GOAL_QUANTITY',                    type: 'number', description: 'Line item booked goal quantity.' },
   ],
   metrics: [
     { name: 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS',           type: 'number',   description: 'Total served impressions at line-item level.' },
@@ -34,6 +35,8 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'TOTAL_LINE_ITEM_LEVEL_VIEWABILITY_RATE',      type: 'rate',     description: 'Viewable ÷ measurable impressions.' },
     { name: 'TOTAL_LINE_ITEM_LEVEL_VIDEO_COMPLETIONS',     type: 'number',   description: 'Video creative completions.' },
     { name: 'TOTAL_LINE_ITEM_LEVEL_VIDEO_COMPLETION_RATE', type: 'rate',     description: 'Completions ÷ video starts.' },
+    { name: 'LINE_ITEM_PROGRESS',                          type: 'rate',   description: 'Delivered ÷ expected to date.' },
+    { name: 'LINE_ITEM_LIFETIME_IMPRESSIONS_DELIVERED',    type: 'number', description: 'Total impressions delivered to date.' },
   ],
 };
 
