@@ -1,6 +1,6 @@
 {
   "name": "gam-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read-only MCP server for Google Ad Manager analytics. Installable via npx.",
   "type": "module",
   "bin": {
@@ -10,6 +10,14 @@
     "dist/**/*",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/standby/gam_mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/standby/gam_mcp/issues"
+  },
+  "homepage": "https://github.com/standby/gam_mcp#readme",
   "engines": {
     "node": ">=24"
   },
