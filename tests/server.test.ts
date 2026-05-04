@@ -8,6 +8,7 @@ describe('server registry', () => {
       'compare_periods',
       'describe_schema',
       'fill_rate',
+      'find_anomalies',
       'inventory_breakdown',
       'lookup',
       'pacing_status',

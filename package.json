@@ -1,6 +1,6 @@
 {
   "name": "gam-mcp",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Read-only MCP server for Google Ad Manager analytics. Installable via npx.",
   "type": "module",
