@@ -4,10 +4,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { createRequire } from 'node:module';
 import { ALL_TOOLS } from './tools/index.js';
 import type { ToolContext } from './report-tool-builder.js';
 import { gamError } from './errors.js';
 import { z } from 'zod';
+
+const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 export function listToolNames(): string[] {
   return ALL_TOOLS.map((t) => t.name);
@@ -18,8 +21,9 @@ export function installStdoutGuard(): () => void {
   process.stdout.write = ((chunk: any, ...rest: any[]) => {
     const s = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
     // MCP frames are newline-delimited JSON-RPC over stdio. Let those through.
-    // Everything else (stray console.log from a dependency, etc.) goes to stderr.
-    if (s.startsWith('{"jsonrpc"') || s.startsWith('Content-Length:')) {
+    // JSON.stringify field order isn't fixed, so check for the marker anywhere
+    // in the payload rather than only at the start.
+    if (s.includes('"jsonrpc"') || s.startsWith('Content-Length:')) {
       return original(chunk, ...rest);
     }
     process.stderr.write(`[stdout-guard] ${s}`);
@@ -30,7 +34,7 @@ export function installStdoutGuard(): () => void {
 
 export async function startMcpServer(ctx: ToolContext): Promise<void> {
   const server = new Server(
-    { name: 'gam-mcp', version: '0.1.0' },
+    { name: 'gam-mcp', version: pkg.version },
     { capabilities: { tools: {} } },
   );
 
@@ -94,5 +98,7 @@ function zodToJsonSchema(schema: z.ZodTypeAny): unknown {
   if (schema instanceof z.ZodOptional) return zodToJsonSchema((schema as z.ZodOptional<any>).unwrap());
   if (schema instanceof z.ZodUnion) return { anyOf: (schema as z.ZodUnion<any>).options.map(zodToJsonSchema) };
   if (schema instanceof z.ZodDefault) return zodToJsonSchema((schema as any)._def.innerType);
+  // ZodEffects wraps the schema in .refine/.transform/.preprocess; descend.
+  if (schema instanceof z.ZodEffects) return zodToJsonSchema((schema as z.ZodEffects<any>).innerType());
   return {};
 }
