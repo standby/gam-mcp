@@ -13,6 +13,15 @@ This repo is a Node.js **MCP (Model Context Protocol) server** that exposes **Go
 - **Auth:** GAM uses OAuth2 / service-account credentials. Credentials come from the user's environment (env vars or a path to a JSON key file passed in config) — never bundled, never logged, never echoed in tool responses.
 - **GAM API:** Google Ad Manager exposes both a legacy SOAP Ad Manager API and the newer Ad Manager API (REST/gRPC). Pick one and document the choice in README; don't half-implement both. Reports in GAM are asynchronous (create job → poll → download) — tools that wrap reports must handle the polling shape, not pretend it's synchronous.
 
+## Generic-MCP principle
+
+This is a generic GAM MCP — it must work for any publisher's network out of the box. **Never bake publisher-specific data into the codebase**: no hardcoded network codes, no example values in descriptions that look like assumptions ("slot 0 = section"), no fixtures derived from one network's actual KV keys, custom dimension names, advertiser names, or line item naming conventions.
+
+Concrete rules:
+- **Slot-based dimensions** (`CUSTOM_DIMENSION_<N>_VALUE`, `LINE_ITEM_CUSTOM_FIELD_<N>_*`, etc.) — the slot→key mapping is per-network and per-query. Descriptions should say "publisher-configured slot N" and never imply a meaning. The mapping arrives via a query parameter (e.g., `custom_dimension_key_ids`), not a config file.
+- **Discovery over assumption** — when a query needs publisher-specific IDs (custom targeting keys, custom field IDs, etc.), expose a list/lookup tool that hits the corresponding GAM REST endpoint. Don't ask the user to configure anything statically.
+- **Tool descriptions** — speak about GAM concepts in the abstract. "Open Bidding bidder display name" is fine; "e.g. PubMatic" is not, because it implies the user has PubMatic configured.
+
 ## Design guidelines for tools
 
 - Tool names should read as verbs the LLM would pick from a list: `run_report`, `get_report_results`, `list_orders`, not `gamReportServiceCreateReportJob`.
