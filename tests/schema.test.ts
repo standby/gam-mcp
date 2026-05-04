@@ -33,4 +33,16 @@ describe('GAM schema catalog', () => {
     expect(GAM_SCHEMA.dimensions.length).toBeGreaterThanOrEqual(15);
     expect(GAM_SCHEMA.metrics.length).toBeGreaterThanOrEqual(10);
   });
+
+  it('exposes programmatic demand-source dimensions', () => {
+    expect(isValidDimension('BUYER_NETWORK_NAME')).toBe(true);
+    expect(isValidDimension('BUYER_NETWORK_ID')).toBe(true);
+    expect(isValidDimension('BIDDER_NAME')).toBe(true);
+    expect(isValidDimension('BIDDER_ENCRYPTED_ID')).toBe(true);
+  });
+
+  it('exposes ad-server-only eCPM and responses-served metrics', () => {
+    expect(isValidMetric('AD_SERVER_AVERAGE_ECPM')).toBe(true);
+    expect(isValidMetric('AD_SERVER_RESPONSES_SERVED')).toBe(true);
+  });
 });

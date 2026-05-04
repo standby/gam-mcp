@@ -21,6 +21,10 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'COUNTRY_NAME',          type: 'string', description: 'Country of impression.' },
     { name: 'DEVICE_CATEGORY_NAME',  type: 'string', description: 'DESKTOP, MOBILE, TABLET, etc.' },
     { name: 'LINE_ITEM_GOAL_QUANTITY',                    type: 'number', description: 'Line item booked goal quantity.' },
+    { name: 'BUYER_NETWORK_NAME',    type: 'string', description: 'Demand-source name (DSP, AdSense, AdX, etc.). Best default for slicing programmatic revenue by buyer.' },
+    { name: 'BUYER_NETWORK_ID',      type: 'number', description: 'Demand-source ID. Companion to BUYER_NETWORK_NAME.' },
+    { name: 'BIDDER_NAME',           type: 'string', description: 'Open Bidding (EBDA) bidder display name. Use to attribute revenue to specific bidders participating in Open Bidding.' },
+    { name: 'BIDDER_ENCRYPTED_ID',   type: 'string', description: 'Open Bidding bidder encrypted ID. Companion to BIDDER_NAME.' },
   ],
   metrics: [
     { name: 'IMPRESSIONS',                            type: 'number',   description: 'Total served impressions (all channels).' },
@@ -42,6 +46,8 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'AD_SERVER_CTR',                          type: 'rate',     description: 'Ad server CTR.' },
     { name: 'AD_SERVER_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',      type: 'number', description: 'Ad server Active View viewable impressions.' },
     { name: 'AD_SERVER_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE', type: 'rate',   description: 'Ad server viewability rate.' },
+    { name: 'AD_SERVER_AVERAGE_ECPM',                          type: 'currency', description: 'Average eCPM for ad-server impressions only (excludes AdX/AdSense backfill). Pair with AD_SERVER_IMPRESSIONS for clean direct-channel eCPM.' },
+    { name: 'AD_SERVER_RESPONSES_SERVED',                      type: 'number',   description: 'Ad-server responses served — analogous to fills/matched requests, ad-server-only (excludes AdX/AdSense).' },
   ],
 };
 
