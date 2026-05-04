@@ -57,6 +57,59 @@ describe('REST GAM client', () => {
     expect(callCount).toBe(2);
   });
 
+  it('createReport encodes filters in GAM REST shape (fieldFilter + EQUALS/IN + scalar/list value)', async () => {
+    let createBody: any = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/reports')) {
+        createBody = JSON.parse(String(init!.body));
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      {
+        dimensions: ['AD_UNIT_NAME'],
+        metrics: ['IMPRESSIONS'],
+        filters: [
+          { field: 'AD_UNIT_NAME', op: '=', value: 'Foo' },
+          { field: 'AD_UNIT_ID', op: 'IN', value: [1, 2, 3] },
+          { field: 'COUNTRY_NAME', op: '!=', value: 'XX' },
+        ],
+      },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+
+    expect(createBody.reportDefinition).not.toHaveProperty('filter');
+    // GAM REST shape: field.dimension, operation IN/NOT_IN only, values is
+    // always an array of ReportValue, intValue is JSON string (int64).
+    expect(createBody.reportDefinition.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'AD_UNIT_NAME' }, operation: 'IN',     values: [{ stringValue: 'Foo' }] } },
+      { fieldFilter: { field: { dimension: 'AD_UNIT_ID'   }, operation: 'IN',     values: [{ intValue: '1' }, { intValue: '2' }, { intValue: '3' }] } },
+      { fieldFilter: { field: { dimension: 'COUNTRY_NAME' }, operation: 'NOT_IN', values: [{ stringValue: 'XX' }] } },
+    ]);
+  });
+
+  it('createReport omits filters field entirely when none provided', async () => {
+    let createBody: any = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/reports')) {
+        createBody = JSON.parse(String(init!.body));
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+    expect(createBody.reportDefinition).not.toHaveProperty('filters');
+    expect(createBody.reportDefinition).not.toHaveProperty('filter');
+  });
+
   it('downloadReport fetches rows via fetchRows API and writes gzipped CSV', async () => {
     let callCount = 0;
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
