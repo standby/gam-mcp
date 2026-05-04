@@ -49,4 +49,19 @@ describe('lookup', () => {
     if ('error' in r) expect((r.error as { code: string }).code).toBe('ENTITY_NOT_FOUND');
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('lists all (up to limit) when neither query nor ids is provided', async () => {
+    const { ctx: c, dir } = ctx();
+    const args = lookupTool.input.parse({ entity_type: 'advertiser' });
+    const r = await lookupTool.handler(args, c);
+    expect('rows' in r).toBe(true);
+    if ('rows' in r) {
+      expect(r.rows).toEqual([
+        { id: '1', name: 'Acme Corp' },
+        { id: '2', name: 'Acme Industries' },
+        { id: '3', name: 'Beta Inc' },
+      ]);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

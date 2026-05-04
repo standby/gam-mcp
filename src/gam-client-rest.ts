@@ -67,10 +67,19 @@ export function createRestGamClient(opts: {
       if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
       const json = await res.json() as Record<string, unknown>;
       const list = (json[meta.collection] as any[] | undefined) ?? [];
-      return list.map((e): Entity => ({
-        id: Number(e[meta.idField]),
-        name: String(e.name ?? e.displayName ?? ''),
-      }));
+      return list.map((e): Entity => {
+        // GAM REST returns `name` as a resource path (networks/X/collection/ID).
+        // Some collections (e.g. adUnits) omit the explicit numeric ID field, so
+        // fall back to parsing the trailing segment of the path.
+        const explicitId = e[meta.idField];
+        const resourceName = String(e.name ?? '');
+        const id = explicitId !== undefined && explicitId !== null
+          ? Number(explicitId)
+          : Number(resourceName.split('/').pop());
+        // Prefer displayName (human-readable) over the resource path.
+        const label = String(e.displayName ?? e.name ?? '');
+        return { id, name: label };
+      });
     },
 
     async createReport(query: ReportQuery, dateRange: DateRange): Promise<ReportOperation> {
