@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { writeFileSync, readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,24 +26,75 @@ describe('REST GAM client', () => {
     ]);
   });
 
-  it('createReport POSTs body with dims + metrics + dateRange', async () => {
-    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = JSON.parse(String(init!.body));
-      expect(body.report.dimensions).toEqual(['ADVERTISER_NAME']);
-      expect(body.report.metrics).toEqual(['TOTAL_LINE_ITEM_LEVEL_REVENUE']);
-      expect(body.report.dateRange).toEqual({ startDate: '2026-04-01', endDate: '2026-04-29' });
-      return new Response(JSON.stringify({ name: 'operations/abc' }), { status: 200 });
+  it('createReport POSTs two-step flow with reportDefinition body shape', async () => {
+    let callCount = 0;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      callCount++;
+      if (callCount === 1) {
+        // Step 1: create report resource
+        expect(u).toMatch(/\/networks\/12345\/reports$/);
+        const body = JSON.parse(String(init!.body));
+        expect(body.reportDefinition.dimensions).toEqual(['ADVERTISER_NAME']);
+        expect(body.reportDefinition.metrics).toEqual(['IMPRESSIONS']);
+        expect(body.reportDefinition.dateRange.fixed.startDate).toEqual({ year: 2026, month: 4, day: 1 });
+        expect(body.reportDefinition.dateRange.fixed.endDate).toEqual({ year: 2026, month: 4, day: 29 });
+        expect(body.reportDefinition.reportType).toBe('HISTORICAL');
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/789' }), { status: 200 });
+      } else {
+        // Step 2: run the report
+        expect(u).toContain('networks/12345/reports/789:run');
+        return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/abc' }), { status: 200 });
+      }
     }) as unknown as typeof fetch;
 
     const client = createRestGamClient({ networkCode: '12345', fetchImpl });
     const op = await client.createReport(
-      { dimensions: ['ADVERTISER_NAME'], metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'] },
+      { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
       { start: '2026-04-01', end: '2026-04-29' },
     );
-    expect(op.operation_name).toBe('operations/abc');
+    expect(op.operation_name).toBe('networks/12345/operations/reports/runs/abc');
+    expect(callCount).toBe(2);
   });
 
-  it('downloadReport streams a URL to a file path', async () => {
+  it('downloadReport fetches rows via fetchRows API and writes gzipped CSV', async () => {
+    let callCount = 0;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      callCount++;
+      const u = String(url);
+      if (callCount <= 2) {
+        // createReport calls: create + run
+        if (callCount === 1) return new Response(JSON.stringify({ name: 'networks/12345/reports/789' }), { status: 200 });
+        return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/abc' }), { status: 200 });
+      }
+      // fetchRows call
+      expect(u).toContain('networks/12345/reports/789/results/1:fetchRows');
+      return new Response(JSON.stringify({
+        rows: [
+          {
+            dimensionValues: [{ stringValue: 'Google' }],
+            metricValueGroups: [{ primaryValues: [{ intValue: 100 }] }],
+          },
+        ],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+
+    const dest = join(mkdtempSync(join(tmpdir(), 'rest-')), 'out.csv.gz');
+    await client.downloadReport('networks/12345/reports/789/results/1', dest);
+
+    const csv = gunzipSync(readFileSync(dest)).toString();
+    const lines = csv.trim().split('\n');
+    expect(lines[0]).toBe('ADVERTISER_NAME,IMPRESSIONS');
+    expect(lines[1]).toBe('Google,100');
+  });
+
+  it('downloadReport falls back to raw HTTP download for HTTP URLs', async () => {
     const csv = 'a,b\n1,2\n';
     const gz = gzipSync(Buffer.from(csv));
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {

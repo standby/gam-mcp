@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   process.stderr.write('2. Running tiny report (yesterday, top advertisers, impressions)...\n');
   const range = resolveDateRange({ relative: 'yesterday' }, tz);
   const op = await client.createReport(
-    { dimensions: ['ADVERTISER_NAME'], metrics: ['TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS'] },
+    { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
     range,
   );
   process.stderr.write(`   operation: ${op.operation_name}\n`);

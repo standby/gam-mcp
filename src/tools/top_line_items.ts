@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
 
 const METRIC_MAP = {
-  revenue: 'TOTAL_LINE_ITEM_LEVEL_REVENUE',
-  impressions: 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS',
+  revenue: 'REVENUE',
+  impressions: 'IMPRESSIONS',
 } as const;
 
 const inputSchema = z.object({

@@ -20,9 +20,9 @@ export const fillRateTool = buildReportTool({
   buildQuery: (input) => ({
     dimensions: [GROUP_BY[input.group_by]],
     metrics: [
-      'TOTAL_AD_REQUESTS',
-      'TOTAL_UNFILLED_IMPRESSIONS',
-      'TOTAL_LINE_ITEM_LEVEL_FILL_RATE',
+      'AD_REQUESTS',
+      'UNFILLED_IMPRESSIONS',
+      'FILL_RATE',
     ],
   }),
   summary: (input) =>

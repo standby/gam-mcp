@@ -13,16 +13,15 @@ const inputSchema = z.object({
 export const pacingStatusTool: ToolDefinition<typeof inputSchema> = {
   name: 'pacing_status',
   description:
-    'Pacing status (delivered vs. expected) for currently-flighting line items, month-to-date in the network timezone. Returns line_item_progress (0..1+) along with delivered impressions and goal quantity. Optional filter by line_item_ids or order_ids.',
+    'Current-period impressions and revenue per line item (month-to-date, network timezone). Useful for delivery monitoring. Note: pacing percentage vs. goal is not available via the REST Reports API. Optional filter by line_item_ids or order_ids.',
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
     const dateRange = resolveDateRange({ relative: 'month_to_date' }, ctx.timezone, ctx.now);
     const query: ReportQuery = {
       dimensions: ['LINE_ITEM_NAME', 'LINE_ITEM_ID'],
       metrics: [
-        'LINE_ITEM_PROGRESS',
-        'LINE_ITEM_LIFETIME_IMPRESSIONS_DELIVERED',
-        'LINE_ITEM_GOAL_QUANTITY',
+        'IMPRESSIONS',
+        'REVENUE',
       ],
       filters: [
         ...(input.line_item_ids?.length

@@ -10,7 +10,7 @@ import { createOutputManager } from '../../src/output.js';
 describe('pacing_status', () => {
   it('returns pacing rows for currently-flighting line items', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ps-'));
-    const csv = 'line_item_name,line_item_id,line_item_progress,line_item_lifetime_impressions_delivered,line_item_goal_quantity\nLI1,123,0.78,7800,10000\n';
+    const csv = 'line_item_name,line_item_id,impressions,revenue\nLI1,123,7800,500\n';
     const r = await pacingStatusTool.handler(
       {},
       {
@@ -18,7 +18,7 @@ describe('pacing_status', () => {
           reports: [{
             query: {
               dimensions: ['LINE_ITEM_NAME', 'LINE_ITEM_ID'],
-              metrics: ['LINE_ITEM_PROGRESS', 'LINE_ITEM_LIFETIME_IMPRESSIONS_DELIVERED', 'LINE_ITEM_GOAL_QUANTITY'],
+              metrics: ['IMPRESSIONS', 'REVENUE'],
             },
             csvGz: gzipSync(Buffer.from(csv)),
           }],

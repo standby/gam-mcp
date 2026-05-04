@@ -10,7 +10,7 @@ import { createOutputManager } from '../../src/output.js';
 describe('top_line_items', () => {
   it('queries line-item dims with order/advertiser context', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tli-'));
-    const csv = 'line_item_name,order_name,advertiser_name,total_line_item_level_revenue\nLI1,Order1,Acme,10000\n';
+    const csv = 'line_item_name,order_name,advertiser_name,revenue\nLI1,Order1,Acme,10000\n';
     const args = topLineItemsTool.input.parse({
       date_range: { start: '2026-04-01', end: '2026-04-29' },
       top_n: 5,
@@ -23,7 +23,7 @@ describe('top_line_items', () => {
           reports: [{
             query: {
               dimensions: ['LINE_ITEM_NAME', 'ORDER_NAME', 'ADVERTISER_NAME'],
-              metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'],
+              metrics: ['REVENUE'],
             },
             csvGz: gzipSync(Buffer.from(csv)),
           }],

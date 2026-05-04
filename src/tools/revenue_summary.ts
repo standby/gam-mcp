@@ -26,7 +26,7 @@ export const revenueSummaryTool = buildReportTool({
   input: inputSchema,
   buildQuery: (input) => ({
     dimensions: input.group_by ? [GROUP_BY[input.group_by]] : [],
-    metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE', 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS'],
+    metrics: ['REVENUE', 'IMPRESSIONS'],
   }),
   summary: (input) =>
     `Revenue summary ${input.date_range.start}..${input.date_range.end}` +

@@ -26,7 +26,7 @@ export const revenueTrendTool = buildReportTool({
       input.granularity === 'week' ? 'WEEK' : 'DATE',
       ...(input.split_by ? [SPLIT[input.split_by]] : []),
     ],
-    metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE', 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS'],
+    metrics: ['REVENUE', 'IMPRESSIONS'],
   }),
   summary: (input) =>
     `Revenue trend (${input.granularity}) ${input.date_range.start}..${input.date_range.end}` +

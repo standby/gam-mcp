@@ -10,16 +10,16 @@ describe('GAM schema catalog', () => {
   });
 
   it('exposes core metrics', () => {
-    expect(isValidMetric('TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS')).toBe(true);
-    expect(isValidMetric('TOTAL_LINE_ITEM_LEVEL_REVENUE')).toBe(true);
-    expect(isValidMetric('TOTAL_LINE_ITEM_LEVEL_CTR')).toBe(true);
+    expect(isValidMetric('IMPRESSIONS')).toBe(true);
+    expect(isValidMetric('REVENUE')).toBe(true);
+    expect(isValidMetric('CTR')).toBe(true);
     expect(isValidMetric('NONSENSE')).toBe(false);
   });
 
   it('validateCombo accepts a sane query', () => {
     const ok = validateCombo({
       dimensions: ['ADVERTISER_NAME', 'DATE'],
-      metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'],
+      metrics: ['REVENUE'],
     });
     expect(ok).toBeNull();
   });

@@ -9,13 +9,13 @@ import { createOutputManager } from '../../src/output.js';
 
 const setup = () => {
   const dir = mkdtempSync(join(tmpdir(), 'rr-'));
-  const csv = 'advertiser_name,total_line_item_level_revenue\nAcme,1000\n';
+  const csv = 'advertiser_name,revenue\nAcme,1000\n';
   return {
     dir,
     ctx: {
       client: createMockGamClient({
         reports: [{
-          query: { dimensions: ['ADVERTISER_NAME'], metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'] },
+          query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
           csvGz: gzipSync(Buffer.from(csv)),
         }],
       }),
@@ -32,7 +32,7 @@ describe('run_report', () => {
     const r = await runReportTool.handler(
       {
         dimensions: ['ADVERTISER_NAME'],
-        metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'],
+        metrics: ['REVENUE'],
         date_range: { relative: 'last_7_days' as const },
       },
       ctx,
@@ -47,7 +47,7 @@ describe('run_report', () => {
     const r = await runReportTool.handler(
       {
         dimensions: ['NOT_A_DIMENSION'],
-        metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'],
+        metrics: ['REVENUE'],
         date_range: { relative: 'yesterday' as const },
       },
       ctx,

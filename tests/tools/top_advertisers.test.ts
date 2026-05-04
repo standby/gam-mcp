@@ -10,7 +10,7 @@ import { createOutputManager } from '../../src/output.js';
 describe('top_advertisers', () => {
   it('queries advertiser dimension with chosen metric', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ta-'));
-    const csv = 'advertiser_name,total_line_item_level_revenue\nAcme,9999\nBeta,500\n';
+    const csv = 'advertiser_name,revenue\nAcme,9999\nBeta,500\n';
     const args = topAdvertisersTool.input.parse({
       date_range: { start: '2026-04-01', end: '2026-04-29' },
       top_n: 10,
@@ -21,7 +21,7 @@ describe('top_advertisers', () => {
       {
         client: createMockGamClient({
           reports: [{
-            query: { dimensions: ['ADVERTISER_NAME'], metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE'] },
+            query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
             csvGz: gzipSync(Buffer.from(csv)),
           }],
         }),

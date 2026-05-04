@@ -10,13 +10,13 @@ import { createOutputManager } from '../../src/output.js';
 describe('revenue_summary', () => {
   it('groups by advertiser when group_by=advertiser', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rs-'));
-    const csv = 'advertiser_name,total_line_item_level_revenue,total_line_item_level_impressions\nAcme,5000,1000\n';
+    const csv = 'advertiser_name,revenue,impressions\nAcme,5000,1000\n';
     const ctx = {
       client: createMockGamClient({
         reports: [{
           query: {
             dimensions: ['ADVERTISER_NAME'],
-            metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE', 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS'],
+            metrics: ['REVENUE', 'IMPRESSIONS'],
           },
           csvGz: gzipSync(Buffer.from(csv)),
         }],

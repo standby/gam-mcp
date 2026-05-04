@@ -10,7 +10,7 @@ import { createOutputManager } from '../../src/output.js';
 describe('revenue_trend', () => {
   it('returns daily series', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rt-'));
-    const csv = 'date,total_line_item_level_revenue,total_line_item_level_impressions\n2026-04-01,100,1000\n2026-04-02,150,1500\n';
+    const csv = 'date,revenue,impressions\n2026-04-01,100,1000\n2026-04-02,150,1500\n';
     const args = revenueTrendTool.input.parse({
       date_range: { start: '2026-04-01', end: '2026-04-29' },
       granularity: 'day',
@@ -22,7 +22,7 @@ describe('revenue_trend', () => {
           reports: [{
             query: {
               dimensions: ['DATE'],
-              metrics: ['TOTAL_LINE_ITEM_LEVEL_REVENUE', 'TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS'],
+              metrics: ['REVENUE', 'IMPRESSIONS'],
             },
             csvGz: gzipSync(Buffer.from(csv)),
           }],
