@@ -92,6 +92,63 @@ describe('REST GAM client', () => {
     ]);
   });
 
+  it('createReport passes custom_dimension_key_ids through as customDimensionKeyIds (string array)', async () => {
+    let createBody: any = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/reports')) {
+        createBody = JSON.parse(String(init!.body));
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      {
+        dimensions: ['CUSTOM_DIMENSION_0_VALUE', 'DATE'],
+        metrics: ['IMPRESSIONS'],
+        custom_dimension_key_ids: [98765],
+      },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+    // GAM expects int64 IDs as JSON strings; index in array maps to slot N.
+    expect(createBody.reportDefinition.customDimensionKeyIds).toEqual(['98765']);
+  });
+
+  it('createReport omits customDimensionKeyIds when not provided', async () => {
+    let createBody: any = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/reports')) {
+        createBody = JSON.parse(String(init!.body));
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+    expect(createBody.reportDefinition).not.toHaveProperty('customDimensionKeyIds');
+  });
+
+  it('listEntities supports custom_targeting_key path', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toContain('/networks/12345/customTargetingKeys');
+      return new Response(JSON.stringify({
+        customTargetingKeys: [
+          { customTargetingKeyId: '111', displayName: 'section', name: 'networks/12345/customTargetingKeys/111' },
+          { customTargetingKeyId: '222', displayName: 'tier',    name: 'networks/12345/customTargetingKeys/222' },
+        ],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    const r = await client.listEntities({ entity_type: 'custom_targeting_key' });
+    expect(r).toEqual([
+      { id: 111, name: 'section' },
+      { id: 222, name: 'tier' },
+    ]);
+  });
+
   it('createReport omits filters field entirely when none provided', async () => {
     let createBody: any = null;
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

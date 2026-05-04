@@ -27,6 +27,10 @@ const inputSchema = z.object({
   metrics: z.array(z.string()).min(1).max(20),
   date_range: dateRangeSchema,
   filters: z.array(filterSchema).optional(),
+  // Required when querying CUSTOM_DIMENSION_<N>_VALUE dimensions. Index N in
+  // the dimension name maps to index N in this array (i.e., slot 0 = key at
+  // index 0). Find IDs via lookup(entity_type='custom_targeting_key').
+  custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
 });
 
 export const runReportTool: ToolDefinition<typeof inputSchema> = {
@@ -50,7 +54,12 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
 
     try {
       const op = await ctx.client.createReport(
-        { dimensions: input.dimensions, metrics: input.metrics, filters: input.filters },
+        {
+          dimensions: input.dimensions,
+          metrics: input.metrics,
+          filters: input.filters,
+          custom_dimension_key_ids: input.custom_dimension_key_ids,
+        },
         dateRange,
       );
       const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000);

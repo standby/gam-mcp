@@ -4,6 +4,7 @@ import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 
 const ENTITY_TYPES = [
   'advertiser', 'order', 'line_item', 'ad_unit', 'creative', 'placement', 'company',
+  'custom_targeting_key',
 ] as const;
 
 const inputSchema = z.object({
@@ -16,7 +17,7 @@ const inputSchema = z.object({
 export const lookupTool: ToolDefinition<typeof inputSchema> = {
   name: 'lookup',
   description:
-    'Resolve names ↔ IDs for GAM entities (advertiser, order, line_item, ad_unit, creative, placement, company). With query: substring match on name (literal — no wildcards). With ids: exact lookup. With neither: list up to `limit` entries (default 50, max 200).',
+    'Resolve names ↔ IDs for GAM entities (advertiser, order, line_item, ad_unit, creative, placement, company, custom_targeting_key). With query: substring match on name (literal — no wildcards). With ids: exact lookup. With neither: list up to `limit` entries (default 50, max 200). Use entity_type="custom_targeting_key" to discover the key IDs needed for run_report\'s custom_dimension_key_ids parameter.',
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
     const matches = await ctx.client.listEntities({

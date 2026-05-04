@@ -1,7 +1,8 @@
 import { writeFileSync } from 'node:fs';
 
 export type EntityType =
-  | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'creative' | 'placement' | 'company';
+  | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'creative' | 'placement' | 'company'
+  | 'custom_targeting_key';
 
 export type Entity = { id: number; name: string; [k: string]: unknown };
 
@@ -9,6 +10,10 @@ export type ReportQuery = {
   dimensions: string[];
   metrics: string[];
   filters?: { field: string; op: '=' | 'IN' | '!='; value: number | string | (number | string)[] }[];
+  // Maps each CUSTOM_DIMENSION_<N>_VALUE dimension to a publisher-configured
+  // custom-targeting-key ID by index. Required by GAM REST when those
+  // dimensions are used; ignored otherwise.
+  custom_dimension_key_ids?: number[];
 };
 
 export type ReportOperation = { operation_name: string };

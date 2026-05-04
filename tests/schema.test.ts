@@ -45,4 +45,12 @@ describe('GAM schema catalog', () => {
     expect(isValidMetric('AD_SERVER_AVERAGE_ECPM')).toBe(true);
     expect(isValidMetric('AD_SERVER_RESPONSES_SERVED')).toBe(true);
   });
+
+  it('exposes key-value and per-slot custom-dimension dimensions', () => {
+    expect(isValidDimension('KEY_VALUES_NAME')).toBe(true);
+    expect(isValidDimension('KEY_VALUES_ID')).toBe(true);
+    for (let i = 0; i <= 9; i++) {
+      expect(isValidDimension(`CUSTOM_DIMENSION_${i}_VALUE`)).toBe(true);
+    }
+  });
 });

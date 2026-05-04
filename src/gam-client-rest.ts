@@ -21,6 +21,7 @@ const ENTITY_PATH: Record<EntityType, { collection: string; idField: string }> =
   ad_unit:    { collection: 'adUnits',    idField: 'adUnitId' },
   creative:   { collection: 'creatives',  idField: 'creativeId' },
   placement:  { collection: 'placements', idField: 'placementId' },
+  custom_targeting_key: { collection: 'customTargetingKeys', idField: 'customTargetingKeyId' },
 };
 
 type ReportValue = { stringValue?: string; intValue?: number; doubleValue?: number };
@@ -96,6 +97,11 @@ export function createRestGamClient(opts: {
           },
           reportType: 'HISTORICAL',
           ...(query.filters?.length && { filters: toReportFilters(query.filters) }),
+          // GAM expects int64 IDs as strings. Index here = slot number on
+          // CUSTOM_DIMENSION_<N>_VALUE dimensions.
+          ...(query.custom_dimension_key_ids?.length && {
+            customDimensionKeyIds: query.custom_dimension_key_ids.map(String),
+          }),
         },
       };
       const createRes = await fetchImpl(`${networkPath}/reports`, {
