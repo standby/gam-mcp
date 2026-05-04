@@ -114,6 +114,12 @@ async function runAndRead(
   query: ReportQuery,
   range: DateRange,
 ): Promise<Record<string, string>[]> {
+  // Cache hit: skip the entire flow. Common for "show me last week, now
+  // compare to previous week" — the base half is often identical to a
+  // recent run_report.
+  const cached = ctx.reportCache?.get(query, range);
+  if (cached) return cached;
+
   const op = await ctx.client.createReport(query, range);
   const start = Date.now();
   let delay = 2000;
@@ -125,6 +131,7 @@ async function runAndRead(
       await ctx.client.downloadReport(s.download_url, dest);
       const { rows } = await readCsvGz(dest);
       try { unlinkSync(dest); } catch { /* ignore */ }
+      ctx.reportCache?.set(query, range, rows);
       return rows;
     }
     if (s.state === 'failed') throw new Error(`report failed: ${s.reason}`);

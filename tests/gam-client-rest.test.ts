@@ -3,7 +3,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { writeFileSync, readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRestGamClient } from '../src/gam-client-rest.js';
+import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 
 describe('REST GAM client', () => {
   it('listEntities GETs the right path and maps fields', async () => {
@@ -156,6 +156,57 @@ describe('REST GAM client', () => {
       { start: '2026-04-01', end: '2026-04-29' },
     );
     expect(createBody.reportDefinition).not.toHaveProperty('customDimensionKeyIds');
+  });
+
+  it('listEntities pages through GAM transparently up to limit', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      calls++;
+      const u = String(url);
+      // Page 1: 200 items + nextPageToken
+      if (calls === 1) {
+        expect(u).not.toContain('pageToken=');
+        return new Response(JSON.stringify({
+          orders: Array.from({ length: 200 }, (_, i) => ({ orderId: String(i + 1), displayName: `O${i + 1}` })),
+          nextPageToken: 'tok-2',
+        }), { status: 200 });
+      }
+      // Page 2: 50 items, no nextPageToken
+      expect(u).toContain('pageToken=tok-2');
+      return new Response(JSON.stringify({
+        orders: Array.from({ length: 50 }, (_, i) => ({ orderId: String(201 + i), displayName: `O${201 + i}` })),
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    const r = await client.listEntities({ entity_type: 'order', limit: 250 });
+    expect(r.length).toBe(250);
+    expect(r[0].id).toBe(1);
+    expect(r[249].id).toBe(250);
+    expect(calls).toBe(2);
+  });
+
+  it('withRetries retries on 429 then succeeds, surfaces non-retryable 4xx immediately', async () => {
+    let calls = 0;
+    const flakyFetch = (async () => {
+      calls++;
+      if (calls === 1) return new Response('quota', { status: 429 });
+      if (calls === 2) return new Response('ok', { status: 200 });
+      throw new Error('unexpected call');
+    }) as unknown as typeof fetch;
+    const wrapped = withRetries(flakyFetch, { baseDelayMs: 1, maxAttempts: 3 });
+    const res = await wrapped('https://example.test');
+    expect(res.status).toBe(200);
+    expect(calls).toBe(2);
+
+    let calls404 = 0;
+    const notFoundFetch = (async () => {
+      calls404++;
+      return new Response('nope', { status: 404 });
+    }) as unknown as typeof fetch;
+    const wrapped404 = withRetries(notFoundFetch, { baseDelayMs: 1, maxAttempts: 3 });
+    const res404 = await wrapped404('https://example.test');
+    expect(res404.status).toBe(404);
+    expect(calls404).toBe(1); // 4xx (not 429) is not retried
   });
 
   it('listEntities supports custom_targeting_key path', async () => {

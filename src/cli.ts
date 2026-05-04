@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { startMcpServer, installStdoutGuard } from './server.js';
 import { createOutputManager } from './output.js';
 import { createGoogleAuth, createAuthFetch } from './auth.js';
-import { createRestGamClient } from './gam-client-rest.js';
+import { createRestGamClient, withRetries } from './gam-client-rest.js';
+import { createReportCache } from './cache.js';
 
 function requiredEnv(name: string): string {
   const v = process.env[name];
@@ -30,7 +31,10 @@ async function main(): Promise<void> {
 
   const auth = createGoogleAuth(keyFile);
   const authFetch = createAuthFetch(auth);
-  const client = createRestGamClient({ networkCode, fetchImpl: authFetch });
+  // Retry transient failures (429 quota, 5xx, network) with exponential
+  // backoff so a single hiccup doesn't kill a multi-step LLM session.
+  const fetchImpl = withRetries(authFetch);
+  const client = createRestGamClient({ networkCode, fetchImpl });
 
   const cleanup = () => {
     try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -39,7 +43,8 @@ async function main(): Promise<void> {
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
-  await startMcpServer({ client, output, timezone, reportTimeoutMs });
+  const reportCache = createReportCache();
+  await startMcpServer({ client, output, timezone, reportTimeoutMs, reportCache });
 }
 
 main().catch((e) => {

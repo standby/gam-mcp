@@ -46,6 +46,43 @@ function csvQuote(value: string): string {
   return value;
 }
 
+// Wrap a fetch impl with exponential-backoff retries on transient failures.
+// 4xx (other than 429) are application errors — surface immediately. 429
+// (quota) and 5xx (server) are retried with jitter. Network errors (thrown
+// from fetch itself) are also retried.
+export function withRetries(
+  fetchImpl: typeof fetch,
+  opts: { maxAttempts?: number; baseDelayMs?: number } = {},
+): typeof fetch {
+  const maxAttempts = opts.maxAttempts ?? 4; // 1 initial + 3 retries
+  const baseDelay = opts.baseDelayMs ?? 250;
+  return (async (input: any, init?: any) => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const res = await fetchImpl(input, init);
+        if (res.status === 429 || res.status >= 500) {
+          if (attempt === maxAttempts - 1) return res;
+          await sleepWithJitter(baseDelay * 2 ** attempt);
+          continue;
+        }
+        return res;
+      } catch (e) {
+        lastErr = e;
+        if (attempt === maxAttempts - 1) throw e;
+        await sleepWithJitter(baseDelay * 2 ** attempt);
+      }
+    }
+    throw lastErr ?? new Error('unreachable: retry loop exhausted');
+  }) as typeof fetch;
+}
+
+function sleepWithJitter(ms: number): Promise<void> {
+  // Add 0-25% jitter so concurrent retries don't synchronize.
+  const jittered = ms * (1 + Math.random() * 0.25);
+  return new Promise((r) => setTimeout(r, jittered));
+}
+
 export function createRestGamClient(opts: {
   networkCode: string;
   fetchImpl?: typeof fetch;
@@ -57,30 +94,42 @@ export function createRestGamClient(opts: {
   const reportQueryCache = new Map<string, { dimensions: string[]; metrics: string[] }>();
 
   return {
-    async listEntities({ entity_type, query, ids }) {
+    async listEntities({ entity_type, query, ids, limit }) {
       const meta = ENTITY_PATH[entity_type];
-      const params = new URLSearchParams();
-      params.set('pageSize', '200');
-      if (query) params.set('filter', `name:CONTAINS:${JSON.stringify(query)}`);
-      if (ids?.length) params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
-      const url = `${networkPath}/${meta.collection}?${params}`;
-      const res = await fetchImpl(url);
-      if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
-      const json = await res.json() as Record<string, unknown>;
-      const list = (json[meta.collection] as any[] | undefined) ?? [];
-      return list.map((e): Entity => {
-        // GAM REST returns `name` as a resource path (networks/X/collection/ID).
-        // Some collections (e.g. adUnits) omit the explicit numeric ID field, so
-        // fall back to parsing the trailing segment of the path.
-        const explicitId = e[meta.idField];
-        const resourceName = String(e.name ?? '');
-        const id = explicitId !== undefined && explicitId !== null
-          ? Number(explicitId)
-          : Number(resourceName.split('/').pop());
-        // Prefer displayName (human-readable) over the resource path.
-        const label = String(e.displayName ?? e.name ?? '');
-        return { id, name: label };
-      });
+      const targetLimit = limit ?? 200;
+      // GAM caps pageSize at 200; we page transparently until the caller's
+      // limit is satisfied or the server runs out of results.
+      const out: Entity[] = [];
+      let pageToken: string | undefined;
+      do {
+        const remaining = targetLimit - out.length;
+        const pageSize = Math.min(remaining, 200);
+        const params = new URLSearchParams();
+        params.set('pageSize', String(pageSize));
+        if (pageToken) params.set('pageToken', pageToken);
+        if (query) params.set('filter', `name:CONTAINS:${JSON.stringify(query)}`);
+        if (ids?.length) params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
+        const url = `${networkPath}/${meta.collection}?${params}`;
+        const res = await fetchImpl(url);
+        if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
+        const json = await res.json() as Record<string, unknown>;
+        const list = (json[meta.collection] as any[] | undefined) ?? [];
+        for (const e of list) {
+          // GAM REST returns `name` as a resource path
+          // (networks/X/collection/ID). Some collections (e.g. adUnits) omit
+          // the explicit numeric ID field, so fall back to parsing the
+          // trailing path segment. Prefer displayName over the resource path.
+          const explicitId = e[meta.idField];
+          const resourceName = String(e.name ?? '');
+          const id = explicitId !== undefined && explicitId !== null
+            ? Number(explicitId)
+            : Number(resourceName.split('/').pop());
+          const label = String(e.displayName ?? e.name ?? '');
+          out.push({ id, name: label });
+        }
+        pageToken = (json.nextPageToken as string | undefined) || undefined;
+      } while (pageToken && out.length < targetLimit);
+      return out.slice(0, targetLimit);
     },
 
     async createReport(query: ReportQuery, dateRange: DateRange): Promise<ReportOperation> {

@@ -27,7 +27,14 @@ export type OperationStatus =
 export type DateRange = { start: string; end: string };
 
 export type GAMClient = {
-  listEntities: (q: { entity_type: EntityType; query?: string; ids?: number[] }) => Promise<Entity[]>;
+  listEntities: (q: {
+    entity_type: EntityType;
+    query?: string;
+    ids?: number[];
+    // Max entities to return. Implementation pages through GAM (200/page)
+    // transparently up to this limit. Default 200 (one page).
+    limit?: number;
+  }) => Promise<Entity[]>;
   createReport: (query: ReportQuery, dateRange: DateRange) => Promise<ReportOperation>;
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
   downloadReport: (downloadUrl: string, destPath: string) => Promise<string>;
@@ -58,12 +65,16 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     );
 
   return {
-    async listEntities({ entity_type, query, ids }) {
+    async listEntities({ entity_type, query, ids, limit }) {
       const all = state.entities?.[entity_type] ?? [];
-      if (ids?.length) return all.filter((e) => ids.includes(e.id));
-      if (!query) return all;
-      const q = query.toLowerCase();
-      return all.filter((e) => e.name.toLowerCase().includes(q));
+      let filtered: Entity[];
+      if (ids?.length) filtered = all.filter((e) => ids.includes(e.id));
+      else if (!query) filtered = all;
+      else {
+        const q = query.toLowerCase();
+        filtered = all.filter((e) => e.name.toLowerCase().includes(q));
+      }
+      return limit !== undefined ? filtered.slice(0, limit) : filtered;
     },
     async createReport(query, dateRange) {
       const fixture = matchFixture(query, dateRange);

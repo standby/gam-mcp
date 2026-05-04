@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
+import { readCsvGz } from '../output.js';
 import { join } from 'node:path';
 import type { ToolDefinition } from '../report-tool-builder.js';
-import type { GAMClient } from '../gam-client.js';
+import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -55,24 +56,36 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       return gamError('INVALID_DATE_RANGE', { reason: msg });
     }
 
+    const query: ReportQuery = {
+      dimensions: input.dimensions,
+      metrics: input.metrics,
+      filters: input.filters,
+      custom_dimension_key_ids: input.custom_dimension_key_ids,
+    };
+    const summary =
+      `Report: dims=[${input.dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
+      `${dateRange.start}..${dateRange.end}`;
+
+    // Cache hit: skip create→poll→download entirely.
+    const cached = ctx.reportCache?.get(query, dateRange);
+    if (cached) return ctx.output.fromInlineRows(cached, `${summary} (cached)`);
+
     try {
-      const op = await ctx.client.createReport(
-        {
-          dimensions: input.dimensions,
-          metrics: input.metrics,
-          filters: input.filters,
-          custom_dimension_key_ids: input.custom_dimension_key_ids,
-        },
-        dateRange,
-      );
+      const op = await ctx.client.createReport(query, dateRange);
       const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000);
       if ('error' in status) return status;
       const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(status.download_url, dest);
-      return ctx.output.fromCsvGzFile(
-        dest,
-        `Report: dims=[${input.dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ${dateRange.start}..${dateRange.end}`,
-      );
+      // Read once for the cache, then either inline-or-file via output manager.
+      // The output manager re-reads the file but on subsequent identical
+      // queries the cache short-circuits before we ever hit createReport.
+      if (ctx.reportCache) {
+        try {
+          const { rows } = await readCsvGz(dest);
+          ctx.reportCache.set(query, dateRange, rows);
+        } catch { /* cache best-effort; envelope path is authoritative */ }
+      }
+      return ctx.output.fromCsvGzFile(dest, summary);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

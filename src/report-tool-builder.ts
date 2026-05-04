@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { gamError } from './errors.js';
 import type { GAMClient, ReportQuery, DateRange } from './gam-client.js';
 import type { OutputManager, OutputEnvelope } from './output.js';
+import type { ReportCache } from './cache.js';
 
 export type ToolContext = {
   client: GAMClient;
@@ -10,6 +11,7 @@ export type ToolContext = {
   timezone: string;
   now?: Date;
   reportTimeoutMs?: number;
+  reportCache?: ReportCache;
 };
 
 export type ToolDefinition<I extends ZodTypeAny> = {
