@@ -29,8 +29,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "tsx scripts/smoke.ts",
+    "verify:pack": "tsx scripts/verify-pack.ts",
     "refresh-schema": "tsx scripts/refresh-schema.ts",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test && npm run verify:pack"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
