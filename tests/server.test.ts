@@ -5,6 +5,7 @@ describe('server registry', () => {
   it('lists all expected tool names', () => {
     const names = listToolNames();
     expect(names.sort()).toEqual([
+      'compare_periods',
       'describe_schema',
       'fill_rate',
       'inventory_breakdown',

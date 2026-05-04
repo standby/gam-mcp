@@ -66,7 +66,7 @@ export function createOutputManager(opts: {
   };
 }
 
-async function readCsvGz(path: string): Promise<{ header: string[]; rows: Record<string, string>[] }> {
+export async function readCsvGz(path: string): Promise<{ header: string[]; rows: Record<string, string>[] }> {
   const stream = createReadStream(path).pipe(createGunzip());
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
   const rows: Record<string, string>[] = [];

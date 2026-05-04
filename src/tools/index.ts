@@ -8,6 +8,7 @@ import { pacingStatusTool } from './pacing_status.js';
 import { fillRateTool } from './fill_rate.js';
 import { inventoryBreakdownTool } from './inventory_breakdown.js';
 import { revenueTrendTool } from './revenue_trend.js';
+import { comparePeriodsTool } from './compare_periods.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ZodTypeAny } from 'zod';
 
@@ -22,4 +23,5 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   fillRateTool,
   inventoryBreakdownTool,
   revenueTrendTool,
+  comparePeriodsTool,
 ] as unknown as ToolDefinition<ZodTypeAny>[];

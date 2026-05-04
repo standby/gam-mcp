@@ -51,9 +51,10 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
   const operations = new Map<string, { fixture: ReportFixture; polledCount: number }>();
   let counter = 0;
 
-  const matchFixture = (q: ReportQuery): ReportFixture | undefined =>
+  const matchFixture = (q: ReportQuery, dr?: DateRange): ReportFixture | undefined =>
     reports.find((r) =>
-      sameDimsMetrics(r.query, q),
+      sameDimsMetrics(r.query, q) &&
+      (!r.dateRange || (dr?.start === r.dateRange.start && dr?.end === r.dateRange.end)),
     );
 
   return {
@@ -64,8 +65,8 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
       const q = query.toLowerCase();
       return all.filter((e) => e.name.toLowerCase().includes(q));
     },
-    async createReport(query) {
-      const fixture = matchFixture(query);
+    async createReport(query, dateRange) {
+      const fixture = matchFixture(query, dateRange);
       if (!fixture) {
         throw new Error(
           `mock: no report fixture matches query dimensions=${query.dimensions.join(',')} metrics=${query.metrics.join(',')}`,
