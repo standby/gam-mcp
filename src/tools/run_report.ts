@@ -18,7 +18,10 @@ const dateRangeSchema = z.union([
 
 const filterSchema = z.object({
   field: z.string(),
-  op: z.enum(['=', 'IN', '!=']).default('='),
+  // GAM has no EQUALS/NOT_EQUALS — use IN/NOT_IN with a single value (the
+  // = / != aliases here translate that). CONTAINS/NOT_CONTAINS do substring
+  // match on string fields (e.g., AD_UNIT_NAME CONTAINS "sports").
+  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
   value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
 });
 

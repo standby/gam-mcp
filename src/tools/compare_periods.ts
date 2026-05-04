@@ -20,7 +20,7 @@ const dateRangeSchema = z.union([
 
 const filterSchema = z.object({
   field: z.string(),
-  op: z.enum(['=', 'IN', '!=']).default('='),
+  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
   value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
 });
 

@@ -196,10 +196,13 @@ export function createRestGamClient(opts: {
 //   - `values` is always an array, even for single-value comparisons.
 //   - `intValue` is a JSON string (Google's int64 → JSON convention).
 //   - The dimension is on `field.dimension`, not `field.name`.
-const OP_TO_OPERATION: Record<'=' | 'IN' | '!=', 'IN' | 'NOT_IN'> = {
+const OP_TO_OPERATION: Record<'=' | 'IN' | '!=' | 'CONTAINS' | 'NOT_CONTAINS',
+  'IN' | 'NOT_IN' | 'CONTAINS' | 'NOT_CONTAINS'> = {
   '=': 'IN',
   'IN': 'IN',
   '!=': 'NOT_IN',
+  'CONTAINS': 'CONTAINS',
+  'NOT_CONTAINS': 'NOT_CONTAINS',
 };
 
 function toReportFilters(filters: NonNullable<ReportQuery['filters']>): unknown[] {

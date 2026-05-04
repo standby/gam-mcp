@@ -92,6 +92,33 @@ describe('REST GAM client', () => {
     ]);
   });
 
+  it('createReport encodes CONTAINS / NOT_CONTAINS filter ops directly (no aliasing)', async () => {
+    let createBody: any = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/reports')) {
+        createBody = JSON.parse(String(init!.body));
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      {
+        dimensions: ['AD_UNIT_NAME'],
+        metrics: ['IMPRESSIONS'],
+        filters: [
+          { field: 'AD_UNIT_NAME', op: 'CONTAINS',     value: 'sports' },
+          { field: 'AD_UNIT_NAME', op: 'NOT_CONTAINS', value: 'house' },
+        ],
+      },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+    expect(createBody.reportDefinition.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'AD_UNIT_NAME' }, operation: 'CONTAINS',     values: [{ stringValue: 'sports' }] } },
+      { fieldFilter: { field: { dimension: 'AD_UNIT_NAME' }, operation: 'NOT_CONTAINS', values: [{ stringValue: 'house' }] } },
+    ]);
+  });
+
   it('createReport passes custom_dimension_key_ids through as customDimensionKeyIds (string array)', async () => {
     let createBody: any = null;
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

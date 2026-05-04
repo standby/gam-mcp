@@ -53,4 +53,14 @@ describe('GAM schema catalog', () => {
       expect(isValidDimension(`CUSTOM_DIMENSION_${i}_VALUE`)).toBe(true);
     }
   });
+
+  it('exposes AdX and AdSense channel-specific metrics', () => {
+    for (const m of [
+      'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM',
+      'AD_EXCHANGE_MATCH_RATE', 'AD_EXCHANGE_TOTAL_REQUESTS', 'AD_EXCHANGE_CTR',
+      'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE', 'ADSENSE_AVERAGE_ECPM',
+    ]) {
+      expect(isValidMetric(m)).toBe(true);
+    }
+  });
 });

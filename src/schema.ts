@@ -60,6 +60,15 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'AD_SERVER_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE', type: 'rate',   description: 'Ad server viewability rate.' },
     { name: 'AD_SERVER_AVERAGE_ECPM',                          type: 'currency', description: 'Average eCPM for ad-server impressions only (excludes AdX/AdSense backfill). Pair with AD_SERVER_IMPRESSIONS for clean direct-channel eCPM.' },
     { name: 'AD_SERVER_RESPONSES_SERVED',                      type: 'number',   description: 'Ad-server responses served — analogous to fills/matched requests, ad-server-only (excludes AdX/AdSense).' },
+    { name: 'AD_EXCHANGE_IMPRESSIONS',                         type: 'number',   description: 'Ad Exchange (AdX / Open Bidding) impressions — programmatic-only fills, excludes direct/AdSense.' },
+    { name: 'AD_EXCHANGE_REVENUE',                             type: 'currency', description: 'Ad Exchange revenue — programmatic-only.' },
+    { name: 'AD_EXCHANGE_AVERAGE_ECPM',                        type: 'currency', description: 'Average eCPM on Ad Exchange impressions. Use with BUYER_NETWORK_NAME or BIDDER_NAME to compare DSP yield.' },
+    { name: 'AD_EXCHANGE_MATCH_RATE',                          type: 'rate',     description: 'AdX match rate: matched requests ÷ total AdX requests. Below ~50% suggests floor pricing too high or weak demand.' },
+    { name: 'AD_EXCHANGE_TOTAL_REQUESTS',                      type: 'number',   description: 'Total AdX requests (matched + unmatched). Pair with AD_EXCHANGE_MATCH_RATE for funnel analysis.' },
+    { name: 'AD_EXCHANGE_CTR',                                 type: 'rate',     description: 'AdX click-through rate.' },
+    { name: 'ADSENSE_IMPRESSIONS',                             type: 'number',   description: 'AdSense backfill impressions (after AdX, before unfilled).' },
+    { name: 'ADSENSE_REVENUE',                                 type: 'currency', description: 'AdSense backfill revenue.' },
+    { name: 'ADSENSE_AVERAGE_ECPM',                            type: 'currency', description: 'Average eCPM on AdSense backfill — typically the floor of programmatic eCPM tiers.' },
   ],
 };
 

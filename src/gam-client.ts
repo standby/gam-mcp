@@ -9,7 +9,7 @@ export type Entity = { id: number; name: string; [k: string]: unknown };
 export type ReportQuery = {
   dimensions: string[];
   metrics: string[];
-  filters?: { field: string; op: '=' | 'IN' | '!='; value: number | string | (number | string)[] }[];
+  filters?: { field: string; op: '=' | 'IN' | '!=' | 'CONTAINS' | 'NOT_CONTAINS'; value: number | string | (number | string)[] }[];
   // Maps each CUSTOM_DIMENSION_<N>_VALUE dimension to a publisher-configured
   // custom-targeting-key ID by index. Required by GAM REST when those
   // dimensions are used; ignored otherwise.
