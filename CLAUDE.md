@@ -20,6 +20,12 @@ This repo is a Node.js **MCP (Model Context Protocol) server** that exposes **Go
 - Return structured JSON, not pre-formatted text. The LLM consuming this MCP will format for the user.
 - Paginate large results. GAM report rows can be enormous — stream/page rather than buffering whole CSVs into a tool response.
 
+## Commit messages
+
+- Do not add `Co-Authored-By: Claude` (or any other Claude/AI attribution) to commit messages. The author/committer fields are sufficient.
+- Do not add `🤖 Generated with Claude Code` footers or similar tool-credit lines.
+- Follow the repo's existing Conventional Commits style (`fix:`, `chore:`, `ci:`, `docs:`).
+
 ## When this file is out of date
 
 Once code lands, replace these sections with the actual commands (`npm test`, lint, build, run-local), the chosen GAM API flavor, and the real architecture (transport layer, auth flow, tool registry pattern). Don't leave stale guidance — delete what no longer applies.
