@@ -107,7 +107,13 @@ export function createRestGamClient(opts: {
         const params = new URLSearchParams();
         params.set('pageSize', String(pageSize));
         if (pageToken) params.set('pageToken', pageToken);
-        if (query) params.set('filter', `name:CONTAINS:${JSON.stringify(query)}`);
+        // GAM list filters follow AIP-160 (=, !=, :, AND/OR/NOT, wildcards) —
+        // there is no CONTAINS keyword here (that's only the Reports API
+        // FieldFilter.operation enum). Use the `:` has-operator on
+        // `displayName` for substring match; matching on `name` would search
+        // the resource path (networks/X/coll/ID), which never matches a
+        // user-typed query.
+        if (query) params.set('filter', `displayName:${JSON.stringify(query)}`);
         if (ids?.length) params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
         const url = `${networkPath}/${meta.collection}?${params}`;
         const res = await fetchImpl(url);

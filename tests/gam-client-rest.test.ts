@@ -158,6 +158,24 @@ describe('REST GAM client', () => {
     expect(createBody.reportDefinition).not.toHaveProperty('customDimensionKeyIds');
   });
 
+  it('listEntities query emits AIP-160 has-operator on displayName (no CONTAINS keyword)', async () => {
+    // Regression: previous wire shape was `name:CONTAINS:"foo"` which GAM
+    // rejects as a parse error — the Reports API has a CONTAINS enum, but
+    // list filters do not, and `name` is the resource path, not the
+    // user-visible label. The fix uses `displayName:"foo"` (has-operator).
+    let capturedUrl = '';
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      capturedUrl = String(url);
+      return new Response(JSON.stringify({ orders: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.listEntities({ entity_type: 'order', query: 'back_to_school_2026' });
+    // Decode the filter param off the URL and assert exact shape.
+    const params = new URL(capturedUrl).searchParams;
+    expect(params.get('filter')).toBe('displayName:"back_to_school_2026"');
+    expect(params.get('filter')).not.toMatch(/CONTAINS/);
+  });
+
   it('listEntities pages through GAM transparently up to limit', async () => {
     let calls = 0;
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
