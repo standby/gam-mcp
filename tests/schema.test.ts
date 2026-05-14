@@ -54,6 +54,11 @@ describe('GAM schema catalog', () => {
     }
   });
 
+  it('exposes content-taxonomy dimensions (PPS-adjacent)', () => {
+    expect(isValidDimension('TAXONOMY_CATEGORY')).toBe(true);
+    expect(isValidDimension('TAXONOMY_CATEGORY_ID')).toBe(true);
+  });
+
   it('exposes AdX and AdSense channel-specific metrics', () => {
     for (const m of [
       'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM',

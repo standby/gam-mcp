@@ -39,6 +39,8 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'CUSTOM_DIMENSION_7_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 7. REQUIRES custom_dimension_key_ids[7]. Aggregates cleanly.' },
     { name: 'CUSTOM_DIMENSION_8_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 8. REQUIRES custom_dimension_key_ids[8]. Aggregates cleanly.' },
     { name: 'CUSTOM_DIMENSION_9_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 9. REQUIRES custom_dimension_key_ids[9]. Aggregates cleanly.' },
+    { name: 'TAXONOMY_CATEGORY',    type: 'string', description: "Taxonomy category of the served content (GAM REST 'TAXONOMY_CATEGORY'). On networks with Publisher Provided Signals (PPS) configured, this typically surfaces the IAB Content Taxonomy category the request was tagged with; on other networks it may reflect GAM's older content-classification feature. Probe values on a small report to confirm semantics for your network. PPS-specific dimensions (top level / all levels / data provider / delivered) are UI-only in the GAM query tool (Beta) and not yet exposed in the REST Dimension enum." },
+    { name: 'TAXONOMY_CATEGORY_ID', type: 'number', description: 'Numeric ID companion to TAXONOMY_CATEGORY. For IAB-Taxonomy-tagged inventory this maps to the IAB taxonomy node ID; otherwise to a GAM-internal category ID.' },
   ],
   metrics: [
     { name: 'IMPRESSIONS',                            type: 'number',   description: 'Total served impressions (all channels).' },
