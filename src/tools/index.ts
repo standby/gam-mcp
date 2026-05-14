@@ -10,6 +10,7 @@ import { inventoryBreakdownTool } from './inventory_breakdown.js';
 import { revenueTrendTool } from './revenue_trend.js';
 import { comparePeriodsTool } from './compare_periods.js';
 import { findAnomaliesTool } from './find_anomalies.js';
+import { kvBreakdownTool } from './kv_breakdown.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ZodTypeAny } from 'zod';
 
@@ -26,4 +27,5 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   revenueTrendTool,
   comparePeriodsTool,
   findAnomaliesTool,
+  kvBreakdownTool,
 ] as unknown as ToolDefinition<ZodTypeAny>[];

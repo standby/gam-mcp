@@ -10,6 +10,7 @@ describe('server registry', () => {
       'fill_rate',
       'find_anomalies',
       'inventory_breakdown',
+      'kv_breakdown',
       'lookup',
       'pacing_status',
       'revenue_summary',
