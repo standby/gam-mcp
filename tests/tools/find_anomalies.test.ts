@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { findAnomaliesTool } from '../../src/tools/find_anomalies.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 function csv(header: string[], rows: (string | number)[][]): Buffer {
   const lines = [header.join(','), ...rows.map((r) => r.join(','))];
@@ -20,6 +21,7 @@ function ctx(opts: { fixtures: any[]; now: Date }) {
       client: createMockGamClient({ reports: opts.fixtures }),
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: 'UTC',
+      logger: noopLogger(),
       now: opts.now,
     },
   };

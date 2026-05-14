@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { lookupTool } from '../../src/tools/lookup.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +23,7 @@ const ctx = () => {
       }),
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: 'America/Los_Angeles',
+      logger: noopLogger(),
     },
   };
 };

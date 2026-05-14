@@ -10,6 +10,8 @@ import type {
   DateRange,
 } from './gam-client.js';
 import { gamError } from './errors.js';
+import type { Logger } from './log.js';
+import { noopLogger } from './log.js';
 
 const BASE = 'https://admanager.googleapis.com/v1';
 
@@ -52,10 +54,11 @@ function csvQuote(value: string): string {
 // from fetch itself) are also retried.
 export function withRetries(
   fetchImpl: typeof fetch,
-  opts: { maxAttempts?: number; baseDelayMs?: number } = {},
+  opts: { maxAttempts?: number; baseDelayMs?: number; logger?: Logger } = {},
 ): typeof fetch {
   const maxAttempts = opts.maxAttempts ?? 4; // 1 initial + 3 retries
   const baseDelay = opts.baseDelayMs ?? 250;
+  const logger = opts.logger ?? noopLogger();
   return (async (input: any, init?: any) => {
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -63,14 +66,21 @@ export function withRetries(
         const res = await fetchImpl(input, init);
         if (res.status === 429 || res.status >= 500) {
           if (attempt === maxAttempts - 1) return res;
-          await sleepWithJitter(baseDelay * 2 ** attempt);
+          const delay_ms = baseDelay * 2 ** attempt;
+          logger.warn('gam.retry', { status: res.status, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
+          await sleepWithJitter(delay_ms);
           continue;
         }
         return res;
       } catch (e) {
         lastErr = e;
-        if (attempt === maxAttempts - 1) throw e;
-        await sleepWithJitter(baseDelay * 2 ** attempt);
+        if (attempt === maxAttempts - 1) {
+          logger.error('gam.fetch_failed', { message: e instanceof Error ? e.message : String(e), attempt: attempt + 1, max_attempts: maxAttempts });
+          throw e;
+        }
+        const delay_ms = baseDelay * 2 ** attempt;
+        logger.warn('gam.retry', { message: e instanceof Error ? e.message : String(e), attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
+        await sleepWithJitter(delay_ms);
       }
     }
     throw lastErr ?? new Error('unreachable: retry loop exhausted');

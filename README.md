@@ -47,6 +47,7 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
 | `GAM_TIMEZONE` | no | UTC | IANA timezone for relative-date resolution |
 | `GAM_INLINE_ROW_THRESHOLD` | no | 200 | Rows ≤ this returned inline; above, spooled to a file (path returned in envelope) |
 | `GAM_REPORT_TIMEOUT_MS` | no | 300000 | Max polling time per report job |
+| `GAM_LOG_LEVEL` | no | `info` | One of `error`, `warn`, `info`, `debug`. Logs are JSON-lines on stderr — tool calls, GAM retries, report-job lifecycle, cache hits. Credentials are never logged. |
 
 ## Tools
 

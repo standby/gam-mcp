@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { revenueTrendTool } from '../../src/tools/revenue_trend.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 describe('revenue_trend', () => {
   it('returns daily series', async () => {
@@ -29,6 +30,7 @@ describe('revenue_trend', () => {
         }),
         output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
         timezone: 'UTC',
+        logger: noopLogger(),
       },
     );
     if ('error' in r) throw new Error(JSON.stringify(r));

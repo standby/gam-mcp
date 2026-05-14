@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { buildReportTool } from '../src/report-tool-builder.js';
 import { createMockGamClient } from '../src/gam-client.js';
 import { createOutputManager } from '../src/output.js';
+import { noopLogger } from '../src/log.js';
 
 describe('buildReportTool', () => {
   it('runs a fixed-dimensions report and returns the standard envelope', async () => {
@@ -35,7 +36,7 @@ describe('buildReportTool', () => {
 
     const result = await tool.handler(
       { date_range: { start: '2026-04-01', end: '2026-04-29' } },
-      { client, output, timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') },
+      { client, output, timezone: 'America/Los_Angeles', logger: noopLogger(), now: new Date('2026-04-30T12:00:00Z') },
     );
 
     expect(result.row_count).toBe(1);

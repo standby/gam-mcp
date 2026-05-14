@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { revenueSummaryTool } from '../../src/tools/revenue_summary.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 describe('revenue_summary', () => {
   it('groups by advertiser when group_by=advertiser', async () => {
@@ -23,6 +24,7 @@ describe('revenue_summary', () => {
       }),
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: 'America/Los_Angeles',
+      logger: noopLogger(),
       now: new Date('2026-04-30T12:00:00Z'),
     };
     const r = await revenueSummaryTool.handler(

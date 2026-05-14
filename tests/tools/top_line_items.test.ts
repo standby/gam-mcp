@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { topLineItemsTool } from '../../src/tools/top_line_items.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 describe('top_line_items', () => {
   it('queries line-item dims with order/advertiser context', async () => {
@@ -30,6 +31,7 @@ describe('top_line_items', () => {
         }),
         output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
         timezone: 'America/Los_Angeles',
+        logger: noopLogger(),
       },
     );
     if ('error' in r) throw new Error(JSON.stringify(r));

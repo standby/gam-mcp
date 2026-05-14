@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { topAdvertisersTool } from '../../src/tools/top_advertisers.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 describe('top_advertisers', () => {
   it('queries advertiser dimension with chosen metric', async () => {
@@ -27,6 +28,7 @@ describe('top_advertisers', () => {
         }),
         output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
         timezone: 'America/Los_Angeles',
+        logger: noopLogger(),
       },
     );
     if ('error' in r) throw new Error(JSON.stringify(r));

@@ -1,4 +1,7 @@
 import type { ReportQuery, DateRange } from './gam-client.js';
+import type { Logger } from './log.js';
+import { noopLogger } from './log.js';
+import { createHash } from 'node:crypto';
 
 export type CachedRows = Record<string, string>[];
 
@@ -13,17 +16,25 @@ export type ReportCache = {
 // on adjacent questions and revisits the same time slice multiple times.
 // No TTL (queries reflect a closed past period; results don't change), no
 // LRU eviction (sessions are short-lived).
-export function createReportCache(): ReportCache {
+export function createReportCache(opts: { logger?: Logger } = {}): ReportCache {
   const store = new Map<string, CachedRows>();
+  const logger = opts.logger ?? noopLogger();
   return {
     get(query, dateRange) {
-      return store.get(keyFor(query, dateRange));
+      const key = keyFor(query, dateRange);
+      const hit = store.get(key);
+      logger.debug(hit ? 'cache.hit' : 'cache.miss', { key_hash: shortHash(key) });
+      return hit;
     },
     set(query, dateRange, rows) {
       store.set(keyFor(query, dateRange), rows);
     },
     size() { return store.size; },
   };
+}
+
+function shortHash(s: string): string {
+  return createHash('sha1').update(s).digest('hex').slice(0, 12);
 }
 
 function keyFor(q: ReportQuery, dr: DateRange): string {

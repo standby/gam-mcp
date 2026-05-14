@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { inventoryBreakdownTool } from '../../src/tools/inventory_breakdown.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 describe('inventory_breakdown', () => {
   it('queries by line_item_type', async () => {
@@ -28,6 +29,7 @@ describe('inventory_breakdown', () => {
         }),
         output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
         timezone: 'UTC',
+        logger: noopLogger(),
       },
     );
     if ('error' in r) throw new Error(JSON.stringify(r));

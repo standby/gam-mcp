@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fillRateTool } from '../../src/tools/fill_rate.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 describe('fill_rate', () => {
   it('reports fill rate grouped by ad_unit', async () => {
@@ -25,6 +26,7 @@ describe('fill_rate', () => {
         }),
         output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
         timezone: 'America/Los_Angeles',
+        logger: noopLogger(),
       },
     );
     if ('error' in r) throw new Error(JSON.stringify(r));

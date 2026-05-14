@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { comparePeriodsTool } from '../../src/tools/compare_periods.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 function csv(header: string[], rows: (string | number)[][]): Buffer {
   const lines = [header.join(','), ...rows.map((r) => r.join(','))];
@@ -43,6 +44,7 @@ function ctx() {
       }),
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: 'UTC',
+      logger: noopLogger(),
     },
   };
 }

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { runReportTool } from '../../src/tools/run_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 
 const setup = () => {
   const dir = mkdtempSync(join(tmpdir(), 'rr-'));
@@ -21,6 +22,7 @@ const setup = () => {
       }),
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: 'America/Los_Angeles',
+      logger: noopLogger(),
       now: new Date('2026-04-30T12:00:00Z'),
     },
   };

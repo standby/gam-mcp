@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { describeSchemaTool } from '../../src/tools/describe_schema.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
+import { noopLogger } from '../../src/log.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +15,7 @@ describe('describe_schema', () => {
       client: createMockGamClient(),
       output: createOutputManager({ tempDir: dir, inlineThreshold: 1000 }),
       timezone: 'UTC',
+      logger: noopLogger(),
     });
     expect('rows' in r).toBe(true);
     if ('rows' in r) {

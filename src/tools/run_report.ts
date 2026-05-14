@@ -6,6 +6,7 @@ import { readCsvGz } from '../output.js';
 import { join } from 'node:path';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
+import type { Logger } from '../log.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -71,8 +72,15 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
     if (cached) return ctx.output.fromInlineRows(cached, `${summary} (cached)`);
 
     try {
+      ctx.logger.debug('report.create', {
+        tool: 'run_report',
+        dimensions: query.dimensions,
+        metrics: query.metrics,
+        date_start: dateRange.start,
+        date_end: dateRange.end,
+      });
       const op = await ctx.client.createReport(query, dateRange);
-      const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000);
+      const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
       if ('error' in status) return status;
       const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(status.download_url, dest);
@@ -92,15 +100,24 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
   },
 };
 
-async function pollUntilDone(client: GAMClient, name: string, timeoutMs: number) {
+async function pollUntilDone(client: GAMClient, name: string, timeoutMs: number, logger: Logger) {
   const start = Date.now();
   let delay = 2000;
   while (Date.now() - start < timeoutMs) {
     const s = await client.pollOperation(name);
-    if (s.state === 'done') return { download_url: s.download_url };
-    if (s.state === 'failed') return gamError('REPORT_FAILED', { reason: s.reason });
+    const elapsed_ms = Date.now() - start;
+    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
+    if (s.state === 'done') {
+      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
+      return { download_url: s.download_url };
+    }
+    if (s.state === 'failed') {
+      logger.warn('report.failed', { operation: name, reason: s.reason });
+      return gamError('REPORT_FAILED', { reason: s.reason });
+    }
     await new Promise((r) => setTimeout(r, delay));
     delay = Math.min(delay * 1.5, 15_000);
   }
+  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
   return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
 }

@@ -47,28 +47,42 @@ export async function startMcpServer(ctx: ToolContext): Promise<void> {
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const tool = ALL_TOOLS.find((t) => t.name === req.params.name);
+    const toolName = req.params.name;
+    const argKeys = Object.keys(req.params.arguments ?? {});
+    ctx.logger.info('tool.call.start', { tool: toolName, arg_keys: argKeys });
+    const start = Date.now();
+
+    const tool = ALL_TOOLS.find((t) => t.name === toolName);
     if (!tool) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify(gamError('INVALID_INPUT', { reason: `Unknown tool ${req.params.name}` })) }],
-        isError: true,
-      };
+      const err = gamError('INVALID_INPUT', { reason: `Unknown tool ${toolName}` });
+      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
+      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
     }
     const parsed = tool.input.safeParse(req.params.arguments ?? {});
     if (!parsed.success) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify(gamError('INVALID_INPUT', { reason: parsed.error.message })) }],
-        isError: true,
-      };
+      const err = gamError('INVALID_INPUT', { reason: parsed.error.message });
+      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
+      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
     }
     try {
       const result = await tool.handler(parsed.data, ctx);
+      const duration_ms = Date.now() - start;
+      // Result is either an envelope or a gamError; check the discriminator.
+      if (result && typeof result === 'object' && 'error' in result) {
+        const e = (result as { error: { code: string; message: string } }).error;
+        ctx.logger.warn('tool.call.error', { tool: toolName, error_code: e.code, reason: e.message });
+        ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
+      } else {
+        ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: true });
+      }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (e) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify(gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) })) }],
-        isError: true,
-      };
+      const duration_ms = Date.now() - start;
+      const reason = e instanceof Error ? e.message : String(e);
+      const err = gamError('INTERNAL_ERROR', { reason });
+      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason });
+      ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
+      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
     }
   });
 

@@ -1,20 +1,30 @@
 import { GoogleAuth } from 'google-auth-library';
 import { gamError } from './errors.js';
+import type { Logger } from './log.js';
+import { noopLogger } from './log.js';
 
 export type GoogleAuthLike = {
   getAccessToken: () => Promise<string | null | undefined>;
 };
 
-export function createGoogleAuth(keyFile: string): GoogleAuthLike {
+export function createGoogleAuth(keyFile: string, logger: Logger = noopLogger()): GoogleAuthLike {
   const auth = new GoogleAuth({
     keyFile,
     scopes: ['https://www.googleapis.com/auth/admanager'],
   });
   return {
     async getAccessToken() {
-      const client = await auth.getClient();
-      const t = await client.getAccessToken();
-      return t.token ?? null;
+      logger.debug('auth.token_refresh');
+      try {
+        const client = await auth.getClient();
+        const t = await client.getAccessToken();
+        return t.token ?? null;
+      } catch (e) {
+        // Only the error MESSAGE — never the underlying error object or stack,
+        // which may include request URLs with credentials in headers.
+        logger.error('auth.token_failure', { message: e instanceof Error ? e.message : String(e) });
+        throw e;
+      }
     },
   };
 }

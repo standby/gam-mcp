@@ -4,11 +4,13 @@ import { gamError } from './errors.js';
 import type { GAMClient, ReportQuery, DateRange } from './gam-client.js';
 import type { OutputManager, OutputEnvelope } from './output.js';
 import type { ReportCache } from './cache.js';
+import type { Logger } from './log.js';
 
 export type ToolContext = {
   client: GAMClient;
   output: OutputManager;
   timezone: string;
+  logger: Logger;
   now?: Date;
   reportTimeoutMs?: number;
   reportCache?: ReportCache;
@@ -45,11 +47,19 @@ export function buildReportTool<I extends ZodTypeAny>(
       const dateRange = (cfg.buildDateRange?.(input) ??
         (input as { date_range: DateRange }).date_range);
 
+      ctx.logger.debug('report.create', {
+        tool: cfg.name,
+        dimensions: query.dimensions,
+        metrics: query.metrics,
+        date_start: dateRange.start,
+        date_end: dateRange.end,
+      });
       const op = await ctx.client.createReport(query, dateRange);
       const status = await pollUntilDone(
         ctx.client,
         op.operation_name,
         ctx.reportTimeoutMs ?? 300_000,
+        ctx.logger,
       );
       if ('error' in status) return status;
 
@@ -64,16 +74,26 @@ async function pollUntilDone(
   client: GAMClient,
   name: string,
   timeoutMs: number,
+  logger: Logger,
 ): Promise<{ download_url: string } | { error: unknown }> {
   const start = Date.now();
   let delay = 2000;
   while (Date.now() - start < timeoutMs) {
     const s = await client.pollOperation(name);
-    if (s.state === 'done') return { download_url: s.download_url };
-    if (s.state === 'failed') return gamError('REPORT_FAILED', { reason: s.reason });
+    const elapsed_ms = Date.now() - start;
+    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
+    if (s.state === 'done') {
+      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
+      return { download_url: s.download_url };
+    }
+    if (s.state === 'failed') {
+      logger.warn('report.failed', { operation: name, reason: s.reason });
+      return gamError('REPORT_FAILED', { reason: s.reason });
+    }
     await sleep(delay);
     delay = Math.min(delay * 1.5, 15_000);
   }
+  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
   return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
 }
 
