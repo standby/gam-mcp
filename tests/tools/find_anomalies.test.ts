@@ -69,4 +69,94 @@ describe('find_anomalies', () => {
 
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it('ecpm_regression flags buyer networks whose AdX eCPM dropped WoW past threshold', async () => {
+    // last_7_days at now=2026-04-15 → base [04-08..04-14], prev [04-01..04-07]
+    const now = new Date('2026-04-15T12:00:00Z');
+    const header = ['BUYER_NETWORK_NAME', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM'];
+    const query = {
+      dimensions: ['BUYER_NETWORK_NAME'],
+      metrics: ['AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM'],
+    };
+    const { ctx: c, dir } = ctx({
+      now,
+      fixtures: [
+        // base (last 7 days) — DSP_A dropped to $1.00, DSP_B flat
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          csvGz: csv(header, [
+            ['DSP_A', 1_000_000, 1000, 1.0],   // eCPM fell from 2.0 → 1.0 (50% drop)
+            ['DSP_B', 800_000, 1600, 2.0],     // flat
+            ['DSP_LowVol', 500, 5, 10.0],      // < 10k imps → filtered as noise
+          ]),
+        },
+        // prev (week before)
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          csvGz: csv(header, [
+            ['DSP_A', 1_200_000, 2400, 2.0],
+            ['DSP_B', 900_000, 1800, 2.0],
+            ['DSP_LowVol', 500, 5, 10.0],
+          ]),
+        },
+      ],
+    });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'ecpm_regression' });
+    const r = await findAnomaliesTool.handler(args, c);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+
+    expect(r.rows!.map((x) => x.BUYER_NETWORK_NAME)).toEqual(['DSP_A']);
+    expect(r.rows![0].ecpm_now).toBe('1.00');
+    expect(r.rows![0].ecpm_prev).toBe('2.00');
+    expect(Number(r.rows![0].drop_pct)).toBeCloseTo(50.0, 1);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('viewability_drops flags ad units whose viewable-impression rate fell WoW', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const header = ['AD_UNIT_ID', 'AD_UNIT_NAME', 'IMPRESSIONS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE'];
+    const query = {
+      dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+      metrics: ['IMPRESSIONS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE'],
+    };
+    const { ctx: c, dir } = ctx({
+      now,
+      fixtures: [
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          csvGz: csv(header, [
+            // rate is 0..1 fraction in GAM; .60 = 60%
+            ['100', 'TopBanner', 500_000, 0.60],   // dropped 20pp from 80% → 60%
+            ['200', 'Sidebar',   500_000, 0.75],   // flat
+            ['300', 'LowVol',    1000,    0.40],   // < 10k imps → filtered
+          ]),
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          csvGz: csv(header, [
+            ['100', 'TopBanner', 600_000, 0.80],
+            ['200', 'Sidebar',   600_000, 0.75],
+            ['300', 'LowVol',    1000,    0.80],
+          ]),
+        },
+      ],
+    });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'viewability_drops' });
+    const r = await findAnomaliesTool.handler(args, c);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+
+    expect(r.rows!.map((x) => x.AD_UNIT_NAME)).toEqual(['TopBanner']);
+    expect(r.rows![0].viewability_now_pct).toBe('60.00');
+    expect(r.rows![0].viewability_prev_pct).toBe('80.00');
+    expect(Number(r.rows![0].drop_pp)).toBeCloseTo(20.0, 1);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

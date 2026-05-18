@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-18
+
+### Added
+- `health_check` tool — single-call probe that verifies auth + network +
+  permissions by calling `listEntities` for one company. Reports pass/fail
+  with attributed cause (auth, permission, network, quota, wrong-network).
+- `usage_stats` tool — session-to-date counters for GAM API calls,
+  report-job count, cumulative report latency, and report-cache hit rate.
+  Backed by a thin instrumentation wrap around `GAMClient` plus
+  `ReportCache.stats()`.
+- Disk-backed report cache — when `GAM_REPORT_CACHE_DIR` is set, parsed
+  report rows persist as gzipped JSON keyed by a sha256 of the canonical
+  query. Survives MCP restarts. Two-tier read (memory → disk → miss);
+  disk hits warm the memory tier. TTL configurable via
+  `GAM_REPORT_CACHE_TTL_MS` (default 1h). Off by default.
+- HTTP/Streamable transport — when `GAM_HTTP_PORT` is set, the MCP serves
+  Streamable-HTTP requests at `POST /mcp` (with `GET /healthz` for probes)
+  instead of stdio. Stateless mode; suits hosted/team deployments. Default
+  remains stdio.
+- Release automation — `release-please-action` maintains a release PR that
+  bumps versions, promotes the CHANGELOG `[Unreleased]` block, and tags
+  `vX.Y.Z` on merge (which triggers the existing `publish.yml`). Conventional
+  Commits → Keep-A-Changelog sections.
+- Auth alternatives — `GAM_SERVICE_ACCOUNT_KEY_FILE` is no longer the only way
+  to authenticate. New `GAM_SERVICE_ACCOUNT_KEY_JSON` accepts service-account
+  JSON inline (raw or base64-encoded). With neither set, the server falls
+  back to Application Default Credentials (GCE/Cloud Run metadata,
+  `gcloud auth application-default`, or `GOOGLE_APPLICATION_CREDENTIALS`).
+  Precedence is `KEY_FILE` → `KEY_JSON` → ADC, so existing setups with
+  `GAM_SERVICE_ACCOUNT_KEY_FILE` set keep using that exact code path with no
+  behavior change.
+- `diagnose_fill_rate` tool — attributes a single root cause per ad unit for
+  low fill (`healthy`, `tag_integration`, `demand_collapse`, `low_match_rate`,
+  `direct_underdelivery`, `no_demand`, `mixed`) by walking the AdX funnel
+  (requests → routed to AdX → AdX match → ad-server response → unfilled) and
+  comparing against the previous period. Ranks results by
+  unfilled-impression volume so high-impact gaps surface first. Each row
+  carries the supporting ratios so attributions are auditable.
+- `find_unused_ad_units` tool — flags "codeless" ad units (those receiving
+  fewer than `min_requests` ad requests over a lookback window) by
+  set-differencing `listEntities` against a Reports run. Defaults
+  `lookback_days=30`, `min_requests=0`.
+- Saved-query persistence — four tools (`save_query`, `list_saved_queries`,
+  `run_saved_query`, `delete_saved_query`) backed by a JSON file at
+  `${XDG_CONFIG_HOME:-$HOME/.config}/gam-mcp/saved-queries.json` (overrideable
+  via `GAM_SAVED_QUERIES_FILE`). Date range is intentionally not part of the
+  saved template — replay always supplies a fresh window.
+- MCP `resources` capability — `gam://schema`, `gam://schema/dimensions`,
+  `gam://schema/metrics`, and `gam://network` are now advertised as readable
+  resources so clients can browse the schema without burning a tool call.
+- MCP `prompts` capability — three preset workflows: `weekly_pacing_review`,
+  `monthly_revenue_close`, `fill_rate_postmortem`.
+
+## [0.2.3] — 2026-05-18
+
+### Added
+- `bidder_breakdown` tool — Open Bidding (EBDA) yield by `BIDDER_NAME` using
+  AdX-only impression/revenue/eCPM metrics, with optional secondary slice by
+  day, ad unit, country, device, or line item type.
+- `find_anomalies` kind `ecpm_regression` — buyer networks (DSPs / AdX /
+  AdSense) whose AdX average eCPM dropped week-over-week by more than
+  `threshold_pct` percent of prior eCPM (default 15%). Low-volume buyers
+  (<10k AdX impressions either side) are filtered.
+- `find_anomalies` kind `viewability_drops` — ad units whose Active View
+  viewable-impression rate dropped week-over-week by more than `threshold_pct`
+  percentage points (default 5pp). Low-volume ad units (<10k imps either
+  side) are filtered.
+
 ## [0.2.2] — 2026-05-17
 
 ### Added

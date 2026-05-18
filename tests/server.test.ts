@@ -5,19 +5,28 @@ describe('server registry', () => {
   it('lists all expected tool names', () => {
     const names = listToolNames();
     expect(names.sort()).toEqual([
+      'bidder_breakdown',
       'compare_periods',
+      'delete_saved_query',
       'describe_schema',
+      'diagnose_fill_rate',
       'fill_rate',
       'find_anomalies',
+      'find_unused_ad_units',
+      'health_check',
       'inventory_breakdown',
       'kv_breakdown',
+      'list_saved_queries',
       'lookup',
       'pacing_status',
       'revenue_summary',
       'revenue_trend',
       'run_report',
+      'run_saved_query',
+      'save_query',
       'top_advertisers',
       'top_line_items',
+      'usage_stats',
     ]);
   });
 

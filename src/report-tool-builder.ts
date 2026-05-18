@@ -5,6 +5,8 @@ import type { GAMClient, ReportQuery, DateRange } from './gam-client.js';
 import type { OutputManager, OutputEnvelope } from './output.js';
 import type { ReportCache } from './cache.js';
 import type { Logger } from './log.js';
+import type { SavedQueryStore } from './saved-queries.js';
+import type { UsageCounters } from './usage.js';
 
 export type ToolContext = {
   client: GAMClient;
@@ -14,6 +16,8 @@ export type ToolContext = {
   now?: Date;
   reportTimeoutMs?: number;
   reportCache?: ReportCache;
+  savedQueries?: SavedQueryStore;
+  usageCounters?: UsageCounters;
 };
 
 export type ToolDefinition<I extends ZodTypeAny> = {

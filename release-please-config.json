@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "changelog-path": "CHANGELOG.md",
+  "changelog-sections": [
+    { "type": "feat",     "section": "Added" },
+    { "type": "fix",      "section": "Fixed" },
+    { "type": "perf",     "section": "Changed" },
+    { "type": "refactor", "section": "Changed" },
+    { "type": "docs",     "section": "Changed", "hidden": true },
+    { "type": "chore",    "section": "Changed", "hidden": true },
+    { "type": "ci",       "section": "Changed", "hidden": true },
+    { "type": "test",     "section": "Changed", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "gam-mcp"
+    }
+  }
+}

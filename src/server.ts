@@ -3,9 +3,15 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createRequire } from 'node:module';
 import { ALL_TOOLS } from './tools/index.js';
+import { GAM_SCHEMA } from './schema.js';
+import { PROMPTS, renderPrompt } from './prompts.js';
 import type { ToolContext } from './report-tool-builder.js';
 import { gamError } from './errors.js';
 import { z } from 'zod';
@@ -14,6 +20,47 @@ const pkg = createRequire(import.meta.url)('../package.json') as { version: stri
 
 export function listToolNames(): string[] {
   return ALL_TOOLS.map((t) => t.name);
+}
+
+type ResourceDef = {
+  uri: string;
+  name: string;
+  description: string;
+  body: () => unknown;
+};
+
+const RESOURCES: ResourceDef[] = [
+  {
+    uri: 'gam://schema',
+    name: 'Full curated GAM schema',
+    description: 'Full curated catalog of dimensions and metrics this MCP can query, with descriptions tuned for LLM consumption.',
+    body: () => GAM_SCHEMA,
+  },
+  {
+    uri: 'gam://schema/dimensions',
+    name: 'GAM dimensions',
+    description: 'Available report dimensions (date, advertiser, line item, ad unit, country, custom dimensions, etc.).',
+    body: () => ({ dimensions: GAM_SCHEMA.dimensions }),
+  },
+  {
+    uri: 'gam://schema/metrics',
+    name: 'GAM metrics',
+    description: 'Available report metrics (impressions, revenue, eCPM, AdX/AdSense channel metrics, viewability, etc.).',
+    body: () => ({ metrics: GAM_SCHEMA.metrics }),
+  },
+];
+
+export function listResources(): ResourceDef[] {
+  return RESOURCES;
+}
+
+function networkResource(networkCode: string, timezone: string): ResourceDef {
+  return {
+    uri: 'gam://network',
+    name: 'GAM network identity',
+    description: 'Network code and configured timezone this MCP is reporting on.',
+    body: () => ({ network_code: networkCode, timezone }),
+  };
 }
 
 export function installStdoutGuard(): () => void {
@@ -32,11 +79,23 @@ export function installStdoutGuard(): () => void {
   return () => { process.stdout.write = original; };
 }
 
-export async function startMcpServer(ctx: ToolContext): Promise<void> {
+// Build the MCP Server with every capability and tool registered, but don't
+// connect a transport yet. Callers choose how to connect (stdio, HTTP, etc.)
+// — this split lets us keep the existing stdio entrypoint unchanged while
+// supporting alternate transports.
+export function buildMcpServer(
+  ctx: ToolContext,
+  opts: { networkCode: string } = { networkCode: '' },
+): Server {
   const server = new Server(
     { name: 'gam-mcp', version: pkg.version },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {}, prompts: {} } },
   );
+
+  const resources = [
+    ...RESOURCES,
+    ...(opts.networkCode ? [networkResource(opts.networkCode, ctx.timezone)] : []),
+  ];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: ALL_TOOLS.map((t) => ({
@@ -45,6 +104,55 @@ export async function startMcpServer(ctx: ToolContext): Promise<void> {
       inputSchema: zodToJsonSchema(t.input),
     })),
   }));
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: resources.map((r) => ({
+      uri: r.uri,
+      name: r.name,
+      description: r.description,
+      mimeType: 'application/json',
+    })),
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+    const r = resources.find((x) => x.uri === req.params.uri);
+    if (!r) {
+      throw new Error(`Unknown resource: ${req.params.uri}`);
+    }
+    return {
+      contents: [{
+        uri: r.uri,
+        mimeType: 'application/json',
+        text: JSON.stringify(r.body(), null, 2),
+      }],
+    };
+  });
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map((p) => ({
+      name: p.name,
+      description: p.description,
+      arguments: p.arguments.map((a) => ({
+        name: a.name,
+        description: a.description,
+        required: a.required,
+      })),
+    })),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+    const args = (req.params.arguments ?? {}) as Record<string, string>;
+    const rendered = renderPrompt(req.params.name, args);
+    if (!rendered) {
+      throw new Error(`Unknown prompt: ${req.params.name}`);
+    }
+    return {
+      description: rendered.description,
+      messages: [
+        { role: 'user', content: { type: 'text', text: rendered.text } },
+      ],
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const toolName = req.params.name;
@@ -86,6 +194,14 @@ export async function startMcpServer(ctx: ToolContext): Promise<void> {
     }
   });
 
+  return server;
+}
+
+export async function startMcpServer(
+  ctx: ToolContext,
+  opts: { networkCode: string } = { networkCode: '' },
+): Promise<void> {
+  const server = buildMcpServer(ctx, opts);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

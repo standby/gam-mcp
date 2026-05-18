@@ -11,6 +11,17 @@ import { revenueTrendTool } from './revenue_trend.js';
 import { comparePeriodsTool } from './compare_periods.js';
 import { findAnomaliesTool } from './find_anomalies.js';
 import { kvBreakdownTool } from './kv_breakdown.js';
+import { bidderBreakdownTool } from './bidder_breakdown.js';
+import { findUnusedAdUnitsTool } from './find_unused_ad_units.js';
+import { diagnoseFillRateTool } from './diagnose_fill_rate.js';
+import { healthCheckTool } from './health_check.js';
+import { usageStatsTool } from './usage_stats.js';
+import {
+  saveQueryTool,
+  listSavedQueriesTool,
+  runSavedQueryTool,
+  deleteSavedQueryTool,
+} from './saved_queries.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ZodTypeAny } from 'zod';
 
@@ -28,4 +39,13 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   comparePeriodsTool,
   findAnomaliesTool,
   kvBreakdownTool,
+  bidderBreakdownTool,
+  findUnusedAdUnitsTool,
+  diagnoseFillRateTool,
+  healthCheckTool,
+  usageStatsTool,
+  saveQueryTool,
+  listSavedQueriesTool,
+  runSavedQueryTool,
+  deleteSavedQueryTool,
 ] as unknown as ToolDefinition<ZodTypeAny>[];

@@ -2,12 +2,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startMcpServer, installStdoutGuard } from './server.js';
+import { startMcpServer, buildMcpServer, installStdoutGuard } from './server.js';
+import { connectHttp } from './http-transport.js';
 import { createOutputManager } from './output.js';
-import { createGoogleAuth, createAuthFetch } from './auth.js';
+import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js';
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
 import { createReportCache } from './cache.js';
 import { createLogger, levelFromEnv } from './log.js';
+import { createSavedQueryStore, defaultSavedQueriesPath } from './saved-queries.js';
+import { createUsageCounters, instrumentGamClient } from './usage.js';
 
 function requiredEnv(name: string): string {
   const v = process.env[name];
@@ -19,25 +22,36 @@ function requiredEnv(name: string): string {
 }
 
 async function main(): Promise<void> {
-  installStdoutGuard();
+  // Only install the stdout guard for stdio mode — in HTTP mode stdout is
+  // free for normal logging since MCP frames go over HTTP, not stdout.
+  const httpPort = process.env.GAM_HTTP_PORT ? Number(process.env.GAM_HTTP_PORT) : null;
+  if (httpPort === null) installStdoutGuard();
 
   const networkCode = requiredEnv('GAM_NETWORK_CODE');
-  const keyFile = requiredEnv('GAM_SERVICE_ACCOUNT_KEY_FILE');
   const timezone = process.env.GAM_TIMEZONE ?? 'UTC';
   const inlineThreshold = Number(process.env.GAM_INLINE_ROW_THRESHOLD ?? 200);
   const reportTimeoutMs = Number(process.env.GAM_REPORT_TIMEOUT_MS ?? 300_000);
 
   const logger = createLogger({ level: levelFromEnv(process.env) });
 
+  const resolved = resolveAuthSource(process.env);
+  if ('error' in resolved) {
+    process.stderr.write(`gam-mcp: ${resolved.error.message}\n  hint: ${resolved.error.hint}\n`);
+    process.exit(2);
+  }
+  logger.info('auth.source_resolved', { source: resolved.source.type });
+
   const tempDir = mkdtempSync(join(tmpdir(), `gam-mcp-${process.pid}-`));
   const output = createOutputManager({ tempDir, inlineThreshold });
 
-  const auth = createGoogleAuth(keyFile, logger);
+  const auth = createGoogleAuth(resolved.source, logger);
   const authFetch = createAuthFetch(auth);
   // Retry transient failures (429 quota, 5xx, network) with exponential
   // backoff so a single hiccup doesn't kill a multi-step LLM session.
   const fetchImpl = withRetries(authFetch, { logger });
-  const client = createRestGamClient({ networkCode, fetchImpl });
+  const rawClient = createRestGamClient({ networkCode, fetchImpl });
+  const usageCounters = createUsageCounters();
+  const client = instrumentGamClient(rawClient, usageCounters);
 
   const cleanup = () => {
     try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -46,8 +60,23 @@ async function main(): Promise<void> {
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
-  const reportCache = createReportCache({ logger });
-  await startMcpServer({ client, output, timezone, reportTimeoutMs, reportCache, logger });
+  const reportCache = createReportCache({
+    logger,
+    ...(process.env.GAM_REPORT_CACHE_DIR && { diskDir: process.env.GAM_REPORT_CACHE_DIR }),
+    ...(process.env.GAM_REPORT_CACHE_TTL_MS && { ttlMs: Number(process.env.GAM_REPORT_CACHE_TTL_MS) }),
+  });
+  const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
+  const ctx = { client, output, timezone, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters };
+  if (httpPort !== null) {
+    if (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535) {
+      process.stderr.write(`gam-mcp: GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}\n`);
+      process.exit(2);
+    }
+    const server = buildMcpServer(ctx, { networkCode });
+    await connectHttp(server, { port: httpPort, logger });
+  } else {
+    await startMcpServer(ctx, { networkCode });
+  }
 }
 
 main().catch((e) => {
