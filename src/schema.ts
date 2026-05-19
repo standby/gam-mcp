@@ -1,5 +1,22 @@
-export type DimensionDef = { name: string; type: 'string' | 'number' | 'date'; description: string };
-export type MetricDef = { name: string; type: 'number' | 'currency' | 'rate'; description: string };
+// `incompatible_with` lists dimension or metric names that GAM refuses to
+// combine with this entry in a single report. The matrix is curated from
+// observed 400 responses ("Dimension X cannot be queried with metric Y") —
+// it's not exhaustive, but surfaces the cases callers hit most often so
+// describe_schema can flag them upfront instead of letting them discover at
+// runtime. Symmetric on purpose: A → [B] AND B → [A] both appear, so a
+// caller looking up either side sees the constraint.
+export type DimensionDef = {
+  name: string;
+  type: 'string' | 'number' | 'date';
+  description: string;
+  incompatible_with?: string[];
+};
+export type MetricDef = {
+  name: string;
+  type: 'number' | 'currency' | 'rate';
+  description: string;
+  incompatible_with?: string[];
+};
 
 export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = {
   dimensions: [
@@ -23,12 +40,18 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE',      type: 'number', description: 'Line item booked goal in absolute units (impressions/clicks). For SPONSORSHIP line items the goal is a percentage instead — see LINE_ITEM_PRIMARY_GOAL_UNITS_PERCENTAGE.' },
     { name: 'LINE_ITEM_PRIMARY_GOAL_UNITS_PERCENTAGE',    type: 'number', description: 'Line item booked goal as a percentage of inventory (used by SPONSORSHIP).' },
     { name: 'LINE_ITEM_PRIMARY_GOAL_TYPE_NAME',           type: 'string', description: 'Goal type label (LIFETIME / DAILY / NONE).' },
-    { name: 'BUYER_NETWORK_NAME',    type: 'string', description: 'Demand-source name (DSP, AdSense, AdX, etc.). Best default for slicing programmatic revenue by buyer.' },
-    { name: 'BUYER_NETWORK_ID',      type: 'number', description: 'Demand-source ID. Companion to BUYER_NETWORK_NAME.' },
-    { name: 'BIDDER_NAME',           type: 'string', description: 'Open Bidding (EBDA) bidder display name. Use to attribute revenue to specific bidders participating in Open Bidding.' },
-    { name: 'BIDDER_ENCRYPTED_ID',   type: 'string', description: 'Open Bidding bidder encrypted ID. Companion to BIDDER_NAME.' },
-    { name: 'KEY_VALUES_NAME',       type: 'string', description: "Custom-targeting key=value pair from the ad request (e.g. '<key>=<value>'). WARNING: a single impression can match multiple KV pairs, so rows are NOT mutually exclusive — summing impressions/revenue across rows OVERSTATES the true total. Use for ranking 'which KVs are most active', not for share-of-total math. For clean aggregation, use CUSTOM_DIMENSION_<N>_VALUE with custom_dimension_key_ids." },
-    { name: 'KEY_VALUES_ID',         type: 'number', description: 'Custom-targeting key=value ID. Companion to KEY_VALUES_NAME — same overlap caveat applies.' },
+    { name: 'BUYER_NETWORK_NAME',    type: 'string', description: 'Demand-source name (DSP, AdSense, AdX, etc.). Best default for slicing programmatic revenue by buyer.',
+      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
+    { name: 'BUYER_NETWORK_ID',      type: 'number', description: 'Demand-source ID. Companion to BUYER_NETWORK_NAME.',
+      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
+    { name: 'BIDDER_NAME',           type: 'string', description: 'Open Bidding (EBDA) bidder display name. Use to attribute revenue to specific bidders participating in Open Bidding.',
+      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE'] },
+    { name: 'BIDDER_ENCRYPTED_ID',   type: 'string', description: 'Open Bidding bidder encrypted ID. Companion to BIDDER_NAME.',
+      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE'] },
+    { name: 'KEY_VALUES_NAME',       type: 'string', description: "Custom-targeting key=value pair from the ad request (e.g. '<key>=<value>'). WARNING: a single impression can match multiple KV pairs, so rows are NOT mutually exclusive — summing impressions/revenue across rows OVERSTATES the true total. Use for ranking 'which KVs are most active', not for share-of-total math. For clean aggregation, use CUSTOM_DIMENSION_<N>_VALUE with custom_dimension_key_ids.",
+      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM', 'AD_EXCHANGE_MATCH_RATE', 'AD_EXCHANGE_TOTAL_REQUESTS', 'AD_EXCHANGE_CTR', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE', 'ADSENSE_AVERAGE_ECPM'] },
+    { name: 'KEY_VALUES_ID',         type: 'number', description: 'Custom-targeting key=value ID. Companion to KEY_VALUES_NAME — same overlap caveat applies.',
+      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM', 'AD_EXCHANGE_MATCH_RATE', 'AD_EXCHANGE_TOTAL_REQUESTS', 'AD_EXCHANGE_CTR', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE', 'ADSENSE_AVERAGE_ECPM'] },
     { name: 'CUSTOM_DIMENSION_0_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 0. REQUIRES passing custom_dimension_key_ids[0]=<key_id> on run_report — find key IDs via lookup(entity_type="custom_targeting_key"). Each request emits exactly one value per slot, so rows aggregate cleanly to network total. Slot meaning is per-network — different publishers configure different keys.' },
     { name: 'CUSTOM_DIMENSION_1_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 1. REQUIRES custom_dimension_key_ids[1]. Aggregates cleanly (one value per request).' },
     { name: 'CUSTOM_DIMENSION_2_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 2. REQUIRES custom_dimension_key_ids[2]. Aggregates cleanly.' },
@@ -49,8 +72,10 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'CPM_REVENUE',                            type: 'currency', description: 'CPM revenue.' },
     { name: 'CPC_REVENUE',                            type: 'currency', description: 'CPC revenue.' },
     { name: 'CTR',                                    type: 'rate',     description: 'Clicks ÷ impressions.' },
-    { name: 'AD_REQUESTS',                            type: 'number',   description: 'Total ad requests received.' },
-    { name: 'UNFILLED_IMPRESSIONS',                   type: 'number',   description: 'Requests without a fill.' },
+    { name: 'AD_REQUESTS',                            type: 'number',   description: 'Total ad requests received.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'CREATIVE_ID', 'CREATIVE_NAME', 'CREATIVE_TYPE', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'UNFILLED_IMPRESSIONS',                   type: 'number',   description: 'Requests without a fill.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'CREATIVE_ID', 'CREATIVE_NAME', 'LINE_ITEM_ID', 'LINE_ITEM_NAME'] },
     { name: 'FILL_RATE',                              type: 'rate',     description: 'Filled ÷ requests.' },
     { name: 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',       type: 'number',   description: 'Active View viewable impressions (all channels).' },
     { name: 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE',  type: 'rate',     description: 'Viewable ÷ measurable impressions.' },
@@ -64,15 +89,24 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'AD_SERVER_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE', type: 'rate',   description: 'Ad server viewability rate.' },
     { name: 'AD_SERVER_AVERAGE_ECPM',                          type: 'currency', description: 'Average eCPM for ad-server impressions only (excludes AdX/AdSense backfill). Pair with AD_SERVER_IMPRESSIONS for clean direct-channel eCPM.' },
     { name: 'AD_SERVER_RESPONSES_SERVED',                      type: 'number',   description: 'Ad-server responses served — analogous to fills/matched requests, ad-server-only (excludes AdX/AdSense).' },
-    { name: 'AD_EXCHANGE_IMPRESSIONS',                         type: 'number',   description: 'Ad Exchange (AdX / Open Bidding) impressions — programmatic-only fills, excludes direct/AdSense.' },
-    { name: 'AD_EXCHANGE_REVENUE',                             type: 'currency', description: 'Ad Exchange revenue — programmatic-only.' },
-    { name: 'AD_EXCHANGE_AVERAGE_ECPM',                        type: 'currency', description: 'Average eCPM on Ad Exchange impressions. Use with BUYER_NETWORK_NAME or BIDDER_NAME to compare DSP yield.' },
-    { name: 'AD_EXCHANGE_MATCH_RATE',                          type: 'rate',     description: 'AdX match rate: matched requests ÷ total AdX requests. Below ~50% suggests floor pricing too high or weak demand.' },
-    { name: 'AD_EXCHANGE_TOTAL_REQUESTS',                      type: 'number',   description: 'Total AdX requests (matched + unmatched). Pair with AD_EXCHANGE_MATCH_RATE for funnel analysis.' },
-    { name: 'AD_EXCHANGE_CTR',                                 type: 'rate',     description: 'AdX click-through rate.' },
-    { name: 'ADSENSE_IMPRESSIONS',                             type: 'number',   description: 'AdSense backfill impressions (after AdX, before unfilled).' },
-    { name: 'ADSENSE_REVENUE',                                 type: 'currency', description: 'AdSense backfill revenue.' },
-    { name: 'ADSENSE_AVERAGE_ECPM',                            type: 'currency', description: 'Average eCPM on AdSense backfill — typically the floor of programmatic eCPM tiers.' },
+    { name: 'AD_EXCHANGE_IMPRESSIONS',                         type: 'number',   description: 'Ad Exchange (AdX / Open Bidding) impressions — programmatic-only fills, excludes direct/AdSense.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'AD_EXCHANGE_REVENUE',                             type: 'currency', description: 'Ad Exchange revenue — programmatic-only.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'AD_EXCHANGE_AVERAGE_ECPM',                        type: 'currency', description: 'Average eCPM on Ad Exchange impressions. Use with BUYER_NETWORK_NAME or BIDDER_NAME to compare DSP yield.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'AD_EXCHANGE_MATCH_RATE',                          type: 'rate',     description: 'AdX match rate: matched requests ÷ total AdX requests. Below ~50% suggests floor pricing too high or weak demand.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'CREATIVE_ID', 'CREATIVE_NAME', 'ADVERTISER_ID', 'ADVERTISER_NAME', 'ORDER_ID', 'ORDER_NAME'] },
+    { name: 'AD_EXCHANGE_TOTAL_REQUESTS',                      type: 'number',   description: 'Total AdX requests (matched + unmatched). Pair with AD_EXCHANGE_MATCH_RATE for funnel analysis.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'CREATIVE_ID', 'CREATIVE_NAME', 'ADVERTISER_ID', 'ADVERTISER_NAME', 'ORDER_ID', 'ORDER_NAME'] },
+    { name: 'AD_EXCHANGE_CTR',                                 type: 'rate',     description: 'AdX click-through rate.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'ADSENSE_IMPRESSIONS',                             type: 'number',   description: 'AdSense backfill impressions (after AdX, before unfilled).',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'ADSENSE_REVENUE',                                 type: 'currency', description: 'AdSense backfill revenue.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+    { name: 'ADSENSE_AVERAGE_ECPM',                            type: 'currency', description: 'Average eCPM on AdSense backfill — typically the floor of programmatic eCPM tiers.',
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
   ],
 };
 
@@ -94,4 +128,41 @@ export function validateCombo(q: { dimensions: string[]; metrics: string[] }): s
     if (!isValidMetric(m)) return `Unknown metric: ${m}`;
   }
   return null;
+}
+
+const DIM_BY_NAME = new Map(GAM_SCHEMA.dimensions.map((d) => [d.name, d]));
+const METRIC_BY_NAME = new Map(GAM_SCHEMA.metrics.map((m) => [m.name, m]));
+
+// Returns the curated incompatibilities for a dimension or metric name, or []
+// if none are recorded. Symmetric: callers can pass either side.
+export function incompatibleWith(name: string): string[] {
+  return DIM_BY_NAME.get(name)?.incompatible_with
+    ?? METRIC_BY_NAME.get(name)?.incompatible_with
+    ?? [];
+}
+
+// Pre-flight a query against the curated incompatibility matrix. Returns a
+// list of conflicts {a, b} (only one direction per pair), or [] if clean.
+// The matrix is best-effort — GAM is still the source of truth, so callers
+// should treat this as a hint, not a hard validator. Empty result does not
+// guarantee GAM will accept the combo.
+export function findIncompatibilities(q: {
+  dimensions: string[];
+  metrics: string[];
+}): Array<{ a: string; b: string }> {
+  const all = [...q.dimensions, ...q.metrics];
+  const seen = new Set<string>();
+  const conflicts: Array<{ a: string; b: string }> = [];
+  for (const a of all) {
+    const bad = new Set(incompatibleWith(a));
+    for (const b of all) {
+      if (a === b) continue;
+      if (!bad.has(b)) continue;
+      const key = a < b ? `${a}\0${b}` : `${b}\0${a}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      conflicts.push({ a, b });
+    }
+  }
+  return conflicts;
 }

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { GAM_SCHEMA, isValidDimension, isValidMetric, validateCombo } from '../src/schema.js';
+import {
+  GAM_SCHEMA,
+  isValidDimension,
+  isValidMetric,
+  validateCombo,
+  incompatibleWith,
+  findIncompatibilities,
+} from '../src/schema.js';
 
 describe('GAM schema catalog', () => {
   it('exposes core dimensions', () => {
@@ -67,5 +74,30 @@ describe('GAM schema catalog', () => {
     ]) {
       expect(isValidMetric(m)).toBe(true);
     }
+  });
+
+  it('records KEY_VALUES_NAME ⊥ AD_REQUESTS symmetrically', () => {
+    expect(incompatibleWith('KEY_VALUES_NAME')).toContain('AD_REQUESTS');
+    expect(incompatibleWith('AD_REQUESTS')).toContain('KEY_VALUES_NAME');
+  });
+
+  it('findIncompatibilities flags the canonical conflict and dedupes by pair', () => {
+    const conflicts = findIncompatibilities({
+      dimensions: ['KEY_VALUES_NAME'],
+      metrics: ['AD_REQUESTS', 'AD_EXCHANGE_MATCH_RATE'],
+    });
+    // Should report KEY_VALUES_NAME × AD_REQUESTS and KEY_VALUES_NAME × AD_EXCHANGE_MATCH_RATE,
+    // each only once (not duplicated for the reverse direction).
+    expect(conflicts).toHaveLength(2);
+    const pairs = conflicts.map((c) => [c.a, c.b].sort().join('|'));
+    expect(pairs).toContain(['AD_REQUESTS', 'KEY_VALUES_NAME'].sort().join('|'));
+    expect(pairs).toContain(['AD_EXCHANGE_MATCH_RATE', 'KEY_VALUES_NAME'].sort().join('|'));
+  });
+
+  it('findIncompatibilities returns [] for a clean query', () => {
+    expect(findIncompatibilities({
+      dimensions: ['DATE', 'ADVERTISER_NAME'],
+      metrics: ['REVENUE', 'IMPRESSIONS'],
+    })).toEqual([]);
   });
 });

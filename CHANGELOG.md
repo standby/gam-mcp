@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-05-18
+
+### Added
+- `lookup` returns both `name` and `displayName` for every entity. For
+  `custom_targeting_key`, `name` is the API code that appears in
+  `KEY_VALUES_NAME` report rows (sourced from GAM's `adTagName`) and
+  `displayName` is the human-readable label — so a `channel_id` value from
+  a KV report row resolves directly to its key ID without a second lookup.
+- `lookup` accepts `match: "substring" | "exact"`. Exact mode emits the
+  AIP-160 equality filter — `name = "channel_id"` for
+  `custom_targeting_key`, `displayName = "..."` elsewhere — and there is
+  an auto-fallback from substring to exact when GAM rejects the
+  substring filter for a custom-targeting-key query.
+- `describe_schema` surfaces a curated `incompatible_with` column listing
+  dimensions/metrics GAM refuses to combine with each entry (e.g.,
+  `KEY_VALUES_NAME` ⊥ `AD_REQUESTS`, `AD_EXCHANGE_MATCH_RATE` ⊥ the
+  line-item/advertiser/order dimensions). Symmetric — both sides of each
+  pair carry the hint. Best-effort; an empty list does not guarantee
+  GAM will accept the combination.
+- `run_report` auto-rewrites a `KEY_VALUES_NAME='<key>=<value>'` filter to
+  a `CUSTOM_DIMENSION_<N>_VALUE` filter (resolving the key via
+  `lookup(match="exact")` and allocating the next free
+  `custom_dimension_key_ids` slot) when the requested metrics are
+  incompatible with `KEY_VALUES_NAME`. The rewrite is surfaced in the
+  envelope's `warnings[]` so callers can see exactly what happened.
+- `kv_report` tool — high-level wrapper that accepts `kv: "key=value"`,
+  optional `ad_unit_id` / `ad_unit_name` / `order_id` / `line_item_id`,
+  a date range, and metrics. Resolves the key, picks a CUSTOM_DIMENSION
+  slot, and runs a report compatible with any request-time or
+  programmatic metric — folding what was previously a multi-step
+  `lookup` → `run_report` dance into a single call.
+
 ## [0.3.0] — 2026-05-18
 
 ### Added

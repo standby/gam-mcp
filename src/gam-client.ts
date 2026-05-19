@@ -4,7 +4,24 @@ export type EntityType =
   | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'creative' | 'placement' | 'company'
   | 'custom_targeting_key';
 
-export type Entity = { id: number; name: string; [k: string]: unknown };
+// `name` is the canonical short identifier (e.g. `adTagName` "channel_id" on a
+// custom_targeting_key, or the displayName on an order/advertiser where GAM
+// has only one user-visible label). `displayName` is the longer descriptive
+// label when GAM exposes one separately — for custom_targeting_key this is
+// the human-readable "Channel ID" while `name` is the API code emitted in
+// KEY_VALUES_NAME report rows.
+export type Entity = {
+  id: number;
+  name: string;
+  displayName?: string;
+  [k: string]: unknown;
+};
+
+// Filter mode for listEntities `query`. 'substring' uses the AIP-160
+// has-operator (`displayName:"foo"`); 'exact' uses equality on the canonical
+// `name` field for custom_targeting_key (GAM accepts `name = "channel_id"`)
+// or on `displayName` for entities that only expose displayName.
+export type ListEntitiesMatch = 'substring' | 'exact';
 
 export type ReportQuery = {
   dimensions: string[];
@@ -34,6 +51,8 @@ export type GAMClient = {
     // Max entities to return. Implementation pages through GAM (200/page)
     // transparently up to this limit. Default 200 (one page).
     limit?: number;
+    // How to interpret `query`. Default 'substring'.
+    match?: ListEntitiesMatch;
   }) => Promise<Entity[]>;
   createReport: (query: ReportQuery, dateRange: DateRange) => Promise<ReportOperation>;
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
@@ -65,14 +84,19 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     );
 
   return {
-    async listEntities({ entity_type, query, ids, limit }) {
+    async listEntities({ entity_type, query, ids, limit, match }) {
       const all = state.entities?.[entity_type] ?? [];
       let filtered: Entity[];
       if (ids?.length) filtered = all.filter((e) => ids.includes(e.id));
       else if (!query) filtered = all;
-      else {
+      else if (match === 'exact') {
+        filtered = all.filter((e) => e.name === query || e.displayName === query);
+      } else {
         const q = query.toLowerCase();
-        filtered = all.filter((e) => e.name.toLowerCase().includes(q));
+        filtered = all.filter((e) =>
+          e.name.toLowerCase().includes(q) ||
+          (typeof e.displayName === 'string' && e.displayName.toLowerCase().includes(q)),
+        );
       }
       return limit !== undefined ? filtered.slice(0, limit) : filtered;
     },

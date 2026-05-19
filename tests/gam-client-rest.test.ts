@@ -227,22 +227,52 @@ describe('REST GAM client', () => {
     expect(calls404).toBe(1); // 4xx (not 429) is not retried
   });
 
-  it('listEntities supports custom_targeting_key path', async () => {
+  it('listEntities supports custom_targeting_key path, exposing both adTagName (as name) and displayName', async () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       expect(String(url)).toContain('/networks/12345/customTargetingKeys');
       return new Response(JSON.stringify({
         customTargetingKeys: [
-          { customTargetingKeyId: '111', displayName: 'section', name: 'networks/12345/customTargetingKeys/111' },
-          { customTargetingKeyId: '222', displayName: 'tier',    name: 'networks/12345/customTargetingKeys/222' },
+          { customTargetingKeyId: '111', adTagName: 'channel_id', displayName: 'Channel ID', name: 'networks/12345/customTargetingKeys/111' },
+          { customTargetingKeyId: '222', adTagName: 'tier',       displayName: 'Tier',       name: 'networks/12345/customTargetingKeys/222' },
+          // older fixtures without adTagName still resolve cleanly (fallback to displayName).
+          { customTargetingKeyId: '333', displayName: 'section',  name: 'networks/12345/customTargetingKeys/333' },
         ],
       }), { status: 200 });
     }) as unknown as typeof fetch;
     const client = createRestGamClient({ networkCode: '12345', fetchImpl });
     const r = await client.listEntities({ entity_type: 'custom_targeting_key' });
     expect(r).toEqual([
-      { id: 111, name: 'section' },
-      { id: 222, name: 'tier' },
+      { id: 111, name: 'channel_id', displayName: 'Channel ID' },
+      { id: 222, name: 'tier',       displayName: 'Tier' },
+      // adTagName missing → name = displayName, displayName field omitted (would be redundant).
+      { id: 333, name: 'section' },
     ]);
+  });
+
+  it('listEntities match="exact" on custom_targeting_key uses `name = "..."` filter (GAM rejects substring on this attribute)', async () => {
+    let capturedFilter: string | null = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      capturedFilter = new URL(String(url)).searchParams.get('filter');
+      return new Response(JSON.stringify({ customTargetingKeys: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.listEntities({
+      entity_type: 'custom_targeting_key',
+      query: 'channel_id',
+      match: 'exact',
+    });
+    expect(capturedFilter).toBe('name = "channel_id"');
+  });
+
+  it('listEntities match="exact" on entities other than custom_targeting_key falls back to `displayName = "..."`', async () => {
+    let capturedFilter: string | null = null;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      capturedFilter = new URL(String(url)).searchParams.get('filter');
+      return new Response(JSON.stringify({ orders: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.listEntities({ entity_type: 'order', query: 'Q1 Brand', match: 'exact' });
+    expect(capturedFilter).toBe('displayName = "Q1 Brand"');
   });
 
   it('createReport omits filters field entirely when none provided', async () => {

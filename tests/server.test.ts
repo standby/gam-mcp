@@ -16,6 +16,7 @@ describe('server registry', () => {
       'health_check',
       'inventory_breakdown',
       'kv_breakdown',
+      'kv_report',
       'list_saved_queries',
       'lookup',
       'pacing_status',

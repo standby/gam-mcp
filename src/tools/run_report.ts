@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
 import type { Logger } from '../log.js';
+import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -57,14 +58,35 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       return gamError('INVALID_DATE_RANGE', { reason: msg });
     }
 
-    const query: ReportQuery = {
+    let query: ReportQuery = {
       dimensions: input.dimensions,
       metrics: input.metrics,
       filters: input.filters,
       custom_dimension_key_ids: input.custom_dimension_key_ids,
     };
+    const warnings: string[] = [];
+
+    // Auto-rewrite KEY_VALUES_NAME='channel_id=479' + AD_REQUESTS (and other
+    // request-time metrics) → CUSTOM_DIMENSION slot, since GAM rejects the
+    // raw combo. Hidden from the caller's tool call — they get the data and
+    // a warning explaining what happened.
+    const rewrite = await maybeRewriteKvFilter(query, makeKvResolver(ctx.client));
+    if (rewrite.rewritten) {
+      query = rewrite.query;
+      warnings.push(rewrite.warning);
+      ctx.logger.info('report.kv_rewrite', {
+        tool: 'run_report',
+        warning: rewrite.warning,
+      });
+    } else if ('error' in rewrite && rewrite.error) {
+      return gamError('INVALID_INPUT', {
+        reason: rewrite.error,
+        hint: 'Discover the key via lookup(entity_type="custom_targeting_key", match="exact") and pass it via custom_dimension_key_ids + CUSTOM_DIMENSION_<N>_VALUE.',
+      });
+    }
+
     const summary =
-      `Report: dims=[${input.dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
+      `Report: dims=[${query.dimensions.join(',')}] metrics=[${query.metrics.join(',')}] ` +
       `${dateRange.start}..${dateRange.end}`;
 
     // Cache hit: skip create→poll→download entirely.
@@ -93,7 +115,7 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
           ctx.reportCache.set(query, dateRange, rows);
         } catch { /* cache best-effort; envelope path is authoritative */ }
       }
-      return ctx.output.fromCsvGzFile(dest, summary);
+      return ctx.output.fromCsvGzFile(dest, summary, warnings.length ? warnings : undefined);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

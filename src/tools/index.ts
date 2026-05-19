@@ -11,6 +11,7 @@ import { revenueTrendTool } from './revenue_trend.js';
 import { comparePeriodsTool } from './compare_periods.js';
 import { findAnomaliesTool } from './find_anomalies.js';
 import { kvBreakdownTool } from './kv_breakdown.js';
+import { kvReportTool } from './kv_report.js';
 import { bidderBreakdownTool } from './bidder_breakdown.js';
 import { findUnusedAdUnitsTool } from './find_unused_ad_units.js';
 import { diagnoseFillRateTool } from './diagnose_fill_rate.js';
@@ -39,6 +40,7 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   comparePeriodsTool,
   findAnomaliesTool,
   kvBreakdownTool,
+  kvReportTool,
   bidderBreakdownTool,
   findUnusedAdUnitsTool,
   diagnoseFillRateTool,

@@ -104,26 +104,35 @@ export function createRestGamClient(opts: {
   const reportQueryCache = new Map<string, { dimensions: string[]; metrics: string[] }>();
 
   return {
-    async listEntities({ entity_type, query, ids, limit }) {
+    async listEntities({ entity_type, query, ids, limit, match }) {
       const meta = ENTITY_PATH[entity_type];
       const targetLimit = limit ?? 200;
+      const matchMode: 'substring' | 'exact' = match ?? 'substring';
       // GAM caps pageSize at 200; we page transparently until the caller's
       // limit is satisfied or the server runs out of results.
       const out: Entity[] = [];
       let pageToken: string | undefined;
+      // Reads the GAM `filter` query param value for this entity type and
+      // mode. AIP-160 filters: `displayName:"foo"` is the has-operator
+      // (substring on the displayName attribute). For custom_targeting_key,
+      // GAM accepts `name = "channel_id"` as exact-equality on the key's API
+      // code (adTagName) — a filter that GAM *rejects* for most other
+      // attributes because `name` on those resources is the resource path.
+      const filterForQuery = (q: string): string => {
+        if (matchMode === 'exact') {
+          return entity_type === 'custom_targeting_key'
+            ? `name = ${JSON.stringify(q)}`
+            : `displayName = ${JSON.stringify(q)}`;
+        }
+        return `displayName:${JSON.stringify(q)}`;
+      };
       do {
         const remaining = targetLimit - out.length;
         const pageSize = Math.min(remaining, 200);
         const params = new URLSearchParams();
         params.set('pageSize', String(pageSize));
         if (pageToken) params.set('pageToken', pageToken);
-        // GAM list filters follow AIP-160 (=, !=, :, AND/OR/NOT, wildcards) —
-        // there is no CONTAINS keyword here (that's only the Reports API
-        // FieldFilter.operation enum). Use the `:` has-operator on
-        // `displayName` for substring match; matching on `name` would search
-        // the resource path (networks/X/coll/ID), which never matches a
-        // user-typed query.
-        if (query) params.set('filter', `displayName:${JSON.stringify(query)}`);
+        if (query) params.set('filter', filterForQuery(query));
         if (ids?.length) params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
         const url = `${networkPath}/${meta.collection}?${params}`;
         const res = await fetchImpl(url);
@@ -132,16 +141,32 @@ export function createRestGamClient(opts: {
         const list = (json[meta.collection] as any[] | undefined) ?? [];
         for (const e of list) {
           // GAM REST returns `name` as a resource path
-          // (networks/X/collection/ID). Some collections (e.g. adUnits) omit
-          // the explicit numeric ID field, so fall back to parsing the
-          // trailing path segment. Prefer displayName over the resource path.
+          // (networks/X/collection/ID) for most resources. Some collections
+          // (e.g. adUnits) omit the explicit numeric ID field, so fall back
+          // to parsing the trailing path segment. custom_targeting_key
+          // additionally has `adTagName` — the API code that appears in ad
+          // tags and KEY_VALUES_NAME report rows — which we surface as
+          // `name`, with the GAM `displayName` carried alongside.
           const explicitId = e[meta.idField];
           const resourceName = String(e.name ?? '');
           const id = explicitId !== undefined && explicitId !== null
             ? Number(explicitId)
             : Number(resourceName.split('/').pop());
-          const label = String(e.displayName ?? e.name ?? '');
-          out.push({ id, name: label });
+          const gamDisplayName = typeof e.displayName === 'string' ? e.displayName : undefined;
+          let primaryName: string;
+          if (entity_type === 'custom_targeting_key') {
+            // Prefer adTagName (canonical API code). Fall back to
+            // displayName, then resource path tail.
+            const adTagName = typeof e.adTagName === 'string' ? e.adTagName : undefined;
+            primaryName = adTagName ?? gamDisplayName ?? resourceName.split('/').pop() ?? '';
+          } else {
+            primaryName = gamDisplayName ?? resourceName;
+          }
+          const entity: Entity = { id, name: primaryName };
+          if (gamDisplayName !== undefined && gamDisplayName !== primaryName) {
+            entity.displayName = gamDisplayName;
+          }
+          out.push(entity);
         }
         pageToken = (json.nextPageToken as string | undefined) || undefined;
       } while (pageToken && out.length < targetLimit);
