@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-03
+
+A large expansion of the report schema toward ad-performance, revenue, and
+yield analysis, plus four new analysis tools. All additions are read-only and
+verified `HISTORICAL`-compatible against the GAM REST report proto.
+
+### Added
+- **Creative size & blended eCPM** — `RENDERED_CREATIVE_SIZE` dimension (values
+  like `300x250`), with `CREATIVE_SIZE` accepted as an alias that `run_report`
+  transparently rewrites; `AVERAGE_ECPM` (total eCPM across ad server, AdSense,
+  and Ad Exchange).
+- **Video reporting** — completion-funnel metrics (`VIDEO_VIEWERSHIP_STARTS`,
+  first/mid/third quartiles, completes, completion rate, view-through rate,
+  average view time/rate) and `VIDEO_PLCMT_NAME` / `VIDEO_AD_DURATION`
+  dimensions; new `video_breakdown` tool.
+- **Viewability** — Active View denominators
+  (`ACTIVE_VIEW_MEASURABLE_IMPRESSIONS`, `ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS`,
+  `ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE`); new `viewability_breakdown` tool.
+- **Geo, dayparting, inventory & demand** — `REGION_NAME`, `METRO_NAME`,
+  `HOUR`, `DAY_OF_WEEK`, `PLACEMENT_ID`/`PLACEMENT_NAME`,
+  `INVENTORY_FORMAT_NAME`, `DEMAND_CHANNEL_NAME`.
+- **Programmatic deals** — `DEAL_NAME`, `DEAL_ID`, `DEAL_BUYER_NAME`,
+  `DEAL_BUYER_ID`, `EXCHANGE_BIDDING_DEAL_TYPE_NAME` dimensions and the deal bid
+  funnel (`DEALS_BID_REQUESTS`, `DEALS_BIDS`, `DEALS_BID_RATE`,
+  `DEALS_WINNING_BIDS`, `DEALS_WIN_RATE`).
+- **Yield groups / Open Bidding** — `YIELD_GROUP_NAME`/`ID`/`BUYER_NAME`/
+  `BUYER_TAG_NAME` dimensions, the mediation + auction funnel metrics, and the
+  combined `AD_EXCHANGE_PLUS_YIELD_GROUP_*` view; new `yield_breakdown` tool.
+- **`diagnose_floor_pricing`** — infers AdX floor-price effectiveness per ad
+  unit from the match-rate × eCPM relationship vs the network median, with an
+  upper-bound `est_opportunity`. Inferential (GAM REST exposes no floor value),
+  not a UPR readout.
+
+### Changed
+- Extracted shared report-run helpers (`runAndRead`, `lookbackRange`,
+  `previousPeriod`, `numOr0`, `pct`) into `src/report-run.ts`; `run_report`'s
+  curated incompatibility matrix extended for the new programmatic-demand
+  dimensions.
+
 ## [0.3.1] — 2026-05-18
 
 ### Added
@@ -270,7 +309,8 @@ Initial public release on npm.
 - CI and `engines` bumped to Node 24; `checkout` and `setup-node` actions
   updated to v5.
 
-[Unreleased]: https://github.com/standby/gam_mcp/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/standby/gam_mcp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/standby/gam_mcp/compare/v0.3.1...v0.4.0
 [0.2.2]: https://github.com/standby/gam_mcp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/standby/gam_mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/standby/gam_mcp/compare/v0.1.12...v0.2.0
