@@ -23,6 +23,8 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'DATE',                  type: 'date',   description: 'Calendar date in network timezone.' },
     { name: 'WEEK',                  type: 'date',   description: 'ISO week start (Monday).' },
     { name: 'MONTH_YEAR',            type: 'date',   description: 'Calendar month.' },
+    { name: 'HOUR',                  type: 'number', description: 'Hour of day (0–23) in network timezone. Pair with DATE for time-of-day / dayparting analysis.' },
+    { name: 'DAY_OF_WEEK',           type: 'number', description: 'Day of week as an integer (GAM convention: 1=Sunday … 7=Saturday). Use for weekday-vs-weekend performance patterns.' },
     { name: 'ADVERTISER_ID',         type: 'number', description: 'Advertiser (Company) ID.' },
     { name: 'ADVERTISER_NAME',       type: 'string', description: 'Advertiser display name.' },
     { name: 'ORDER_ID',              type: 'number', description: 'Order ID.' },
@@ -31,12 +33,21 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'LINE_ITEM_NAME',        type: 'string', description: 'Line item display name.' },
     { name: 'LINE_ITEM_TYPE',        type: 'string', description: 'STANDARD, SPONSORSHIP, NETWORK, BULK, PRICE_PRIORITY, HOUSE, PROGRAMMATIC_GUARANTEED, PREFERRED_DEAL, AD_EXCHANGE, ADSENSE.' },
     { name: 'AD_UNIT_ID',            type: 'number', description: 'Ad unit ID (leaf).' },
-    { name: 'AD_UNIT_NAME',          type: 'string', description: 'Ad unit display name.' },
+    { name: 'AD_UNIT_NAME',          type: 'string', description: 'Ad unit display name. Note: GAM REST exposes only the leaf ad unit — there is no top-level / ancestor ad-unit dimension.' },
+    { name: 'PLACEMENT_ID',          type: 'number', description: 'Placement ID. Placements group ad units for targeting/reporting.' },
+    { name: 'PLACEMENT_NAME',        type: 'string', description: 'Placement display name. Use to roll up performance across the ad units a placement groups.' },
+    { name: 'INVENTORY_FORMAT_NAME', type: 'string', description: 'Inventory format the impression served in (e.g. display, video, native).' },
     { name: 'CREATIVE_ID',           type: 'number', description: 'Creative ID.' },
     { name: 'CREATIVE_NAME',         type: 'string', description: 'Creative display name.' },
     { name: 'CREATIVE_TYPE',         type: 'string', description: 'IMAGE, VIDEO, HTML5, NATIVE, etc.' },
+    { name: 'RENDERED_CREATIVE_SIZE', type: 'string', description: "Creative size, as 'WIDTHxHEIGHT' (e.g. '300x250'). Maps to 'Rendered creative size' in the GAM UI — the size the creative actually rendered at, which can differ from its native size when it serves into a differently-sized slot. GAM's REST API has no plain 'CREATIVE_SIZE'; 'CREATIVE_SIZE' is accepted as an alias and rewritten to this. Creative-level, so only defined for filled impressions — not valid with request-level metrics (AD_REQUESTS, UNFILLED_IMPRESSIONS)." },
+    { name: 'VIDEO_PLCMT_NAME',      type: 'string', description: 'Video placement type (e.g. in-stream, in-banner, in-article, in-feed, interstitial). Use to compare instream vs outstream video performance.' },
+    { name: 'VIDEO_AD_DURATION',     type: 'string', description: 'Duration bucket of the served video ad (string label). Use to break down video delivery/yield by ad length.' },
     { name: 'COUNTRY_NAME',          type: 'string', description: 'Country of impression.' },
+    { name: 'REGION_NAME',           type: 'string', description: 'Region / state of impression (sub-country). Pair with COUNTRY_NAME to disambiguate same-named regions.' },
+    { name: 'METRO_NAME',            type: 'string', description: 'Metro / DMA of impression (primarily US designated market areas).' },
     { name: 'DEVICE_CATEGORY_NAME',  type: 'string', description: 'DESKTOP, MOBILE, TABLET, etc.' },
+    { name: 'DEMAND_CHANNEL_NAME',   type: 'string', description: 'Demand channel that served the impression (e.g. direct/reservation vs programmatic vs AdSense). Best single dimension for splitting revenue by channel at a glance.' },
     { name: 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE',      type: 'number', description: 'Line item booked goal in absolute units (impressions/clicks). For SPONSORSHIP line items the goal is a percentage instead — see LINE_ITEM_PRIMARY_GOAL_UNITS_PERCENTAGE.' },
     { name: 'LINE_ITEM_PRIMARY_GOAL_UNITS_PERCENTAGE',    type: 'number', description: 'Line item booked goal as a percentage of inventory (used by SPONSORSHIP).' },
     { name: 'LINE_ITEM_PRIMARY_GOAL_TYPE_NAME',           type: 'string', description: 'Goal type label (LIFETIME / DAILY / NONE).' },
@@ -70,17 +81,28 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
     { name: 'CLICKS',                                 type: 'number',   description: 'Total clicks (all channels).' },
     { name: 'REVENUE',                                type: 'currency', description: 'Total revenue (publisher currency).' },
     { name: 'CPM_REVENUE',                            type: 'currency', description: 'CPM revenue.' },
+    { name: 'AVERAGE_ECPM',                           type: 'currency', description: "Total average eCPM — revenue per thousand impressions averaged across ad server, AdSense, and Ad Exchange. Best default for a blended 'eCPM' number. For channel-specific eCPM use AD_SERVER_AVERAGE_ECPM, AD_EXCHANGE_AVERAGE_ECPM, or ADSENSE_AVERAGE_ECPM." },
     { name: 'CPC_REVENUE',                            type: 'currency', description: 'CPC revenue.' },
     { name: 'CTR',                                    type: 'rate',     description: 'Clicks ÷ impressions.' },
     { name: 'AD_REQUESTS',                            type: 'number',   description: 'Total ad requests received.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'CREATIVE_ID', 'CREATIVE_NAME', 'CREATIVE_TYPE', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'CREATIVE_ID', 'CREATIVE_NAME', 'CREATIVE_TYPE', 'RENDERED_CREATIVE_SIZE', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
     { name: 'UNFILLED_IMPRESSIONS',                   type: 'number',   description: 'Requests without a fill.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'CREATIVE_ID', 'CREATIVE_NAME', 'LINE_ITEM_ID', 'LINE_ITEM_NAME'] },
+      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'CREATIVE_ID', 'CREATIVE_NAME', 'RENDERED_CREATIVE_SIZE', 'LINE_ITEM_ID', 'LINE_ITEM_NAME'] },
     { name: 'FILL_RATE',                              type: 'rate',     description: 'Filled ÷ requests.' },
     { name: 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',       type: 'number',   description: 'Active View viewable impressions (all channels).' },
     { name: 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE',  type: 'rate',     description: 'Viewable ÷ measurable impressions.' },
-    { name: 'VIDEO_VIEWERSHIP_COMPLETES',             type: 'number',   description: 'Video creative completions.' },
+    { name: 'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS',     type: 'number',   description: 'Impressions that were measurable by Active View — the denominator of the viewable rate. Pair with ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS to see measurement coverage.' },
+    { name: 'ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS',       type: 'number',   description: 'Impressions eligible for Active View measurement (the universe before measurability). Use measurable ÷ eligible to gauge how much inventory could be measured.' },
+    { name: 'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE', type: 'rate',    description: 'Measurable ÷ eligible impressions — share of inventory that Active View could actually measure.' },
+    { name: 'VIDEO_VIEWERSHIP_STARTS',                type: 'number',   description: 'Video ad starts (impressions that began playing). Top of the video completion funnel.' },
+    { name: 'VIDEO_VIEWERSHIP_FIRST_QUARTILES',       type: 'number',   description: 'Video plays reaching 25% (first quartile).' },
+    { name: 'VIDEO_VIEWERSHIP_MIDPOINTS',             type: 'number',   description: 'Video plays reaching 50% (midpoint).' },
+    { name: 'VIDEO_VIEWERSHIP_THIRD_QUARTILES',       type: 'number',   description: 'Video plays reaching 75% (third quartile).' },
+    { name: 'VIDEO_VIEWERSHIP_COMPLETES',             type: 'number',   description: 'Video creative completions (100%).' },
     { name: 'VIDEO_VIEWERSHIP_COMPLETION_RATE',       type: 'rate',     description: 'Completions ÷ video starts.' },
+    { name: 'VIDEO_VIEWERSHIP_VIEW_THROUGH_RATE',     type: 'rate',     description: 'View-through rate — completes ÷ starts expressed as a percent (VTR).' },
+    { name: 'VIDEO_VIEWERSHIP_AVERAGE_VIEW_TIME',     type: 'number',   description: 'Average time (seconds) a video ad was viewed.' },
+    { name: 'VIDEO_VIEWERSHIP_AVERAGE_VIEW_RATE',     type: 'rate',     description: 'Average percentage of the video ad that was viewed.' },
     { name: 'AD_SERVER_IMPRESSIONS',                  type: 'number',   description: 'Ad server impressions (excludes AdSense/Ad Exchange).' },
     { name: 'AD_SERVER_CLICKS',                       type: 'number',   description: 'Ad server clicks.' },
     { name: 'AD_SERVER_REVENUE',                      type: 'currency', description: 'Ad server revenue.' },
@@ -109,6 +131,19 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
       incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
   ],
 };
+
+// Friendly / legacy dimension names that map onto a canonical REST dimension.
+// GAM's REST v1 API has no `CREATIVE_SIZE` — the equivalent is
+// RENDERED_CREATIVE_SIZE. We accept the familiar name and rewrite it so a
+// caller asking for "CREATIVE_SIZE" gets data instead of a 400 from GAM.
+export const DIMENSION_ALIASES: Record<string, string> = {
+  CREATIVE_SIZE: 'RENDERED_CREATIVE_SIZE',
+};
+
+// Map a dimension name to its canonical REST name, or return it unchanged.
+export function resolveDimensionAlias(name: string): string {
+  return DIMENSION_ALIASES[name] ?? name;
+}
 
 const DIMS = new Set(GAM_SCHEMA.dimensions.map((d) => d.name));
 const METRICS = new Set(GAM_SCHEMA.metrics.map((m) => m.name));

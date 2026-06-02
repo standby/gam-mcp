@@ -62,6 +62,40 @@ describe('run_report', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('rewrites the CREATIVE_SIZE alias to RENDERED_CREATIVE_SIZE and warns', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rr-'));
+    const csv = 'rendered_creative_size,average_ecpm\n300x250,2.5\n';
+    const csvGz = gzipSync(Buffer.from(csv));
+    let captured: ReportQuery | null = null;
+
+    const client: GAMClient = {
+      async listEntities() { return []; },
+      async createReport(query) { captured = query; return { operation_name: 'op/1' }; },
+      async pollOperation() { return { state: 'done', download_url: 'mock://op/1' }; },
+      async downloadReport(_url, dest) { writeFileSync(dest, csvGz); return dest; },
+    };
+
+    const r = await runReportTool.handler(
+      {
+        dimensions: ['AD_UNIT_NAME', 'CREATIVE_SIZE'],
+        metrics: ['AVERAGE_ECPM'],
+        date_range: { relative: 'last_7_days' as const },
+      },
+      {
+        client,
+        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
+        timezone: 'America/Los_Angeles',
+        logger: noopLogger(),
+        now: new Date('2026-04-30T12:00:00Z'),
+      },
+    );
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(captured).not.toBeNull();
+    expect(captured!.dimensions).toEqual(['AD_UNIT_NAME', 'RENDERED_CREATIVE_SIZE']);
+    expect(r.warnings?.some((w) => w.includes('RENDERED_CREATIVE_SIZE'))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('auto-rewrites KEY_VALUES_NAME filter + AD_REQUESTS to CUSTOM_DIMENSION_0_VALUE', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rr-'));
     const csv = 'date,ad_requests\n2026-04-29,1000\n';

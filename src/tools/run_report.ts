@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
-import { validateCombo } from '../schema.js';
+import { validateCombo, resolveDimensionAlias } from '../schema.js';
 import { readCsvGz } from '../output.js';
 import { join } from 'node:path';
 import type { ToolDefinition } from '../report-tool-builder.js';
@@ -45,7 +45,19 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
     'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns standard envelope (inline if small, file path if large).',
   input: inputSchema,
   async handler(input, ctx) {
-    const comboError = validateCombo({ dimensions: input.dimensions, metrics: input.metrics });
+    // Rewrite alias dimension names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE)
+    // to their canonical REST names before validating, so familiar names don't
+    // trip the unknown-dimension check or get rejected by GAM.
+    const aliasWarnings: string[] = [];
+    const dimensions = input.dimensions.map((d) => {
+      const canonical = resolveDimensionAlias(d);
+      if (canonical !== d) {
+        aliasWarnings.push(`Dimension '${d}' is not a GAM REST dimension; queried as '${canonical}'.`);
+      }
+      return canonical;
+    });
+
+    const comboError = validateCombo({ dimensions, metrics: input.metrics });
     if (comboError) {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
@@ -59,12 +71,12 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
     }
 
     let query: ReportQuery = {
-      dimensions: input.dimensions,
+      dimensions,
       metrics: input.metrics,
       filters: input.filters,
       custom_dimension_key_ids: input.custom_dimension_key_ids,
     };
-    const warnings: string[] = [];
+    const warnings: string[] = [...aliasWarnings];
 
     // Auto-rewrite KEY_VALUES_NAME='channel_id=479' + AD_REQUESTS (and other
     // request-time metrics) → CUSTOM_DIMENSION slot, since GAM rejects the

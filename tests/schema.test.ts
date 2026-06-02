@@ -6,6 +6,7 @@ import {
   validateCombo,
   incompatibleWith,
   findIncompatibilities,
+  resolveDimensionAlias,
 } from '../src/schema.js';
 
 describe('GAM schema catalog', () => {
@@ -51,6 +52,46 @@ describe('GAM schema catalog', () => {
   it('exposes ad-server-only eCPM and responses-served metrics', () => {
     expect(isValidMetric('AD_SERVER_AVERAGE_ECPM')).toBe(true);
     expect(isValidMetric('AD_SERVER_RESPONSES_SERVED')).toBe(true);
+  });
+
+  it('exposes geo, time, inventory, and demand-channel dimensions', () => {
+    for (const d of [
+      'REGION_NAME', 'METRO_NAME', 'HOUR', 'DAY_OF_WEEK',
+      'PLACEMENT_NAME', 'PLACEMENT_ID', 'INVENTORY_FORMAT_NAME', 'DEMAND_CHANNEL_NAME',
+    ]) {
+      expect(isValidDimension(d)).toBe(true);
+    }
+  });
+
+  it('exposes the video funnel (dimensions + metrics)', () => {
+    expect(isValidDimension('VIDEO_PLCMT_NAME')).toBe(true);
+    expect(isValidDimension('VIDEO_AD_DURATION')).toBe(true);
+    for (const m of [
+      'VIDEO_VIEWERSHIP_STARTS', 'VIDEO_VIEWERSHIP_FIRST_QUARTILES',
+      'VIDEO_VIEWERSHIP_MIDPOINTS', 'VIDEO_VIEWERSHIP_THIRD_QUARTILES',
+      'VIDEO_VIEWERSHIP_VIEW_THROUGH_RATE', 'VIDEO_VIEWERSHIP_AVERAGE_VIEW_TIME',
+      'VIDEO_VIEWERSHIP_AVERAGE_VIEW_RATE',
+    ]) {
+      expect(isValidMetric(m)).toBe(true);
+    }
+  });
+
+  it('exposes Active View measurable/eligible viewability metrics', () => {
+    for (const m of [
+      'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS', 'ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS',
+      'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE',
+    ]) {
+      expect(isValidMetric(m)).toBe(true);
+    }
+  });
+
+  it('exposes creative size and blended eCPM, and aliases CREATIVE_SIZE', () => {
+    expect(isValidDimension('RENDERED_CREATIVE_SIZE')).toBe(true);
+    expect(isValidMetric('AVERAGE_ECPM')).toBe(true);
+    // CREATIVE_SIZE is not a real REST dimension, but resolves to the canonical one.
+    expect(isValidDimension('CREATIVE_SIZE')).toBe(false);
+    expect(resolveDimensionAlias('CREATIVE_SIZE')).toBe('RENDERED_CREATIVE_SIZE');
+    expect(resolveDimensionAlias('AD_UNIT_NAME')).toBe('AD_UNIT_NAME');
   });
 
   it('exposes key-value and per-slot custom-dimension dimensions', () => {
