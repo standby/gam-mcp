@@ -97,6 +97,26 @@ describe('GAM schema catalog', () => {
     expect(incompatibleWith('AD_REQUESTS')).toContain('DEAL_NAME');
   });
 
+  it('exposes yield-group dimensions and the mediation / Open Bidding metrics', () => {
+    for (const d of ['YIELD_GROUP_NAME', 'YIELD_GROUP_ID', 'YIELD_GROUP_BUYER_NAME', 'YIELD_GROUP_BUYER_TAG_NAME']) {
+      expect(isValidDimension(d)).toBe(true);
+    }
+    for (const m of [
+      'YIELD_GROUP_IMPRESSIONS', 'YIELD_GROUP_ESTIMATED_REVENUE', 'YIELD_GROUP_ESTIMATED_CPM',
+      'YIELD_GROUP_MEDIATION_THIRD_PARTY_ECPM', 'YIELD_GROUP_MEDIATION_FILL_RATE',
+      'YIELD_GROUP_MEDIATION_MATCHED_QUERIES', 'YIELD_GROUP_MEDIATION_PASSBACKS',
+      'YIELD_GROUP_CALLOUTS', 'YIELD_GROUP_BIDS', 'YIELD_GROUP_BIDS_IN_AUCTION',
+      'YIELD_GROUP_AUCTIONS_WON', 'YIELD_GROUP_SUCCESSFUL_RESPONSES',
+      'AD_EXCHANGE_PLUS_YIELD_GROUP_IMPRESSIONS', 'AD_EXCHANGE_PLUS_YIELD_GROUP_REVENUE',
+      'AD_EXCHANGE_PLUS_YIELD_GROUP_ECPM',
+    ]) {
+      expect(isValidMetric(m)).toBe(true);
+    }
+    // Yield groups are programmatic demand: not valid with request-level metrics.
+    expect(incompatibleWith('YIELD_GROUP_NAME')).toContain('AD_REQUESTS');
+    expect(incompatibleWith('AD_REQUESTS')).toContain('YIELD_GROUP_NAME');
+  });
+
   it('exposes creative size and blended eCPM, and aliases CREATIVE_SIZE', () => {
     expect(isValidDimension('RENDERED_CREATIVE_SIZE')).toBe(true);
     expect(isValidMetric('AVERAGE_ECPM')).toBe(true);
