@@ -18,6 +18,7 @@ import { videoBreakdownTool } from './video_breakdown.js';
 import { viewabilityBreakdownTool } from './viewability_breakdown.js';
 import { findUnusedAdUnitsTool } from './find_unused_ad_units.js';
 import { diagnoseFillRateTool } from './diagnose_fill_rate.js';
+import { diagnoseFloorPricingTool } from './diagnose_floor_pricing.js';
 import { healthCheckTool } from './health_check.js';
 import { usageStatsTool } from './usage_stats.js';
 import {
@@ -50,6 +51,7 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   viewabilityBreakdownTool,
   findUnusedAdUnitsTool,
   diagnoseFillRateTool,
+  diagnoseFloorPricingTool,
   healthCheckTool,
   usageStatsTool,
   saveQueryTool,

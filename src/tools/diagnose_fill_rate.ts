@@ -1,10 +1,8 @@
 import { z } from 'zod';
-import { join } from 'node:path';
-import { unlinkSync } from 'node:fs';
 import { gamError } from '../errors.js';
-import { readCsvGz } from '../output.js';
+import { numOr0, pct, lookbackRange, previousPeriod, runAndRead } from '../report-run.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
-import type { ReportQuery, DateRange } from '../gam-client.js';
+import type { ReportQuery } from '../gam-client.js';
 
 // Diagnostic vocabulary the tool emits. Single primary cause per row — the
 // rule order in `diagnose()` matters because multiple thresholds can match
@@ -159,62 +157,3 @@ function diagnose(now: Funnel, prev: Funnel | null): Cause {
   return 'mixed';
 }
 
-// ------------------------------ helpers --------------------------------
-
-function numOr0(v: string | undefined): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function pct(fraction: number): string {
-  return (fraction * 100).toFixed(2);
-}
-
-function lookbackRange(days: number, timezone: string, now: Date | undefined): DateRange {
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(now ?? new Date());
-  const [y, m, d] = today.split('-').map(Number);
-  const yest = new Date(Date.UTC(y, m - 1, d - 1));
-  const start = new Date(yest.getTime() - (days - 1) * 86_400_000);
-  const iso = (dt: Date) => dt.toISOString().slice(0, 10);
-  return { start: iso(start), end: iso(yest) };
-}
-
-function previousPeriod(r: DateRange): DateRange {
-  const oneDay = 86_400_000;
-  const start = new Date(`${r.start}T00:00:00Z`);
-  const end = new Date(`${r.end}T00:00:00Z`);
-  const lengthMs = end.getTime() - start.getTime();
-  const prevEnd = new Date(start.getTime() - oneDay);
-  const prevStart = new Date(prevEnd.getTime() - lengthMs);
-  const iso = (dt: Date) => dt.toISOString().slice(0, 10);
-  return { start: iso(prevStart), end: iso(prevEnd) };
-}
-
-async function runAndRead(
-  ctx: ToolContext,
-  query: ReportQuery,
-  range: DateRange,
-): Promise<Record<string, string>[]> {
-  const cached = ctx.reportCache?.get(query, range);
-  if (cached) return cached;
-  const op = await ctx.client.createReport(query, range);
-  const start = Date.now();
-  let delay = 2000;
-  const timeoutMs = ctx.reportTimeoutMs ?? 300_000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await ctx.client.pollOperation(op.operation_name);
-    if (s.state === 'done') {
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(s.download_url, dest);
-      const { rows } = await readCsvGz(dest);
-      try { unlinkSync(dest); } catch { /* ignore */ }
-      ctx.reportCache?.set(query, range, rows);
-      return rows;
-    }
-    if (s.state === 'failed') throw new Error(`report failed: ${s.reason}`);
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  throw new Error(`report timed out after ${timeoutMs}ms`);
-}

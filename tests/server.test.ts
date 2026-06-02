@@ -10,6 +10,7 @@ describe('server registry', () => {
       'delete_saved_query',
       'describe_schema',
       'diagnose_fill_rate',
+      'diagnose_floor_pricing',
       'fill_rate',
       'find_anomalies',
       'find_unused_ad_units',
