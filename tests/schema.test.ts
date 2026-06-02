@@ -85,6 +85,18 @@ describe('GAM schema catalog', () => {
     }
   });
 
+  it('exposes deal-level dimensions and the deal bid funnel', () => {
+    for (const d of ['DEAL_NAME', 'DEAL_ID', 'DEAL_BUYER_NAME', 'DEAL_BUYER_ID', 'EXCHANGE_BIDDING_DEAL_TYPE_NAME']) {
+      expect(isValidDimension(d)).toBe(true);
+    }
+    for (const m of ['DEALS_BID_REQUESTS', 'DEALS_BIDS', 'DEALS_BID_RATE', 'DEALS_WINNING_BIDS', 'DEALS_WIN_RATE']) {
+      expect(isValidMetric(m)).toBe(true);
+    }
+    // Programmatic demand: deal dims can't combine with request-level / ad-server-only metrics.
+    expect(incompatibleWith('DEAL_NAME')).toContain('AD_REQUESTS');
+    expect(incompatibleWith('AD_REQUESTS')).toContain('DEAL_NAME');
+  });
+
   it('exposes creative size and blended eCPM, and aliases CREATIVE_SIZE', () => {
     expect(isValidDimension('RENDERED_CREATIVE_SIZE')).toBe(true);
     expect(isValidMetric('AVERAGE_ECPM')).toBe(true);
