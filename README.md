@@ -80,6 +80,8 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
 | `pacing_status` | Current-period delivery per line item (note: pacing % vs goal not directly available — use `find_anomalies`) |
 | `bidder_breakdown` | Open Bidding (EBDA) yield by bidder — AdX impressions, revenue, average eCPM per `BIDDER_NAME`. Optional secondary slice by day / ad_unit / country / device / line_item_type. |
 | `yield_breakdown` | Yield-group (Open Bidding / mediation) yield — impressions, estimated revenue, estimated eCPM, mediation fill rate, and passbacks per partner (`by:"buyer"`) or per group (`by:"yield_group"`). Ranks Open Bidding partners to prune the waterfall. Optional secondary slice by day / ad_unit / country / device. |
+| `video_breakdown` | Video completion funnel — starts → 25% → 50% → 75% → completes + completion rate, by ad_unit / placement type / size / duration. Optional secondary slice by day / country / device. |
+| `viewability_breakdown` | Active View viewability — viewable / measurable / eligible impressions + viewable & measurable rates, by ad_unit / size / device. Optional secondary slice by day / country / device. |
 | `find_unused_ad_units` | "Codeless" ad units — those that received fewer than `min_requests` ad requests over the lookback window. Computes a set-difference between every ad unit and ad units that appeared in a report. |
 | **Comparative** | Compared to what |
 | `compare_periods` | Run any report twice and get per-row deltas — WoW, MoM, YoY, or explicit. Output rows carry `<metric>`, `<metric>_prev`, `<metric>_delta_pct`. |
@@ -134,6 +136,8 @@ Things an LLM with this MCP attached can answer directly. (No prompts engineerin
 5d. **Fill-rate root cause.** *"Why is the homepage_top ad unit only filling 30%?"* → `diagnose_fill_rate({ad_unit_query:"homepage_top"})`. Returns funnel-position ratios with an attributed cause per row.
 5c. **Open Bidding yield.** *"Which Open Bidding bidders drove the most revenue last week, and on which devices?"* → `bidder_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, group_by:"device"})`.
 5e. **Yield-group waterfall health.** *"Which Open Bidding partners have low fill and high passbacks?"* → `yield_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"buyer"})`.
+5f. **Video drop-off.** *"Where do viewers abandon my video ads by placement type?"* → `video_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"placement"})`.
+5g. **Low-viewability inventory.** *"Which ad sizes have the worst viewable rate?"* → `viewability_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"size"})`.
 6. **Specific ad units.** *"Revenue and impressions for our sports placements last week."* → `run_report` with `filters:[{field:"AD_UNIT_NAME", op:"CONTAINS", value:"sports"}]`.
 7. **AdX yield diagnosis.** *"AdX match rate and average eCPM per ad unit yesterday."* → `run_report({dimensions:["AD_UNIT_NAME"], metrics:["AD_EXCHANGE_TOTAL_REQUESTS","AD_EXCHANGE_MATCH_RATE","AD_EXCHANGE_AVERAGE_ECPM"], date_range:{relative:"yesterday"}})`.
 8. **Custom dimension breakdown.** *"Revenue by section."* → first `lookup({entity_type:"custom_targeting_key", query:"section"})` to find the key ID, then `run_report({dimensions:["CUSTOM_DIMENSION_0_VALUE"], metrics:["IMPRESSIONS","REVENUE"], date_range:{relative:"last_7_days"}, custom_dimension_key_ids:[<that_id>]})`.

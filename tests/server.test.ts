@@ -28,6 +28,8 @@ describe('server registry', () => {
       'top_advertisers',
       'top_line_items',
       'usage_stats',
+      'video_breakdown',
+      'viewability_breakdown',
       'yield_breakdown',
     ]);
   });

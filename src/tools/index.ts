@@ -14,6 +14,8 @@ import { kvBreakdownTool } from './kv_breakdown.js';
 import { kvReportTool } from './kv_report.js';
 import { bidderBreakdownTool } from './bidder_breakdown.js';
 import { yieldBreakdownTool } from './yield_breakdown.js';
+import { videoBreakdownTool } from './video_breakdown.js';
+import { viewabilityBreakdownTool } from './viewability_breakdown.js';
 import { findUnusedAdUnitsTool } from './find_unused_ad_units.js';
 import { diagnoseFillRateTool } from './diagnose_fill_rate.js';
 import { healthCheckTool } from './health_check.js';
@@ -44,6 +46,8 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   kvReportTool,
   bidderBreakdownTool,
   yieldBreakdownTool,
+  videoBreakdownTool,
+  viewabilityBreakdownTool,
   findUnusedAdUnitsTool,
   diagnoseFillRateTool,
   healthCheckTool,
