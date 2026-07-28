@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-28
+
+Complete coverage of the GAM REST report schema, generated from Google's
+`report_definition.proto` rather than hand-maintained, plus one tool for each
+remaining report type.
+
+### Added
+- **Generated schema** — `src/schema-generated.ts` carries the full REST enums
+  (526 metrics, 764 dimensions, 12 report types), each with its report-type
+  compatibility and data format. Whitelist coverage goes from 64/526 metrics
+  and 58/764 dimensions to complete, so `run_report` no longer refuses names
+  GAM accepts.
+- **`reach_report`** (`REACH`) — unique visitors, reach impressions, and
+  average impressions per unique visitor: the evidence base for setting a
+  frequency cap. Unique counts are not additive across rows, which the response
+  envelope warns about.
+- **`ad_speed`** (`AD_SPEED`) — creative load-time buckets, the page/tag timing
+  funnel, and unviewed reasons. The causal counterpart to
+  `viewability_breakdown`, which shows only the symptom.
+- **`sell_through`** (`FUTURE_SELL_THROUGH`) — forecasted, reserved, and
+  available impressions plus sell-through rate over a future window; the
+  forward half of `pacing_status`.
+- **`consent_messaging`** (`PRIVACY_AND_MESSAGING`) — messages shown and user
+  responses across six independently-configured message families.
+- **`npm run schema:gap`** (`scripts/schema-gap.ts`) — diffs the whitelist
+  against the proto in both directions: names GAM has that we lack, and names
+  we whitelist that GAM no longer declares.
+- **`describe_schema` filters** — `report_type`, `family`, and `search`, with
+  the row budget split per kind and truncation announced. An unfiltered call
+  returns names and types only; 1290 entries with prose would otherwise swamp
+  the caller's context.
+- **`custom_targeting_key` lookup** — per-id GETs for resources whose numeric
+  id field is not filter-eligible, plus a substring-to-exact filter fallback.
+
+### Changed
+- Report type is derived rather than hardcoded: `resolveReportType` intersects
+  the compatibility lists of every requested dimension and metric. Mixing
+  families is now rejected locally with a message naming which side wants which
+  type, instead of surfacing as a GAM 400.
+- Curated prose and the observed incompatibility matrix moved to
+  `src/schema-overrides.ts` and are merged over the generated entries by name,
+  so `npm run refresh-schema` cannot clobber them.
+
+### Fixed
+- Dropped `TAXONOMY_CATEGORY` and `TAXONOMY_CATEGORY_ID`. They were whitelisted
+  by hand but have never existed in the REST `Dimension` enum, so `validateCombo`
+  passed and GAM rejected the request — a failure only visible against the live
+  API. A new test fails on any override that stops matching a generated entry.
+- `refresh-schema` counts brace depth when parsing proto enums. The previous
+  `\{([^}]+)\}` match stopped at the first `}` inside a doc comment, silently
+  truncating the enum and reporting live names as missing.
+
 ## [0.4.0] — 2026-06-03
 
 A large expansion of the report schema toward ad-performance, revenue, and
@@ -309,7 +361,8 @@ Initial public release on npm.
 - CI and `engines` bumped to Node 24; `checkout` and `setup-node` actions
   updated to v5.
 
-[Unreleased]: https://github.com/standby/gam_mcp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/standby/gam_mcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/standby/gam_mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/standby/gam_mcp/compare/v0.3.1...v0.4.0
 [0.2.2]: https://github.com/standby/gam_mcp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/standby/gam_mcp/compare/v0.2.0...v0.2.1
