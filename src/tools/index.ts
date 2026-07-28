@@ -16,6 +16,10 @@ import { bidderBreakdownTool } from './bidder_breakdown.js';
 import { yieldBreakdownTool } from './yield_breakdown.js';
 import { videoBreakdownTool } from './video_breakdown.js';
 import { viewabilityBreakdownTool } from './viewability_breakdown.js';
+import { reachReportTool } from './reach_report.js';
+import { adSpeedTool } from './ad_speed.js';
+import { sellThroughTool } from './sell_through.js';
+import { consentMessagingTool } from './consent_messaging.js';
 import { findUnusedAdUnitsTool } from './find_unused_ad_units.js';
 import { diagnoseFillRateTool } from './diagnose_fill_rate.js';
 import { diagnoseFloorPricingTool } from './diagnose_floor_pricing.js';
@@ -49,6 +53,10 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   yieldBreakdownTool,
   videoBreakdownTool,
   viewabilityBreakdownTool,
+  reachReportTool,
+  adSpeedTool,
+  sellThroughTool,
+  consentMessagingTool,
   findUnusedAdUnitsTool,
   diagnoseFillRateTool,
   diagnoseFloorPricingTool,

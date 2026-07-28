@@ -1,13 +1,19 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
-import { validateCombo, resolveDimensionAlias } from '../schema.js';
+import {
+  validateCombo,
+  resolveDimensionAlias,
+  resolveReportType,
+  SUPPORTED_REPORT_TYPES,
+} from '../schema.js';
 import { readCsvGz } from '../output.js';
 import { join } from 'node:path';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
 import type { Logger } from '../log.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
+import { REACH_NON_ADDITIVE_WARNING } from './reach_report.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -42,7 +48,7 @@ const inputSchema = z.object({
 export const runReportTool: ToolDefinition<typeof inputSchema> = {
   name: 'run_report',
   description:
-    'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns standard envelope (inline if small, file path if large).',
+    'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns standard envelope (inline if small, file path if large). Asking only for reach metrics (UNIQUE_VISITORS, REACH_IMPRESSIONS, AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR) switches GAM to its REACH report type automatically; those cannot be mixed with historical metrics in one call.',
   input: inputSchema,
   async handler(input, ctx) {
     // Rewrite alias dimension names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE)
@@ -62,6 +68,17 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
 
+    // UNIQUE_REACH* live under GAM's REACH report type, everything else under
+    // HISTORICAL. Derived from the metrics so the caller never picks; a mixed
+    // list is rejected here with a clearer message than GAM's 400.
+    const reportType = resolveReportType(input.metrics, dimensions);
+    if (typeof reportType !== 'string') {
+      return gamError('INVALID_INPUT', {
+        reason: reportType.error,
+        hint: 'Call describe_schema({report_type: "..."}) to see what each report type accepts.',
+      });
+    }
+
     let dateRange;
     try {
       dateRange = resolveDateRange(input.date_range, ctx.timezone, ctx.now);
@@ -75,8 +92,22 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       metrics: input.metrics,
       filters: input.filters,
       custom_dimension_key_ids: input.custom_dimension_key_ids,
+      report_type: reportType,
     };
     const warnings: string[] = [...aliasWarnings];
+    if (reportType === 'REACH') {
+      warnings.push(REACH_NON_ADDITIVE_WARNING);
+    }
+    // The whitelist covers every metric GAM declares, including families whose
+    // report type this server has no purpose-built tool for. Those requests are
+    // forwarded as-is — GAM may still reject them for reasons we can't predict.
+    if (!SUPPORTED_REPORT_TYPES.includes(reportType)) {
+      warnings.push(
+        `These metrics resolve to GAM report type ${reportType}, which this server ` +
+        `forwards but has not been verified against. If GAM rejects the request, the ` +
+        `report type may need additional fields we do not send.`,
+      );
+    }
 
     // Auto-rewrite KEY_VALUES_NAME='channel_id=479' + AD_REQUESTS (and other
     // request-time metrics) → CUSTOM_DIMENSION slot, since GAM rejects the

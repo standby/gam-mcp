@@ -31,7 +31,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "verify:pack": "tsx scripts/verify-pack.ts",
     "refresh-schema": "tsx scripts/refresh-schema.ts",
-    "prepublishOnly": "npm run build && npm test && npm run verify:pack"
+    "prepublishOnly": "npm run build && npm test && npm run verify:pack",
+    "schema:gap": "tsx scripts/schema-gap.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

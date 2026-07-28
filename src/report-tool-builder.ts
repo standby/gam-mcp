@@ -37,6 +37,8 @@ export type ReportToolConfig<I extends ZodTypeAny> = {
   buildDateRange?: (input: z.infer<I>) => DateRange;
   /** Build the human-readable summary string returned in the envelope. */
   summary: (input: z.infer<I>) => string;
+  /** Optional caveats about how the returned rows may (not) be read. */
+  warnings?: (input: z.infer<I>) => string[] | undefined;
 };
 
 export function buildReportTool<I extends ZodTypeAny>(
@@ -69,7 +71,12 @@ export function buildReportTool<I extends ZodTypeAny>(
 
       const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(status.download_url, dest);
-      return ctx.output.fromCsvGzFile(dest, cfg.summary(input));
+      const warnings = cfg.warnings?.(input);
+      return ctx.output.fromCsvGzFile(
+        dest,
+        cfg.summary(input),
+        warnings?.length ? warnings : undefined,
+      );
     },
   };
 }

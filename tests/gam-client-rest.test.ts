@@ -57,6 +57,24 @@ describe('REST GAM client', () => {
     expect(callCount).toBe(2);
   });
 
+  it('createReport forwards report_type so reach metrics run as a REACH report', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/reports')) {
+        const body = JSON.parse(String(init!.body));
+        expect(body.reportDefinition.reportType).toBe('REACH');
+        return new Response(JSON.stringify({ name: 'networks/12345/reports/790' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ name: 'networks/12345/operations/reports/runs/def' }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    await client.createReport(
+      { dimensions: ['LINE_ITEM_NAME'], metrics: ['UNIQUE_VISITORS'], report_type: 'REACH' },
+      { start: '2026-04-01', end: '2026-04-29' },
+    );
+  });
+
   it('createReport encodes filters in GAM REST shape (fieldFilter + EQUALS/IN + scalar/list value)', async () => {
     let createBody: any = null;
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -262,6 +280,106 @@ describe('REST GAM client', () => {
       match: 'exact',
     });
     expect(capturedFilter).toBe('name = "channel_id"');
+  });
+
+  it('listEntities by ids for custom_targeting_key uses per-id direct GETs (GAM refuses to filter on customTargetingKeyId)', async () => {
+    // Regression: previous wire shape filtered with
+    // `customTargetingKeyId=<n>` which GAM rejects ("Field is not supported
+    // for filtering"). Fix routes by-id lookups for this resource through
+    // GET /networks/{n}/customTargetingKeys/{id}.
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      // No URL we hit should construct a list filter for this resource.
+      expect(u).not.toContain('filter=');
+      if (u.endsWith('/customTargetingKeys/11002726')) {
+        return new Response(JSON.stringify({
+          customTargetingKeyId: '11002726',
+          adTagName: 'main_category_id',
+          displayName: 'Main Category ID',
+          name: 'networks/12345/customTargetingKeys/11002726',
+        }), { status: 200 });
+      }
+      if (u.endsWith('/customTargetingKeys/11002727')) {
+        return new Response(JSON.stringify({
+          customTargetingKeyId: '11002727',
+          adTagName: 'section',
+          displayName: 'Section',
+          name: 'networks/12345/customTargetingKeys/11002727',
+        }), { status: 200 });
+      }
+      // 404s drop silently (resource deleted between list and get).
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    const r = await client.listEntities({
+      entity_type: 'custom_targeting_key',
+      ids: [11002726, 11002727, 99999],
+    });
+    expect(r).toEqual([
+      { id: 11002726, name: 'main_category_id', displayName: 'Main Category ID' },
+      { id: 11002727, name: 'section', displayName: 'Section' },
+    ]);
+    expect(seen).toHaveLength(3);
+  });
+
+  it('listEntities by ids for non-custom_targeting_key resources still uses the OR-filter list (one request)', async () => {
+    let capturedUrl = '';
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      capturedUrl = String(url);
+      return new Response(JSON.stringify({
+        orders: [
+          { orderId: '111', displayName: 'Order A' },
+          { orderId: '222', displayName: 'Order B' },
+        ],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    const r = await client.listEntities({ entity_type: 'order', ids: [111, 222] });
+    expect(new URL(capturedUrl).searchParams.get('filter')).toBe('orderId=111 OR orderId=222');
+    expect(r).toEqual([
+      { id: 111, name: 'Order A' },
+      { id: 222, name: 'Order B' },
+    ]);
+  });
+
+  it('listEntities substring query on custom_targeting_key auto-retries with `name = "..."` after a 400 parse error', async () => {
+    // GAM may reject `displayName:"<key>"` substring on this resource. The
+    // REST client falls back to exact-equality on `name` so the call
+    // succeeds without the caller knowing.
+    let calls = 0;
+    const seenFilters: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      calls++;
+      const u = String(url);
+      const f = new URL(u).searchParams.get('filter') ?? '';
+      seenFilters.push(f);
+      if (calls === 1) {
+        // First attempt: substring. GAM rejects.
+        expect(f).toBe('displayName:"main_category_id"');
+        return new Response('{"error":{"code":400,"message":"Filter failed to parse"}}', { status: 400 });
+      }
+      // Second attempt: exact equality on `name`. GAM accepts.
+      expect(f).toBe('name = "main_category_id"');
+      return new Response(JSON.stringify({
+        customTargetingKeys: [{
+          customTargetingKeyId: '11002726',
+          adTagName: 'main_category_id',
+          displayName: 'Main Category ID',
+          name: 'networks/12345/customTargetingKeys/11002726',
+        }],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    const r = await client.listEntities({
+      entity_type: 'custom_targeting_key',
+      query: 'main_category_id',
+    });
+    expect(calls).toBe(2);
+    expect(r).toEqual([
+      { id: 11002726, name: 'main_category_id', displayName: 'Main Category ID' },
+    ]);
   });
 
   it('listEntities match="exact" on entities other than custom_targeting_key falls back to `displayName = "..."`', async () => {

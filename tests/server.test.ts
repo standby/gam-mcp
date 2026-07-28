@@ -5,8 +5,10 @@ describe('server registry', () => {
   it('lists all expected tool names', () => {
     const names = listToolNames();
     expect(names.sort()).toEqual([
+      'ad_speed',
       'bidder_breakdown',
       'compare_periods',
+      'consent_messaging',
       'delete_saved_query',
       'describe_schema',
       'diagnose_fill_rate',
@@ -21,11 +23,13 @@ describe('server registry', () => {
       'list_saved_queries',
       'lookup',
       'pacing_status',
+      'reach_report',
       'revenue_summary',
       'revenue_trend',
       'run_report',
       'run_saved_query',
       'save_query',
+      'sell_through',
       'top_advertisers',
       'top_line_items',
       'usage_stats',

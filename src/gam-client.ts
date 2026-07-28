@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import type { ReportType } from './schema.js';
 
 export type EntityType =
   | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'creative' | 'placement' | 'company'
@@ -31,6 +32,10 @@ export type ReportQuery = {
   // custom-targeting-key ID by index. Required by GAM REST when those
   // dimensions are used; ignored otherwise.
   custom_dimension_key_ids?: number[];
+  // GAM report family. Defaults to HISTORICAL. The UNIQUE_REACH* metrics only
+  // exist under REACH — see resolveReportType() in schema.ts, which derives
+  // this from the metric list so callers never set it by hand.
+  report_type?: ReportType;
 };
 
 export type ReportOperation = { operation_name: string };

@@ -108,66 +108,117 @@ export function createRestGamClient(opts: {
       const meta = ENTITY_PATH[entity_type];
       const targetLimit = limit ?? 200;
       const matchMode: 'substring' | 'exact' = match ?? 'substring';
-      // GAM caps pageSize at 200; we page transparently until the caller's
-      // limit is satisfied or the server runs out of results.
-      const out: Entity[] = [];
-      let pageToken: string | undefined;
-      // Reads the GAM `filter` query param value for this entity type and
-      // mode. AIP-160 filters: `displayName:"foo"` is the has-operator
-      // (substring on the displayName attribute). For custom_targeting_key,
-      // GAM accepts `name = "channel_id"` as exact-equality on the key's API
-      // code (adTagName) — a filter that GAM *rejects* for most other
-      // attributes because `name` on those resources is the resource path.
-      const filterForQuery = (q: string): string => {
-        if (matchMode === 'exact') {
+
+      // Map one raw GAM resource → Entity. Pulled out so both the list
+      // pagination path and the by-id direct-GET path can share it.
+      const toEntity = (e: any): Entity => {
+        const explicitId = e[meta.idField];
+        const resourceName = String(e.name ?? '');
+        const id = explicitId !== undefined && explicitId !== null
+          ? Number(explicitId)
+          : Number(resourceName.split('/').pop());
+        const gamDisplayName = typeof e.displayName === 'string' ? e.displayName : undefined;
+        let primaryName: string;
+        if (entity_type === 'custom_targeting_key') {
+          // Prefer adTagName (canonical API code that appears in
+          // KEY_VALUES_NAME). Fall back to displayName, then resource path
+          // tail.
+          const adTagName = typeof e.adTagName === 'string' ? e.adTagName : undefined;
+          primaryName = adTagName ?? gamDisplayName ?? resourceName.split('/').pop() ?? '';
+        } else {
+          primaryName = gamDisplayName ?? resourceName;
+        }
+        const entity: Entity = { id, name: primaryName };
+        if (gamDisplayName !== undefined && gamDisplayName !== primaryName) {
+          entity.displayName = gamDisplayName;
+        }
+        return entity;
+      };
+
+      // ---- by-id path ----
+      // GAM rejects `customTargetingKeyId=<n>` as a list filter (the field is
+      // not filter-eligible on this resource), so we GET each resource
+      // directly. Several other GAM resources have the same quirk; falling
+      // back to the per-id path is cheap (parallel GETs, typically only a
+      // handful of ids) and guarantees we never construct a filter GAM will
+      // refuse to parse.
+      if (ids?.length) {
+        if (entity_type === 'custom_targeting_key') {
+          const results = await Promise.all(ids.slice(0, targetLimit).map(async (id) => {
+            const url = `${networkPath}/${meta.collection}/${id}`;
+            const res = await fetchImpl(url);
+            if (res.status === 404) return null;
+            if (!res.ok) throw new Error(`listEntities(getById) ${res.status}: ${await res.text()}`);
+            const json = await res.json() as Record<string, unknown>;
+            return toEntity(json);
+          }));
+          return results.filter((e): e is Entity => e !== null);
+        }
+        // Other resources: keep the existing OR-of-equalities list filter.
+        // Cheaper (one request for N ids) and works for orders, line items,
+        // ad units, etc. where the numeric id field *is* filter-eligible.
+        const params = new URLSearchParams();
+        params.set('pageSize', String(Math.min(targetLimit, 200)));
+        params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
+        const url = `${networkPath}/${meta.collection}?${params}`;
+        const res = await fetchImpl(url);
+        if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
+        const json = await res.json() as Record<string, unknown>;
+        const list = (json[meta.collection] as any[] | undefined) ?? [];
+        return list.map(toEntity).slice(0, targetLimit);
+      }
+
+      // ---- query/list path ----
+      // GAM list filters follow AIP-160 (`field:"value"` is the has-operator,
+      // `field = "value"` is equality). For custom_targeting_key, the `:`
+      // has-operator on displayName is sometimes accepted but the API code
+      // lives on the `name` attribute and is queryable with `=`. We try
+      // substring first when the caller asked for it, and on a parse-error
+      // fall back to exact on `name` so the request still succeeds.
+      const filterForMode = (mode: 'substring' | 'exact', q: string): string => {
+        if (mode === 'exact') {
           return entity_type === 'custom_targeting_key'
             ? `name = ${JSON.stringify(q)}`
             : `displayName = ${JSON.stringify(q)}`;
         }
         return `displayName:${JSON.stringify(q)}`;
       };
-      do {
-        const remaining = targetLimit - out.length;
-        const pageSize = Math.min(remaining, 200);
+
+      const fetchPage = async (mode: 'substring' | 'exact', pageToken: string | undefined, pageSize: number) => {
         const params = new URLSearchParams();
         params.set('pageSize', String(pageSize));
         if (pageToken) params.set('pageToken', pageToken);
-        if (query) params.set('filter', filterForQuery(query));
-        if (ids?.length) params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
+        if (query) params.set('filter', filterForMode(mode, query));
         const url = `${networkPath}/${meta.collection}?${params}`;
         const res = await fetchImpl(url);
+        return res;
+      };
+
+      const out: Entity[] = [];
+      let pageToken: string | undefined;
+      let effectiveMode = matchMode;
+      do {
+        const remaining = targetLimit - out.length;
+        const pageSize = Math.min(remaining, 200);
+        let res = await fetchPage(effectiveMode, pageToken, pageSize);
+        // Auto-fallback at the REST level: if a substring query against
+        // custom_targeting_key trips GAM's filter parser, retry the same
+        // page with exact-equality on `name`. Confined to this resource
+        // type — other resources accept the substring shape.
+        if (
+          !res.ok
+          && res.status === 400
+          && effectiveMode === 'substring'
+          && query
+          && entity_type === 'custom_targeting_key'
+        ) {
+          effectiveMode = 'exact';
+          res = await fetchPage(effectiveMode, pageToken, pageSize);
+        }
         if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
         const json = await res.json() as Record<string, unknown>;
         const list = (json[meta.collection] as any[] | undefined) ?? [];
-        for (const e of list) {
-          // GAM REST returns `name` as a resource path
-          // (networks/X/collection/ID) for most resources. Some collections
-          // (e.g. adUnits) omit the explicit numeric ID field, so fall back
-          // to parsing the trailing path segment. custom_targeting_key
-          // additionally has `adTagName` — the API code that appears in ad
-          // tags and KEY_VALUES_NAME report rows — which we surface as
-          // `name`, with the GAM `displayName` carried alongside.
-          const explicitId = e[meta.idField];
-          const resourceName = String(e.name ?? '');
-          const id = explicitId !== undefined && explicitId !== null
-            ? Number(explicitId)
-            : Number(resourceName.split('/').pop());
-          const gamDisplayName = typeof e.displayName === 'string' ? e.displayName : undefined;
-          let primaryName: string;
-          if (entity_type === 'custom_targeting_key') {
-            // Prefer adTagName (canonical API code). Fall back to
-            // displayName, then resource path tail.
-            const adTagName = typeof e.adTagName === 'string' ? e.adTagName : undefined;
-            primaryName = adTagName ?? gamDisplayName ?? resourceName.split('/').pop() ?? '';
-          } else {
-            primaryName = gamDisplayName ?? resourceName;
-          }
-          const entity: Entity = { id, name: primaryName };
-          if (gamDisplayName !== undefined && gamDisplayName !== primaryName) {
-            entity.displayName = gamDisplayName;
-          }
-          out.push(entity);
-        }
+        for (const e of list) out.push(toEntity(e));
         pageToken = (json.nextPageToken as string | undefined) || undefined;
       } while (pageToken && out.length < targetLimit);
       return out.slice(0, targetLimit);
@@ -185,7 +236,7 @@ export function createRestGamClient(opts: {
               endDate: toDateParts(dateRange.end),
             },
           },
-          reportType: 'HISTORICAL',
+          reportType: query.report_type ?? 'HISTORICAL',
           ...(query.filters?.length && { filters: toReportFilters(query.filters) }),
           // GAM expects int64 IDs as strings. Index here = slot number on
           // CUSTOM_DIMENSION_<N>_VALUE dimensions.

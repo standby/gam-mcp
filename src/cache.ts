@@ -123,6 +123,8 @@ function keyFor(q: ReportQuery, dr: DateRange): string {
   // Sort dims/metrics so callers don't have to. Filters are pre-sorted by
   // (field, op) with their values stringified. custom_dimension_key_ids
   // are positional, so order matters — preserve as-is.
+  // ponytail: report_type is intentionally absent — it's a pure function of
+  // the metric list (resolveReportType), so metrics already disambiguate it.
   const dims = [...q.dimensions].sort();
   const metrics = [...q.metrics].sort();
   const filters = (q.filters ?? [])

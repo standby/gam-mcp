@@ -7,7 +7,10 @@ import {
   incompatibleWith,
   findIncompatibilities,
   resolveDimensionAlias,
+  resolveReportType,
 } from '../src/schema.js';
+import { GENERATED_DIMENSIONS, GENERATED_METRICS } from '../src/schema-generated.js';
+import { CURATED_DIMENSIONS, CURATED_METRICS } from '../src/schema-overrides.js';
 
 describe('GAM schema catalog', () => {
   it('exposes core dimensions', () => {
@@ -134,9 +137,14 @@ describe('GAM schema catalog', () => {
     }
   });
 
-  it('exposes content-taxonomy dimensions (PPS-adjacent)', () => {
-    expect(isValidDimension('TAXONOMY_CATEGORY')).toBe(true);
-    expect(isValidDimension('TAXONOMY_CATEGORY_ID')).toBe(true);
+  it('does NOT expose content-taxonomy dimensions — REST has no such enum member', () => {
+    // These were whitelisted by hand and never existed in the REST Dimension
+    // enum (no TAXONOM* member anywhere in report_definition.proto), so
+    // run_report accepted them and GAM 400'd. Whitelisting a name GAM does not
+    // have is strictly worse than omitting it: validateCombo passes and the
+    // failure only appears against the live API.
+    expect(isValidDimension('TAXONOMY_CATEGORY')).toBe(false);
+    expect(isValidDimension('TAXONOMY_CATEGORY_ID')).toBe(false);
   });
 
   it('exposes AdX and AdSense channel-specific metrics', () => {
@@ -172,5 +180,50 @@ describe('GAM schema catalog', () => {
       dimensions: ['DATE', 'ADVERTISER_NAME'],
       metrics: ['REVENUE', 'IMPRESSIONS'],
     })).toEqual([]);
+  });
+});
+
+describe('schema generation integrity', () => {
+  it('has no orphaned overrides — every curated name still exists upstream', () => {
+    // An override naming something absent from the generated enum is silently
+    // inert, so curated prose can quietly stop applying. Worse, before the
+    // merge existed, such a name was *whitelisted*: validateCombo passed and
+    // GAM 400'd (this is exactly how TAXONOMY_CATEGORY survived). Fail loudly
+    // instead — either the name was renamed upstream or it never existed.
+    const dims = new Set(GENERATED_DIMENSIONS.map((d) => d.name));
+    const metrics = new Set(GENERATED_METRICS.map((m) => m.name));
+    expect(CURATED_DIMENSIONS.filter((c) => !dims.has(c.name)).map((c) => c.name)).toEqual([]);
+    expect(CURATED_METRICS.filter((c) => !metrics.has(c.name)).map((c) => c.name)).toEqual([]);
+  });
+
+  it('gives every entry at least one report type', () => {
+    const orphans = [...GAM_SCHEMA.metrics, ...GAM_SCHEMA.dimensions]
+      .filter((e) => e.report_types.length === 0)
+      .map((e) => e.name);
+    // Metrics always declare compatibility; ~240 dimensions do not, and those
+    // are deliberately left unconstrained rather than guessed at.
+    expect(GAM_SCHEMA.metrics.filter((m) => m.report_types.length === 0)).toEqual([]);
+    expect(orphans.length).toBeLessThan(300);
+  });
+
+  it('preserves curated prose over the generated description', () => {
+    const kvn = GAM_SCHEMA.dimensions.find((d) => d.name === 'KEY_VALUES_NAME');
+    expect(kvn?.description).toContain('NOT mutually exclusive');
+    expect(kvn?.incompatible_with).toContain('AD_REQUESTS');
+  });
+
+  it('derives report type by intersecting compatibility, preferring HISTORICAL', () => {
+    expect(resolveReportType(['IMPRESSIONS', 'REVENUE'])).toBe('HISTORICAL');
+    expect(resolveReportType(['UNIQUE_VISITORS', 'REACH_IMPRESSIONS'])).toBe('REACH');
+    expect(resolveReportType(['SELL_THROUGH_SELL_THROUGH_RATE'])).toBe('FUTURE_SELL_THROUGH');
+    // Dimensions constrain the intersection too, not just metrics.
+    expect(resolveReportType(['IMPRESSIONS'], ['COUNTRY_NAME'])).toBe('HISTORICAL');
+  });
+
+  it('names both sides when no report type accepts the whole query', () => {
+    const r = resolveReportType(['UNIQUE_VISITORS', 'SELL_THROUGH_SELL_THROUGH_RATE']);
+    expect(typeof r).toBe('object');
+    expect((r as { error: string }).error).toContain('UNIQUE_VISITORS');
+    expect((r as { error: string }).error).toContain('SELL_THROUGH_SELL_THROUGH_RATE');
   });
 });

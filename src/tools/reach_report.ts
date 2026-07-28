@@ -1,0 +1,83 @@
+import { z } from 'zod';
+import { buildReportTool } from '../report-tool-builder.js';
+import type { ReportQuery } from '../gam-client.js';
+
+// GAM's Reach report accepts a much narrower set of slices than the historical
+// report. Each entry is the [id, name] dimension pair for one supported entity
+// — both are requested so rows are readable and still filterable by id.
+const PRIMARY = {
+  line_item:  ['LINE_ITEM_ID', 'LINE_ITEM_NAME'],
+  order:      ['ORDER_ID', 'ORDER_NAME'],
+  advertiser: ['ADVERTISER_ID', 'ADVERTISER_NAME'],
+  ad_unit:    ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+} as const;
+
+const SECONDARY = {
+  none: null,
+  country: 'COUNTRY_NAME',
+  day: 'DATE',
+} as const;
+
+// Surfaced on every result. The dedup semantics are the single most common way
+// to misread this report, and the frequency column is conditionally empty.
+export const REACH_NON_ADDITIVE_WARNING =
+  'Reach deduplicates people, so UNIQUE_VISITORS is NOT additive: summing it across rows ' +
+  '(countries, days, line items) double-counts anyone reached in more than one row. ' +
+  'For a total, re-run at the level you want instead of summing. ' +
+  'If AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR is blank, compute it as ' +
+  'REACH_IMPRESSIONS / UNIQUE_VISITORS — GAM only populates that column when ' +
+  'COUNTRY_NAME is a dimension.';
+
+const COVERAGE_WARNING =
+  'Reach covers ad-server / reservation delivery only (excludes Ad Exchange and AdSense), ' +
+  'lands ~3 days late, and is retained about 1 year.';
+
+const inputSchema = z.object({
+  date_range: z.object({ start: z.string(), end: z.string() })
+    .describe('Absolute date range. Reach data lags ~3 days, so end dates inside that window return nothing.'),
+  by: z
+    .enum(['line_item', 'order', 'advertiser', 'ad_unit'])
+    .default('line_item')
+    .describe("Primary slice. GAM's Reach report supports only these four entities."),
+  group_by: z
+    .enum(['none', 'country', 'day'])
+    .default('none')
+    .describe(
+      "Optional secondary slice. 'country' is also what makes GAM populate the " +
+      'UNIQUE_REACH_FREQUENCY column; rows still cannot be summed back into a total.',
+    ),
+  ids: z.array(z.number().int().positive()).optional()
+    .describe('Restrict to specific IDs of the `by` entity (e.g. the line item IDs of one campaign). Find them via lookup.'),
+});
+
+export const reachReportTool = buildReportTool({
+  name: 'reach_report',
+  description:
+    'Unique audience and delivered ad frequency, from GAM\'s Reach report. Returns total unique visitors ' +
+    '(deduplicated people, not cookies), total reach impressions, and average impressions per unique visitor, ' +
+    'sliced by line item / order / advertiser / ad unit and optionally by country or day. ' +
+    'Use this to set a frequency cap from evidence rather than guesswork: the average impressions per unique ' +
+    'visitor a campaign already delivered shows where its current frequency actually sits, and how much of the ' +
+    'audience a cap would bite into. Reach metrics come from a separate GAM report type and cannot be combined ' +
+    'with revenue/impression metrics; unique counts are NOT additive across rows. ' +
+    'Ad-server/reservation delivery only — excludes Ad Exchange and AdSense.',
+  input: inputSchema,
+  buildQuery: (input): ReportQuery => {
+    const [idDim, nameDim] = PRIMARY[input.by];
+    const secondary = SECONDARY[input.group_by];
+    return {
+      dimensions: secondary ? [idDim, nameDim, secondary] : [idDim, nameDim],
+      metrics: ['UNIQUE_VISITORS', 'REACH_IMPRESSIONS', 'AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR'],
+      ...(input.ids?.length && {
+        filters: [{ field: idDim, op: 'IN' as const, value: input.ids }],
+      }),
+      report_type: 'REACH',
+    };
+  },
+  summary: (input) => {
+    const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
+    const scope = input.ids?.length ? ` (${input.ids.length} id(s))` : '';
+    return `Reach & frequency by ${input.by}${slice}${scope}, ${input.date_range.start}..${input.date_range.end}`;
+  },
+  warnings: () => [REACH_NON_ADDITIVE_WARNING, COVERAGE_WARNING],
+});

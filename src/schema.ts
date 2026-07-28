@@ -1,179 +1,59 @@
-// `incompatible_with` lists dimension or metric names that GAM refuses to
-// combine with this entry in a single report. The matrix is curated from
-// observed 400 responses ("Dimension X cannot be queried with metric Y") —
-// it's not exhaustive, but surfaces the cases callers hit most often so
-// describe_schema can flag them upfront instead of letting them discover at
-// runtime. Symmetric on purpose: A → [B] AND B → [A] both appear, so a
-// caller looking up either side sees the constraint.
+import {
+  GENERATED_DIMENSIONS,
+  GENERATED_METRICS,
+  REPORT_TYPES,
+  type GeneratedEntry,
+} from './schema-generated.js';
+import { CURATED_DIMENSIONS, CURATED_METRICS, type Override } from './schema-overrides.js';
+
+export type ReportType = (typeof REPORT_TYPES)[number];
+
 export type DimensionDef = {
   name: string;
   type: 'string' | 'number' | 'date';
   description: string;
+  /** GAM report types this dimension can be queried under. */
+  report_types: string[];
   incompatible_with?: string[];
 };
 export type MetricDef = {
   name: string;
   type: 'number' | 'currency' | 'rate';
   description: string;
+  report_types: string[];
   incompatible_with?: string[];
 };
 
+// The generated enum is the source of truth for *which* names exist and what
+// report types accept them; the curated file supplies better prose and the
+// incompatibility matrix for the subset we've written up. A curated entry
+// naming something absent upstream is dropped, not resurrected — whitelisting
+// a name GAM doesn't have would pass validateCombo and then 400 at GAM.
+function merge<T>(generated: GeneratedEntry[], curated: Override[]): T[] {
+  const byName = new Map(curated.map((c) => [c.name, c]));
+  return generated.map((g) => {
+    const c = byName.get(g.name);
+    return {
+      name: g.name,
+      type: g.type,
+      description: c?.description ?? g.description,
+      report_types: g.report_types,
+      ...(c?.incompatible_with?.length && { incompatible_with: c.incompatible_with }),
+    } as T;
+  });
+}
+
 export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = {
-  dimensions: [
-    { name: 'DATE',                  type: 'date',   description: 'Calendar date in network timezone.' },
-    { name: 'WEEK',                  type: 'date',   description: 'ISO week start (Monday).' },
-    { name: 'MONTH_YEAR',            type: 'date',   description: 'Calendar month.' },
-    { name: 'HOUR',                  type: 'number', description: 'Hour of day (0–23) in network timezone. Pair with DATE for time-of-day / dayparting analysis.' },
-    { name: 'DAY_OF_WEEK',           type: 'number', description: 'Day of week as an integer (GAM convention: 1=Sunday … 7=Saturday). Use for weekday-vs-weekend performance patterns.' },
-    { name: 'ADVERTISER_ID',         type: 'number', description: 'Advertiser (Company) ID.' },
-    { name: 'ADVERTISER_NAME',       type: 'string', description: 'Advertiser display name.' },
-    { name: 'ORDER_ID',              type: 'number', description: 'Order ID.' },
-    { name: 'ORDER_NAME',            type: 'string', description: 'Order display name.' },
-    { name: 'LINE_ITEM_ID',          type: 'number', description: 'Line item ID.' },
-    { name: 'LINE_ITEM_NAME',        type: 'string', description: 'Line item display name.' },
-    { name: 'LINE_ITEM_TYPE',        type: 'string', description: 'STANDARD, SPONSORSHIP, NETWORK, BULK, PRICE_PRIORITY, HOUSE, PROGRAMMATIC_GUARANTEED, PREFERRED_DEAL, AD_EXCHANGE, ADSENSE.' },
-    { name: 'AD_UNIT_ID',            type: 'number', description: 'Ad unit ID (leaf).' },
-    { name: 'AD_UNIT_NAME',          type: 'string', description: 'Ad unit display name. Note: GAM REST exposes only the leaf ad unit — there is no top-level / ancestor ad-unit dimension.' },
-    { name: 'PLACEMENT_ID',          type: 'number', description: 'Placement ID. Placements group ad units for targeting/reporting.' },
-    { name: 'PLACEMENT_NAME',        type: 'string', description: 'Placement display name. Use to roll up performance across the ad units a placement groups.' },
-    { name: 'INVENTORY_FORMAT_NAME', type: 'string', description: 'Inventory format the impression served in (e.g. display, video, native).' },
-    { name: 'CREATIVE_ID',           type: 'number', description: 'Creative ID.' },
-    { name: 'CREATIVE_NAME',         type: 'string', description: 'Creative display name.' },
-    { name: 'CREATIVE_TYPE',         type: 'string', description: 'IMAGE, VIDEO, HTML5, NATIVE, etc.' },
-    { name: 'RENDERED_CREATIVE_SIZE', type: 'string', description: "Creative size, as 'WIDTHxHEIGHT' (e.g. '300x250'). Maps to 'Rendered creative size' in the GAM UI — the size the creative actually rendered at, which can differ from its native size when it serves into a differently-sized slot. GAM's REST API has no plain 'CREATIVE_SIZE'; 'CREATIVE_SIZE' is accepted as an alias and rewritten to this. Creative-level, so only defined for filled impressions — not valid with request-level metrics (AD_REQUESTS, UNFILLED_IMPRESSIONS)." },
-    { name: 'VIDEO_PLCMT_NAME',      type: 'string', description: 'Video placement type (e.g. in-stream, in-banner, in-article, in-feed, interstitial). Use to compare instream vs outstream video performance.' },
-    { name: 'VIDEO_AD_DURATION',     type: 'string', description: 'Duration bucket of the served video ad (string label). Use to break down video delivery/yield by ad length.' },
-    { name: 'COUNTRY_NAME',          type: 'string', description: 'Country of impression.' },
-    { name: 'REGION_NAME',           type: 'string', description: 'Region / state of impression (sub-country). Pair with COUNTRY_NAME to disambiguate same-named regions.' },
-    { name: 'METRO_NAME',            type: 'string', description: 'Metro / DMA of impression (primarily US designated market areas).' },
-    { name: 'DEVICE_CATEGORY_NAME',  type: 'string', description: 'DESKTOP, MOBILE, TABLET, etc.' },
-    { name: 'DEMAND_CHANNEL_NAME',   type: 'string', description: 'Demand channel that served the impression (e.g. direct/reservation vs programmatic vs AdSense). Best single dimension for splitting revenue by channel at a glance.' },
-    { name: 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE',      type: 'number', description: 'Line item booked goal in absolute units (impressions/clicks). For SPONSORSHIP line items the goal is a percentage instead — see LINE_ITEM_PRIMARY_GOAL_UNITS_PERCENTAGE.' },
-    { name: 'LINE_ITEM_PRIMARY_GOAL_UNITS_PERCENTAGE',    type: 'number', description: 'Line item booked goal as a percentage of inventory (used by SPONSORSHIP).' },
-    { name: 'LINE_ITEM_PRIMARY_GOAL_TYPE_NAME',           type: 'string', description: 'Goal type label (LIFETIME / DAILY / NONE).' },
-    { name: 'BUYER_NETWORK_NAME',    type: 'string', description: 'Demand-source name (DSP, AdSense, AdX, etc.). Best default for slicing programmatic revenue by buyer.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'BUYER_NETWORK_ID',      type: 'number', description: 'Demand-source ID. Companion to BUYER_NETWORK_NAME.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'BIDDER_NAME',           type: 'string', description: 'Open Bidding (EBDA) bidder display name. Use to attribute revenue to specific bidders participating in Open Bidding.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE'] },
-    { name: 'BIDDER_ENCRYPTED_ID',   type: 'string', description: 'Open Bidding bidder encrypted ID. Companion to BIDDER_NAME.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE'] },
-    { name: 'DEAL_NAME',             type: 'string', description: "Programmatic deal name ('Deal' in the GAM UI). Primary slice for deal-level reporting (Preferred Deals, Private Auctions, Programmatic Guaranteed). Programmatic demand, so revenue surfaces via AdX / Open Bidding metrics — not AD_SERVER_*.",
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'DEAL_ID',               type: 'string', description: 'Programmatic deal ID. Companion to DEAL_NAME.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'DEAL_BUYER_NAME',       type: 'string', description: "Buyer transacting on the deal ('Deal buyer' in the GAM UI). Use to see which buyers drive deal revenue.",
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'DEAL_BUYER_ID',         type: 'number', description: 'Deal buyer ID. Companion to DEAL_BUYER_NAME.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'EXCHANGE_BIDDING_DEAL_TYPE_NAME', type: 'string', description: 'Deal type label (e.g. Preferred Deal, Private Auction, Programmatic Guaranteed). Use to compare yield across deal structures.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'YIELD_GROUP_NAME',       type: 'string', description: 'Yield group (Open Bidding / mediation) name. Primary slice for header-bidding / Open Bidding yield analysis — pair with the YIELD_GROUP_* metrics.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'YIELD_GROUP_ID',         type: 'number', description: 'Yield group ID. Companion to YIELD_GROUP_NAME.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'YIELD_GROUP_BUYER_NAME', type: 'string', description: 'Yield group partner / bidder transacting in the yield group. Use to compare Open Bidding partners by yield and fill.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'YIELD_GROUP_BUYER_TAG_NAME', type: 'string', description: 'Yield group buyer tag / network label (the configured mediation tag for the partner).',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_SERVER_IMPRESSIONS', 'AD_SERVER_REVENUE', 'AD_SERVER_RESPONSES_SERVED'] },
-    { name: 'KEY_VALUES_NAME',       type: 'string', description: "Custom-targeting key=value pair from the ad request (e.g. '<key>=<value>'). WARNING: a single impression can match multiple KV pairs, so rows are NOT mutually exclusive — summing impressions/revenue across rows OVERSTATES the true total. Use for ranking 'which KVs are most active', not for share-of-total math. For clean aggregation, use CUSTOM_DIMENSION_<N>_VALUE with custom_dimension_key_ids.",
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM', 'AD_EXCHANGE_MATCH_RATE', 'AD_EXCHANGE_TOTAL_REQUESTS', 'AD_EXCHANGE_CTR', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE', 'ADSENSE_AVERAGE_ECPM'] },
-    { name: 'KEY_VALUES_ID',         type: 'number', description: 'Custom-targeting key=value ID. Companion to KEY_VALUES_NAME — same overlap caveat applies.',
-      incompatible_with: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM', 'AD_EXCHANGE_MATCH_RATE', 'AD_EXCHANGE_TOTAL_REQUESTS', 'AD_EXCHANGE_CTR', 'ADSENSE_IMPRESSIONS', 'ADSENSE_REVENUE', 'ADSENSE_AVERAGE_ECPM'] },
-    { name: 'CUSTOM_DIMENSION_0_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 0. REQUIRES passing custom_dimension_key_ids[0]=<key_id> on run_report — find key IDs via lookup(entity_type="custom_targeting_key"). Each request emits exactly one value per slot, so rows aggregate cleanly to network total. Slot meaning is per-network — different publishers configure different keys.' },
-    { name: 'CUSTOM_DIMENSION_1_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 1. REQUIRES custom_dimension_key_ids[1]. Aggregates cleanly (one value per request).' },
-    { name: 'CUSTOM_DIMENSION_2_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 2. REQUIRES custom_dimension_key_ids[2]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_3_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 3. REQUIRES custom_dimension_key_ids[3]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_4_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 4. REQUIRES custom_dimension_key_ids[4]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_5_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 5. REQUIRES custom_dimension_key_ids[5]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_6_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 6. REQUIRES custom_dimension_key_ids[6]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_7_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 7. REQUIRES custom_dimension_key_ids[7]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_8_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 8. REQUIRES custom_dimension_key_ids[8]. Aggregates cleanly.' },
-    { name: 'CUSTOM_DIMENSION_9_VALUE', type: 'string', description: 'Publisher-configured custom dimension at slot 9. REQUIRES custom_dimension_key_ids[9]. Aggregates cleanly.' },
-    { name: 'TAXONOMY_CATEGORY',    type: 'string', description: "Taxonomy category of the served content (GAM REST 'TAXONOMY_CATEGORY'). On networks with Publisher Provided Signals (PPS) configured, this typically surfaces the IAB Content Taxonomy category the request was tagged with; on other networks it may reflect GAM's older content-classification feature. Probe values on a small report to confirm semantics for your network. PPS-specific dimensions (top level / all levels / data provider / delivered) are UI-only in the GAM query tool (Beta) and not yet exposed in the REST Dimension enum." },
-    { name: 'TAXONOMY_CATEGORY_ID', type: 'number', description: 'Numeric ID companion to TAXONOMY_CATEGORY. For IAB-Taxonomy-tagged inventory this maps to the IAB taxonomy node ID; otherwise to a GAM-internal category ID.' },
-  ],
-  metrics: [
-    { name: 'IMPRESSIONS',                            type: 'number',   description: 'Total served impressions (all channels).' },
-    { name: 'CLICKS',                                 type: 'number',   description: 'Total clicks (all channels).' },
-    { name: 'REVENUE',                                type: 'currency', description: 'Total revenue (publisher currency).' },
-    { name: 'CPM_REVENUE',                            type: 'currency', description: 'CPM revenue.' },
-    { name: 'AVERAGE_ECPM',                           type: 'currency', description: "Total average eCPM — revenue per thousand impressions averaged across ad server, AdSense, and Ad Exchange. Best default for a blended 'eCPM' number. For channel-specific eCPM use AD_SERVER_AVERAGE_ECPM, AD_EXCHANGE_AVERAGE_ECPM, or ADSENSE_AVERAGE_ECPM." },
-    { name: 'CPC_REVENUE',                            type: 'currency', description: 'CPC revenue.' },
-    { name: 'CTR',                                    type: 'rate',     description: 'Clicks ÷ impressions.' },
-    { name: 'AD_REQUESTS',                            type: 'number',   description: 'Total ad requests received.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'DEAL_NAME', 'DEAL_ID', 'DEAL_BUYER_NAME', 'DEAL_BUYER_ID', 'EXCHANGE_BIDDING_DEAL_TYPE_NAME', 'YIELD_GROUP_NAME', 'YIELD_GROUP_ID', 'YIELD_GROUP_BUYER_NAME', 'YIELD_GROUP_BUYER_TAG_NAME', 'CREATIVE_ID', 'CREATIVE_NAME', 'CREATIVE_TYPE', 'RENDERED_CREATIVE_SIZE', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'UNFILLED_IMPRESSIONS',                   type: 'number',   description: 'Requests without a fill.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BUYER_NETWORK_NAME', 'BUYER_NETWORK_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'DEAL_NAME', 'DEAL_ID', 'DEAL_BUYER_NAME', 'DEAL_BUYER_ID', 'EXCHANGE_BIDDING_DEAL_TYPE_NAME', 'YIELD_GROUP_NAME', 'YIELD_GROUP_ID', 'YIELD_GROUP_BUYER_NAME', 'YIELD_GROUP_BUYER_TAG_NAME', 'CREATIVE_ID', 'CREATIVE_NAME', 'RENDERED_CREATIVE_SIZE', 'LINE_ITEM_ID', 'LINE_ITEM_NAME'] },
-    { name: 'FILL_RATE',                              type: 'rate',     description: 'Filled ÷ requests.' },
-    { name: 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',       type: 'number',   description: 'Active View viewable impressions (all channels).' },
-    { name: 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE',  type: 'rate',     description: 'Viewable ÷ measurable impressions.' },
-    { name: 'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS',     type: 'number',   description: 'Impressions that were measurable by Active View — the denominator of the viewable rate. Pair with ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS to see measurement coverage.' },
-    { name: 'ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS',       type: 'number',   description: 'Impressions eligible for Active View measurement (the universe before measurability). Use measurable ÷ eligible to gauge how much inventory could be measured.' },
-    { name: 'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE', type: 'rate',    description: 'Measurable ÷ eligible impressions — share of inventory that Active View could actually measure.' },
-    { name: 'VIDEO_VIEWERSHIP_STARTS',                type: 'number',   description: 'Video ad starts (impressions that began playing). Top of the video completion funnel.' },
-    { name: 'VIDEO_VIEWERSHIP_FIRST_QUARTILES',       type: 'number',   description: 'Video plays reaching 25% (first quartile).' },
-    { name: 'VIDEO_VIEWERSHIP_MIDPOINTS',             type: 'number',   description: 'Video plays reaching 50% (midpoint).' },
-    { name: 'VIDEO_VIEWERSHIP_THIRD_QUARTILES',       type: 'number',   description: 'Video plays reaching 75% (third quartile).' },
-    { name: 'VIDEO_VIEWERSHIP_COMPLETES',             type: 'number',   description: 'Video creative completions (100%).' },
-    { name: 'VIDEO_VIEWERSHIP_COMPLETION_RATE',       type: 'rate',     description: 'Completions ÷ video starts.' },
-    { name: 'VIDEO_VIEWERSHIP_VIEW_THROUGH_RATE',     type: 'rate',     description: 'View-through rate — completes ÷ starts expressed as a percent (VTR).' },
-    { name: 'VIDEO_VIEWERSHIP_AVERAGE_VIEW_TIME',     type: 'number',   description: 'Average time (seconds) a video ad was viewed.' },
-    { name: 'VIDEO_VIEWERSHIP_AVERAGE_VIEW_RATE',     type: 'rate',     description: 'Average percentage of the video ad that was viewed.' },
-    { name: 'AD_SERVER_IMPRESSIONS',                  type: 'number',   description: 'Ad server impressions (excludes AdSense/Ad Exchange).' },
-    { name: 'AD_SERVER_CLICKS',                       type: 'number',   description: 'Ad server clicks.' },
-    { name: 'AD_SERVER_REVENUE',                      type: 'currency', description: 'Ad server revenue.' },
-    { name: 'AD_SERVER_CTR',                          type: 'rate',     description: 'Ad server CTR.' },
-    { name: 'AD_SERVER_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',      type: 'number', description: 'Ad server Active View viewable impressions.' },
-    { name: 'AD_SERVER_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE', type: 'rate',   description: 'Ad server viewability rate.' },
-    { name: 'AD_SERVER_AVERAGE_ECPM',                          type: 'currency', description: 'Average eCPM for ad-server impressions only (excludes AdX/AdSense backfill). Pair with AD_SERVER_IMPRESSIONS for clean direct-channel eCPM.' },
-    { name: 'AD_SERVER_RESPONSES_SERVED',                      type: 'number',   description: 'Ad-server responses served — analogous to fills/matched requests, ad-server-only (excludes AdX/AdSense).' },
-    { name: 'AD_EXCHANGE_IMPRESSIONS',                         type: 'number',   description: 'Ad Exchange (AdX / Open Bidding) impressions — programmatic-only fills, excludes direct/AdSense.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'AD_EXCHANGE_REVENUE',                             type: 'currency', description: 'Ad Exchange revenue — programmatic-only.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'AD_EXCHANGE_AVERAGE_ECPM',                        type: 'currency', description: 'Average eCPM on Ad Exchange impressions. Use with BUYER_NETWORK_NAME or BIDDER_NAME to compare DSP yield.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'AD_EXCHANGE_MATCH_RATE',                          type: 'rate',     description: 'AdX match rate: matched requests ÷ total AdX requests. Below ~50% suggests floor pricing too high or weak demand.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'CREATIVE_ID', 'CREATIVE_NAME', 'ADVERTISER_ID', 'ADVERTISER_NAME', 'ORDER_ID', 'ORDER_NAME'] },
-    { name: 'AD_EXCHANGE_TOTAL_REQUESTS',                      type: 'number',   description: 'Total AdX requests (matched + unmatched). Pair with AD_EXCHANGE_MATCH_RATE for funnel analysis.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'CREATIVE_ID', 'CREATIVE_NAME', 'ADVERTISER_ID', 'ADVERTISER_NAME', 'ORDER_ID', 'ORDER_NAME'] },
-    { name: 'AD_EXCHANGE_CTR',                                 type: 'rate',     description: 'AdX click-through rate.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'ADSENSE_IMPRESSIONS',                             type: 'number',   description: 'AdSense backfill impressions (after AdX, before unfilled).',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'ADSENSE_REVENUE',                                 type: 'currency', description: 'AdSense backfill revenue.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'ADSENSE_AVERAGE_ECPM',                            type: 'currency', description: 'Average eCPM on AdSense backfill — typically the floor of programmatic eCPM tiers.',
-      incompatible_with: ['KEY_VALUES_NAME', 'KEY_VALUES_ID', 'BIDDER_NAME', 'BIDDER_ENCRYPTED_ID', 'LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE'] },
-    { name: 'DEALS_BID_REQUESTS',                             type: 'number',   description: 'Deal bid requests — requests where a programmatic deal was eligible. Top of the deal auction funnel. Best paired with deal dimensions (DEAL_NAME, DEAL_BUYER_NAME).' },
-    { name: 'DEALS_BIDS',                                     type: 'number',   description: 'Bids received on deals. Pair with DEALS_BID_REQUESTS for bid rate.' },
-    { name: 'DEALS_BID_RATE',                                 type: 'rate',     description: 'Deal bid rate: bids ÷ bid requests. Low rate suggests the buyer is rarely bidding on eligible inventory.' },
-    { name: 'DEALS_WINNING_BIDS',                             type: 'number',   description: 'Deal bids that won the auction.' },
-    { name: 'DEALS_WIN_RATE',                                 type: 'rate',     description: 'Deal win rate: winning bids ÷ total bids. Pair with DEALS_BID_RATE to diagnose where deal demand is lost (not bidding vs losing the auction).' },
-    { name: 'YIELD_GROUP_IMPRESSIONS',                        type: 'number',   description: 'Impressions served through yield groups (Open Bidding / mediation). Pair with YIELD_GROUP_NAME / YIELD_GROUP_BUYER_NAME.' },
-    { name: 'YIELD_GROUP_ESTIMATED_REVENUE',                  type: 'currency', description: 'Estimated revenue from yield-group (Open Bidding / mediation) impressions.' },
-    { name: 'YIELD_GROUP_ESTIMATED_CPM',                      type: 'currency', description: 'Estimated eCPM for yield-group impressions. Use to rank Open Bidding partners by yield.' },
-    { name: 'YIELD_GROUP_MEDIATION_THIRD_PARTY_ECPM',         type: 'currency', description: 'Third-party-reported eCPM for mediated (SDK) yield-group networks.' },
-    { name: 'YIELD_GROUP_MEDIATION_FILL_RATE',                type: 'rate',     description: 'Mediation fill rate: matched ÷ eligible queries for the yield group. Low fill flags an underperforming partner.' },
-    { name: 'YIELD_GROUP_MEDIATION_MATCHED_QUERIES',          type: 'number',   description: 'Yield-group queries a mediation partner filled.' },
-    { name: 'YIELD_GROUP_MEDIATION_PASSBACKS',                type: 'number',   description: 'Yield-group calls a partner passed back unfilled (returned to the waterfall). High passbacks = wasted calls.' },
-    { name: 'YIELD_GROUP_CALLOUTS',                           type: 'number',   description: 'Callouts made to yield-group partners (top of the Open Bidding funnel).' },
-    { name: 'YIELD_GROUP_BIDS',                               type: 'number',   description: 'Bids received from yield-group partners.' },
-    { name: 'YIELD_GROUP_BIDS_IN_AUCTION',                    type: 'number',   description: 'Yield-group bids that entered the auction.' },
-    { name: 'YIELD_GROUP_AUCTIONS_WON',                       type: 'number',   description: 'Auctions won by yield-group partners.' },
-    { name: 'YIELD_GROUP_SUCCESSFUL_RESPONSES',               type: 'number',   description: 'Successful responses from yield-group partners (responded in time with a valid bid/ad).' },
-    { name: 'AD_EXCHANGE_PLUS_YIELD_GROUP_IMPRESSIONS',       type: 'number',   description: 'Combined AdX + Open Bidding (yield group) impressions — the unified programmatic delivery view.' },
-    { name: 'AD_EXCHANGE_PLUS_YIELD_GROUP_REVENUE',           type: 'currency', description: 'Combined AdX + Open Bidding revenue — single programmatic-revenue number across the open auction and Open Bidding.' },
-    { name: 'AD_EXCHANGE_PLUS_YIELD_GROUP_ECPM',              type: 'currency', description: 'Combined AdX + Open Bidding eCPM — blended programmatic yield. Best single metric for "what is my programmatic eCPM".' },
-  ],
+  dimensions: merge<DimensionDef>(GENERATED_DIMENSIONS, CURATED_DIMENSIONS),
+  metrics: merge<MetricDef>(GENERATED_METRICS, CURATED_METRICS),
 };
 
-// Friendly / legacy dimension names that map onto a canonical REST dimension.
-// GAM's REST v1 API has no `CREATIVE_SIZE` — the equivalent is
-// RENDERED_CREATIVE_SIZE. We accept the familiar name and rewrite it so a
-// caller asking for "CREATIVE_SIZE" gets data instead of a 400 from GAM.
+export { REPORT_TYPES };
+
+// Friendly / legacy names that map onto a canonical REST name. GAM's REST v1
+// API has no `CREATIVE_SIZE` — the equivalent is RENDERED_CREATIVE_SIZE. We
+// accept the familiar name and rewrite it so a caller asking for
+// "CREATIVE_SIZE" gets data instead of a 400 from GAM.
 export const DIMENSION_ALIASES: Record<string, string> = {
   CREATIVE_SIZE: 'RENDERED_CREATIVE_SIZE',
 };
@@ -212,6 +92,73 @@ export function incompatibleWith(name: string): string[] {
   return DIM_BY_NAME.get(name)?.incompatible_with
     ?? METRIC_BY_NAME.get(name)?.incompatible_with
     ?? [];
+}
+
+// Report types this MCP has tools and plumbing for. Anything else in
+// REPORT_TYPES is still queryable via run_report, but flagged as unproven.
+export const SUPPORTED_REPORT_TYPES: ReportType[] = [
+  'HISTORICAL',
+  'REACH',
+  'AD_SPEED',
+  'FUTURE_SELL_THROUGH',
+  'PRIVACY_AND_MESSAGING',
+];
+
+// When a query is compatible with several report types, pick in this order.
+// HISTORICAL first because it is the default family and the widest; the rest
+// follow the order Google declares them in.
+const PREFERENCE: readonly string[] = ['HISTORICAL', ...REPORT_TYPES.filter((t) => t !== 'HISTORICAL')];
+
+export function reportTypesFor(name: string): string[] {
+  return DIM_BY_NAME.get(name)?.report_types ?? METRIC_BY_NAME.get(name)?.report_types ?? [];
+}
+
+/**
+ * Derives the GAM `reportType` a query implies by intersecting the report
+ * types every requested metric and dimension is compatible with.
+ *
+ * GAM computes each report family in a separate pipeline, so a request is
+ * wholly one type — asking for reach and historical metrics together 400s.
+ * Deriving this rather than accepting it as tool input means the caller never
+ * picks, and the report cache (which already keys on the metric list) stays
+ * correct without an extra field.
+ *
+ * Returns {error} naming the conflicting entries when no type accepts them all.
+ */
+export function resolveReportType(
+  metrics: string[],
+  dimensions: string[] = [],
+): ReportType | { error: string } {
+  const named = [...metrics, ...dimensions]
+    .map((n) => ({ name: n, types: reportTypesFor(n) }))
+    .filter((e) => e.types.length > 0);
+  if (named.length === 0) return 'HISTORICAL';
+
+  let intersection = new Set(named[0].types);
+  for (const e of named.slice(1)) {
+    intersection = new Set([...intersection].filter((t) => e.types.includes(t)));
+  }
+
+  if (intersection.size === 0) {
+    // Report the split rather than a bare "incompatible": which side to drop
+    // is the caller's decision and they need the groupings to make it.
+    const groups = new Map<string, string[]>();
+    for (const e of named) {
+      const key = [...e.types].sort().join('+');
+      groups.set(key, [...(groups.get(key) ?? []), e.name]);
+    }
+    const desc = [...groups.entries()]
+      .map(([types, names]) => `${names.join(', ')} → ${types}`)
+      .join('; ');
+    return {
+      error:
+        'No single GAM report type accepts all of these together; GAM runs each ' +
+        `report family as a separate type. Compatibility: ${desc}. ` +
+        'Split into one request per report type',
+    };
+  }
+
+  return (PREFERENCE.find((t) => intersection.has(t)) ?? [...intersection][0]) as ReportType;
 }
 
 // Pre-flight a query against the curated incompatibility matrix. Returns a

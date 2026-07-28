@@ -82,6 +82,10 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
 | `yield_breakdown` | Yield-group (Open Bidding / mediation) yield — impressions, estimated revenue, estimated eCPM, mediation fill rate, and passbacks per partner (`by:"buyer"`) or per group (`by:"yield_group"`). Ranks Open Bidding partners to prune the waterfall. Optional secondary slice by day / ad_unit / country / device. |
 | `video_breakdown` | Video completion funnel — starts → 25% → 50% → 75% → completes + completion rate, by ad_unit / placement type / size / duration. Optional secondary slice by day / country / device. |
 | `viewability_breakdown` | Active View viewability — viewable / measurable / eligible impressions + viewable & measurable rates, by ad_unit / size / device. Optional secondary slice by day / country / device. |
+| `reach_report` | Unique audience and delivered frequency from GAM's **Reach** report type — total unique visitors (deduplicated people, not cookies), total reach impressions, and average impressions per unique visitor, by line_item / order / advertiser / ad_unit, optionally sliced by country or day and filtered to specific IDs. Use it to size a frequency cap from what a campaign actually delivered. Reach metrics come from a separate GAM report type, so they can't be mixed with revenue/impression metrics; unique counts are **not additive** across rows. Ad-server/reservation delivery only (excludes AdX and AdSense), ~3-day lag, ~1-year retention. |
+| `ad_speed` | Ad latency and page-speed diagnostics (`AD_SPEED` report type) — the distribution of impressions across creative load-time buckets (0–500 ms → >8 s), the page/tag timing funnel, or the reasons impressions went unviewed, by ad_unit / device / country / creative size. The causal answer behind low viewability, where `viewability_breakdown` only shows the symptom. Buckets are percentages that sum to ~100% per row, so `IMPRESSIONS` rides along as the volume denominator. |
+| `sell_through` | Forward-looking inventory availability (`FUTURE_SELL_THROUGH` report type) — forecasted, reserved, and available impressions plus sell-through rate (reserved ÷ forecasted; ≥1.0 means oversold), by ad_unit / placement / line_item / order over a **future** date range, optionally filtered to specific IDs. The forward half of `pacing_status`: that shows a line item is behind, this shows whether the inventory to catch it up exists. Forecasts, not measurements. |
+| `consent_messaging` | Privacy and user-messaging performance (`PRIVACY_AND_MESSAGING` report type) — messages shown and how users responded, one family at a time via `focus`: EU/UK consent, ad-blocking recovery, Apple ATT, US state opt-outs, ads-personalization (UPTC), or offerwall. Optional slice by day / country / device / OS group / app. Every message type is independently optional, so all-zero means "not configured" as often as "no traffic". |
 | `find_unused_ad_units` | "Codeless" ad units — those that received fewer than `min_requests` ad requests over the lookback window. Computes a set-difference between every ad unit and ad units that appeared in a report. |
 | **Comparative** | Compared to what |
 | `compare_periods` | Run any report twice and get per-row deltas — WoW, MoM, YoY, or explicit. Output rows carry `<metric>`, `<metric>_prev`, `<metric>_delta_pct`. |
@@ -92,7 +96,7 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
 | **Power tools** | The escape hatches |
 | `run_report` | Generic GAM Reports query — pick any dimensions/metrics from `describe_schema`, optional filters (`=`, `IN`, `!=`, `CONTAINS`, `NOT_CONTAINS`), optional `custom_dimension_key_ids` for KV reporting |
 | `lookup` | Name ↔ ID resolution for advertisers, orders, line items, ad units, creatives, placements, companies, **custom_targeting_keys**. Lists up to 1000 with transparent pagination. |
-| `describe_schema` | Browse the dimensions and metrics this MCP can query (≈90 entries spanning impressions/revenue/CTR, blended & channel-specific eCPM, AdX/AdSense channel metrics, the video viewership funnel, Active View viewability, buyer-network/bidder dims, programmatic deals + the deal bid funnel, yield groups + Open Bidding/mediation funnel, creative size, placement/inventory-format, geo (country/region/metro) & dayparting (hour/day-of-week), demand channel, KV/custom-dimension targeting) |
+| `describe_schema` | Browse the dimensions and metrics this MCP can query — **the complete GAM REST enum: 764 dimensions and 526 metrics.** Filter with `report_type` (what can legally appear in one request together), `family` (name prefix, e.g. `AD_EXCHANGE`), or `search` (substring of name or description). Unfiltered calls return names and types only; any filter turns on descriptions, report-type compatibility, and the curated `incompatible_with` hints |
 | **Saved queries** | Templates the analyst can stash and replay |
 | `save_query` | Persist a `run_report`-shaped template (dimensions + metrics + optional filters + custom_dimension_key_ids) under a name. Date range is deliberately not saved — supply it fresh at replay. |
 | `list_saved_queries` | List every saved template with name, description, and save timestamp. |
@@ -139,6 +143,10 @@ Things an LLM with this MCP attached can answer directly. (No prompts engineerin
 5e. **Yield-group waterfall health.** *"Which Open Bidding partners have low fill and high passbacks?"* → `yield_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"buyer"})`.
 5f. **Video drop-off.** *"Where do viewers abandon my video ads by placement type?"* → `video_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"placement"})`.
 5g. **Low-viewability inventory.** *"Which ad sizes have the worst viewable rate?"* → `viewability_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"size"})`.
+5i. **Frequency cap from evidence.** *"What frequency cap should this direct campaign use?"* → `reach_report({date_range:{start:"2026-05-01", end:"2026-05-31"}, by:"line_item", ids:[<line_item_id>]})` — returns unique visitors and the average impressions each one already received, so the cap is set against observed frequency instead of a guess.
+5j. **Slow ads, not bad placements.** *"Viewability is poor on mobile — is it the placement or the page?"* → `ad_speed({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"device", focus:"unviewed_reason"})`. A high "scrolled before ad loaded" share is a speed problem; "slot never entered viewport" is a placement problem.
+5k. **Can we take the booking?** *"An advertiser wants 5M impressions next month — do we have it?"* → `sell_through({date_range:{start:"2026-06-01", end:"2026-06-30"}, by:"ad_unit"})` and read `available impressions`.
+5l. **Cost of consent.** *"What share of EU users consent, and how does that vary by country?"* → `consent_messaging({date_range:{start:"2026-05-01", end:"2026-05-31"}, focus:"eu_consent", group_by:"country"})`.
 5h. **Floors set too high.** *"Where are my AdX floors costing me fills?"* → `diagnose_floor_pricing({lookback_days:7})` — surfaces `floor_likely_high` ad units ranked by recoverable revenue.
 6. **Specific ad units.** *"Revenue and impressions for our sports placements last week."* → `run_report` with `filters:[{field:"AD_UNIT_NAME", op:"CONTAINS", value:"sports"}]`.
 7. **AdX yield diagnosis.** *"AdX match rate and average eCPM per ad unit yesterday."* → `run_report({dimensions:["AD_UNIT_NAME"], metrics:["AD_EXCHANGE_TOTAL_REQUESTS","AD_EXCHANGE_MATCH_RATE","AD_EXCHANGE_AVERAGE_ECPM"], date_range:{relative:"yesterday"}})`.
@@ -148,7 +156,24 @@ Things an LLM with this MCP attached can answer directly. (No prompts engineerin
 
 ## Schema notes
 
-- **`describe_schema`** returns the full curated catalog with descriptions tuned for LLM consumption. Read it before composing `run_report` queries.
+- **`describe_schema`** returns the full GAM catalog. Read it before composing `run_report` queries — but **filter it**: 1290 entries with prose will swamp a context window. `describe_schema({report_type:"REACH"})` or `describe_schema({search:"viewab"})` is almost always what you want.
+
+### Schema provenance
+
+`src/schema-generated.ts` is generated from Google's [`report_definition.proto`](https://raw.githubusercontent.com/googleapis/googleapis/master/google/ads/admanager/v1/report_definition.proto) — it is the complete REST `Metric`, `Dimension`, and `ReportType` enums, including each entry's report-type compatibility and its data format (which determines whether a metric reads as a count, a currency, or a rate). Hand-written descriptions and the observed incompatibility matrix live in `src/schema-overrides.ts` and are merged over the generated entries, so regenerating never destroys curated prose.
+
+```bash
+npm run refresh-schema   # regenerate src/schema-generated.ts from the proto
+npm run schema:gap       # diff generated vs whitelisted; flags drift both ways
+```
+
+`schema:gap` reports names GAM has that we lack **and** names we whitelist that GAM no longer declares. The second direction matters more: a whitelisted-but-nonexistent name passes local validation and then fails against the live API.
+
+### Report types
+
+GAM runs each report family as a distinct `reportType`, and a request is wholly one type. This server derives the type by intersecting the report types every requested dimension and metric accepts, so callers never pass it — and asking for, say, reach and historical metrics together is rejected locally with a message naming which side wants which type, instead of a generic GAM 400.
+
+`HISTORICAL` and `REACH` have purpose-built tools. The other ten types in the enum are reachable through `run_report` (their metrics are whitelisted) but are forwarded unverified — you'll get a warning on the envelope saying so.
 - **`KEY_VALUES_NAME` overlap caveat:** one impression can match multiple key-value pairs, so summing impressions/revenue across rows OVERSTATES the true total. Use it to *rank* active KVs, not for share-of-total math. For clean aggregation, use `CUSTOM_DIMENSION_<N>_VALUE` with `custom_dimension_key_ids` — those slots are mutually exclusive (one value per request).
 - **`CUSTOM_DIMENSION_<N>_VALUE` is publisher-configured.** Slot 0 means whatever your network admin has mapped to it (might be `section`, might be `tier`, might be unused). Discover via `lookup(entity_type="custom_targeting_key")`.
 - **No EQUALS in GAM.** The `=` and `!=` filter ops are aliases the MCP translates to `IN`/`NOT_IN` with a single value. Substring search uses `CONTAINS`/`NOT_CONTAINS` (literal substring, no wildcards).
