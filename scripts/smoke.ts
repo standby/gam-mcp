@@ -158,10 +158,14 @@ async function describeSome(client: GAMClient, tz: string, networkCode: string):
       .filter((v: string) => v.startsWith('networks/')).length;
     // Counts and enums only — no targeting values are printed, so a smoke log
     // is safe to paste anywhere.
+    // Field names only, never values — these are schema, not publisher data.
+    const unmapped = [...new Set(clauses.flatMap((c: { unrecognized_fields?: Record<string, unknown> }) =>
+      Object.keys(c.unrecognized_fields ?? {})))];
     process.stderr.write(
       `   described=${items.length} with_custom_targeting=${withTargeting} clauses=${clauses.length}` +
       ` negated=${clauses.filter((c: { op: string }) => c.op === 'IS NONE OF').length}` +
-      ` resolved_paths=${Object.keys(r.resolved_paths).length} unresolved_labels=${stillRaw}\n`,
+      ` resolved_paths=${Object.keys(r.resolved_paths).length} unresolved_labels=${stillRaw}` +
+      (unmapped.length ? ` unmapped_literal_fields=${unmapped.join(',')}` : '') + '\n',
     );
     if (stillRaw > 0) throw new Error(`${stillRaw} targeting label(s) stayed as raw resource paths`);
     if (clauses.length === 0) {

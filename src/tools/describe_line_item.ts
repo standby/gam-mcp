@@ -106,7 +106,14 @@ type TargetingClause = {
   op: 'IS ANY OF' | 'IS NONE OF';
   values: string[];
   value_ids: string[];
+  // Anything GAM sent on the literal that we do not map. Surfaced rather than
+  // dropped: if negation ever arrives under a different field name, `op`
+  // would read IS ANY OF for an exclusion — a wrong answer that looks right.
+  // This makes that visible instead.
+  unrecognized_fields?: Record<string, unknown>;
 };
+
+const KNOWN_LITERAL_FIELDS = new Set(['customTargetingKey', 'customTargetingValues', 'negative']);
 
 // GAM nests customTargetingClauses[].customTargetingLiterals[] with a
 // `negative` boolean. Flatten to one row per literal, keeping the clause index
@@ -122,6 +129,9 @@ function flattenCustomTargeting(targeting: unknown, resolved: Map<string, Resolv
       const valuePaths: string[] = Array.isArray(lit?.customTargetingValues)
         ? lit.customTargetingValues.filter((v: unknown): v is string => typeof v === 'string')
         : [];
+      const extra = Object.fromEntries(
+        Object.entries(lit ?? {}).filter(([k]) => !KNOWN_LITERAL_FIELDS.has(k)),
+      );
       out.push({
         clause: i,
         key: label(keyPath, resolved),
@@ -129,6 +139,7 @@ function flattenCustomTargeting(targeting: unknown, resolved: Map<string, Resolv
         op: lit?.negative === true ? 'IS NONE OF' : 'IS ANY OF',
         values: valuePaths.map((v) => label(v, resolved)),
         value_ids: valuePaths.map(tailId),
+        ...(Object.keys(extra).length ? { unrecognized_fields: extra } : {}),
       });
     }
   });

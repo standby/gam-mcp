@@ -94,6 +94,34 @@ describe('describe_line_item', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('surfaces literal fields it does not map, so a renamed negation flag cannot hide', async () => {
+    const resources = {
+      ...RESOURCES,
+      'lineItems/4': {
+        name: `${NET}/lineItems/4`,
+        lineItemId: '4',
+        targeting: {
+          customTargeting: {
+            customTargetingClauses: [{
+              customTargetingLiterals: [{ ...literal(10, [101]), excluded: true }],
+            }],
+          },
+        },
+      },
+    };
+    const { ctx, dir } = makeCtx(createMockGamClient({ resources }));
+    const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [4] }), ctx) as any;
+    expect(r.line_items[0].custom_targeting[0].unrecognized_fields).toEqual({ excluded: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('omits unrecognized_fields when every literal field is mapped', async () => {
+    const { ctx, dir } = makeCtx();
+    const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [1] }), ctx) as any;
+    expect(r.line_items[0].custom_targeting[0].unrecognized_fields).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('handles a line item with no targeting', async () => {
     const { ctx, dir } = makeCtx();
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [2] }), ctx) as any;
