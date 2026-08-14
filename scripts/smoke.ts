@@ -81,17 +81,53 @@ async function byIdLookups(client: GAMClient): Promise<void> {
   }
 }
 
+// Which line items to describe. Default is whatever the network lists first,
+// which may well have no custom targeting — point the run at a known order or
+// at explicit ids to exercise the clause flattener.
+//   GAM_SMOKE_LINE_ITEM_IDS=111,222   describe exactly these
+//   GAM_SMOKE_ORDER_ID=333            describe line items under this order
+async function pickLineItemIds(client: GAMClient): Promise<number[]> {
+  const explicit = process.env.GAM_SMOKE_LINE_ITEM_IDS;
+  if (explicit) {
+    const ids = explicit.split(',').map((v) => Number(v.trim())).filter((n) => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) throw new Error(`GAM_SMOKE_LINE_ITEM_IDS has no valid ids: ${explicit}`);
+    process.stderr.write(`   using ${ids.length} explicit line item id(s)\n`);
+    return ids;
+  }
+  const orderId = process.env.GAM_SMOKE_ORDER_ID;
+  if (orderId) {
+    // Line items are a flat collection, not nested under orders, and
+    // listEntities only filters on displayName — so query the collection
+    // directly. Whether orderId is filter-eligible is exactly what we want to
+    // find out; a 400 here says use GAM_SMOKE_LINE_ITEM_IDS instead.
+    let page: Record<string, unknown> | null;
+    try {
+      page = await client.getResource(`lineItems?pageSize=10&filter=orderId=${encodeURIComponent(orderId)}`);
+    } catch (e) {
+      throw new Error(
+        `listing line items for order ${orderId} failed (${e instanceof Error ? e.message : String(e)}). ` +
+        'If GAM rejected the filter, pass GAM_SMOKE_LINE_ITEM_IDS=... instead.',
+      );
+    }
+    const list = (page?.lineItems as Array<Record<string, unknown>> | undefined) ?? [];
+    const ids = list
+      .map((li) => Number(li.lineItemId ?? String(li.name ?? '').split('/').pop()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    process.stderr.write(`   order ${orderId}: ${ids.length} line item(s)\n`);
+    return ids;
+  }
+  return (await client.listEntities({ entity_type: 'line_item', limit: 10 })).map((e) => e.id);
+}
+
 async function describeSome(client: GAMClient, tz: string): Promise<void> {
-  // Ten at a time: custom targeting is optional per line item, and one that
-  // happens to have none leaves the clause flattener untested.
-  const some = await client.listEntities({ entity_type: 'line_item', limit: 10 });
-  if (some.length === 0) {
-    process.stderr.write('   no line items in this network, skipped\n');
+  const ids = (await pickLineItemIds(client)).slice(0, 10);
+  if (ids.length === 0) {
+    process.stderr.write('   no line items to describe, skipped\n');
     return;
   }
   const dir = mkdtempSync(join(tmpdir(), 'gam-smoke-'));
   try {
-    const r = await describeLineItemTool.handler({ ids: some.map((e) => e.id) }, {
+    const r = await describeLineItemTool.handler({ ids }, {
       client,
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: tz,
