@@ -1,5 +1,6 @@
 import { lookupTool } from './lookup.js';
 import { describeSchemaTool } from './describe_schema.js';
+import { describeLineItemTool } from './describe_line_item.js';
 import { runReportTool } from './run_report.js';
 import { revenueSummaryTool } from './revenue_summary.js';
 import { topAdvertisersTool } from './top_advertisers.js';
@@ -37,6 +38,7 @@ import type { ZodTypeAny } from 'zod';
 export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   lookupTool,
   describeSchemaTool,
+  describeLineItemTool,
   runReportTool,
   revenueSummaryTool,
   topAdvertisersTool,

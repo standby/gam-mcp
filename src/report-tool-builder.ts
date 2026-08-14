@@ -20,11 +20,20 @@ export type ToolContext = {
   usageCounters?: UsageCounters;
 };
 
+// Tools that return a nested configuration object rather than report rows
+// return this instead of an OutputEnvelope (whose rows are flat strings).
+// `summary` stays required so every tool result opens with one line of
+// orientation regardless of shape.
+export type JsonEnvelope = { summary: string; [k: string]: unknown };
+
 export type ToolDefinition<I extends ZodTypeAny> = {
   name: string;
   description: string;
   input: I;
-  handler: (input: z.infer<I>, ctx: ToolContext) => Promise<OutputEnvelope | { error: unknown }>;
+  handler: (
+    input: z.infer<I>,
+    ctx: ToolContext,
+  ) => Promise<OutputEnvelope | JsonEnvelope | { error: unknown }>;
 };
 
 export type ReportToolConfig<I extends ZodTypeAny> = {

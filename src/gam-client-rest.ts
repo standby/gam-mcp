@@ -210,6 +210,16 @@ export function createRestGamClient(opts: {
       return out.slice(0, targetLimit);
     },
 
+    async getResource(path: string): Promise<Record<string, unknown> | null> {
+      // GAM resource names are absolute ('networks/{code}/adUnits/1') inside
+      // nested objects but callers often hold only the network-relative tail.
+      const url = path.startsWith('networks/') ? `${BASE}/${path}` : `${networkPath}/${path}`;
+      const res = await fetchImpl(url);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`getResource ${res.status}: ${await res.text()}`);
+      return await res.json() as Record<string, unknown>;
+    },
+
     async createReport(query: ReportQuery, dateRange: DateRange): Promise<ReportOperation> {
       // Step 1: create the report resource
       const body = {

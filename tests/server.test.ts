@@ -10,6 +10,7 @@ describe('server registry', () => {
       'compare_periods',
       'consent_messaging',
       'delete_saved_query',
+      'describe_line_item',
       'describe_schema',
       'diagnose_fill_rate',
       'diagnose_floor_pricing',

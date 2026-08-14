@@ -22,6 +22,7 @@ export const usageStatsTool: ToolDefinition<typeof inputSchema> = {
     const row = {
       session_started_at: counters.started_at,
       list_entities_calls: String(counters.list_entities_calls),
+      get_resource_calls: String(counters.get_resource_calls),
       report_jobs_created: String(counters.report_jobs_created),
       poll_operations: String(counters.poll_operations),
       reports_downloaded: String(counters.reports_downloaded),

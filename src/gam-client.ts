@@ -59,6 +59,12 @@ export type GAMClient = {
     // How to interpret `query`. Default 'substring'.
     match?: ListEntitiesMatch;
   }) => Promise<Entity[]>;
+  // Fetch one raw GAM resource, unmapped. `path` is either network-relative
+  // ('lineItems/123') or a full resource name
+  // ('networks/{code}/customTargetingValues/456'), which is the shape GAM
+  // returns inside nested objects like a line item's targeting. Returns null
+  // on 404 so callers can degrade to the raw path instead of throwing.
+  getResource: (path: string) => Promise<Record<string, unknown> | null>;
   createReport: (query: ReportQuery, dateRange: DateRange) => Promise<ReportOperation>;
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
   downloadReport: (downloadUrl: string, destPath: string) => Promise<string>;
@@ -75,6 +81,8 @@ export type ReportFixture = {
 export type MockState = {
   entities?: Partial<Record<EntityType, Entity[]>>;
   reports?: ReportFixture[];
+  // Raw resources keyed by the path getResource() is called with.
+  resources?: Record<string, Record<string, unknown>>;
 };
 
 export function createMockGamClient(state: MockState = {}): GAMClient {
@@ -104,6 +112,9 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
         );
       }
       return limit !== undefined ? filtered.slice(0, limit) : filtered;
+    },
+    async getResource(path) {
+      return state.resources?.[path] ?? null;
     },
     async createReport(query, dateRange) {
       const fixture = matchFixture(query, dateRange);

@@ -359,6 +359,30 @@ describe('REST GAM client', () => {
     ]);
   });
 
+  it('getResource returns the raw resource and null on 404', async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.endsWith('/lineItems/1')) {
+        return new Response(JSON.stringify({ name: 'networks/12345/lineItems/1', status: 'DELIVERING' }), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+    expect(await client.getResource('lineItems/1')).toEqual({
+      name: 'networks/12345/lineItems/1',
+      status: 'DELIVERING',
+    });
+    // Absolute resource names (the shape GAM embeds inside targeting) are not
+    // re-prefixed with the network path.
+    expect(await client.getResource('networks/12345/customTargetingValues/9')).toBeNull();
+    expect(seen).toEqual([
+      'https://admanager.googleapis.com/v1/networks/12345/lineItems/1',
+      'https://admanager.googleapis.com/v1/networks/12345/customTargetingValues/9',
+    ]);
+  });
+
   it('listEntities substring query on custom_targeting_key auto-retries with `name = "..."` after a 400 parse error', async () => {
     // GAM may reject `displayName:"<key>"` substring on this resource. The
     // REST client falls back to exact-equality on `name` so the call

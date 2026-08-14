@@ -5,6 +5,7 @@ import type { GAMClient } from './gam-client.js';
 export type UsageCounters = {
   started_at: string;
   list_entities_calls: number;
+  get_resource_calls: number;
   report_jobs_created: number;
   poll_operations: number;
   reports_downloaded: number;
@@ -17,6 +18,7 @@ export function createUsageCounters(): UsageCounters {
   return {
     started_at: new Date().toISOString(),
     list_entities_calls: 0,
+    get_resource_calls: 0,
     report_jobs_created: 0,
     poll_operations: 0,
     reports_downloaded: 0,
@@ -35,6 +37,10 @@ export function instrumentGamClient(client: GAMClient, counters: UsageCounters):
     async listEntities(args) {
       counters.list_entities_calls += 1;
       return client.listEntities(args);
+    },
+    async getResource(path) {
+      counters.get_resource_calls += 1;
+      return client.getResource(path);
     },
     async createReport(query, dateRange) {
       counters.report_jobs_created += 1;
