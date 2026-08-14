@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRestGamClient } from '../src/gam-client-rest.js';
+import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from '../src/auth.js';
 import { resolveDateRange } from '../src/dates.js';
 import { describeLineItemTool } from '../src/tools/describe_line_item.js';
@@ -25,7 +25,9 @@ async function main(): Promise<void> {
   const tz = process.env.GAM_TIMEZONE ?? 'America/Los_Angeles';
 
   const auth = createGoogleAuth(resolved.source);
-  const fetchImpl = createAuthFetch(auth);
+  // Same retry wrapper the server installs (src/cli.ts), so the smoke run
+  // absorbs 429s the way a real session does instead of dropping them.
+  const fetchImpl = withRetries(createAuthFetch(auth));
   const client = createRestGamClient({ networkCode, fetchImpl });
 
   process.stderr.write('1. Listing 5 most recent orders...\n');
@@ -172,10 +174,19 @@ async function describeSome(client: GAMClient, tz: string, networkCode: string):
     process.stderr.write(
       `   described=${items.length} with_custom_targeting=${withTargeting} clauses=${clauses.length}` +
       ` negated=${clauses.filter((c: { op: string }) => c.op === 'IS NONE OF').length}` +
-      ` resolved_paths=${Object.keys(r.resolved_paths).length} unresolved_labels=${stillRaw}` +
+      ` referenced=${r.resolution.referenced} resolved=${r.resolution.resolved}` +
+      ` missing=${r.resolution.missing} failed=${r.resolution.failed} unresolved_labels=${stillRaw}` +
       (unmapped.length ? ` unmapped_literal_fields=${unmapped.join(',')}` : '') + '\n',
     );
-    if (stillRaw > 0) throw new Error(`${stillRaw} targeting label(s) stayed as raw resource paths`);
+    if (r.resolution.failed > 0) {
+      throw new Error(
+        `${r.resolution.failed} of ${r.resolution.referenced} targeting path(s) failed to fetch — ` +
+        'labels are unknown, not absent',
+      );
+    }
+    if (stillRaw > r.resolution.missing) {
+      throw new Error(`${stillRaw} targeting label(s) stayed as raw resource paths`);
+    }
     if (clauses.length === 0) {
       process.stderr.write(
         '   WARNING: none of these line items use custom targeting, so clause flattening was not exercised.\n' +

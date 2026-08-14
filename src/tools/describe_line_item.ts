@@ -10,6 +10,12 @@ const RESOLVABLE_PATH =
 
 type Resolved = { id: string; name: string; displayName?: string };
 
+// Resolve this many paths at a time. A handful of line items can reference
+// hundreds of value ids; firing them all at once throttles the whole batch,
+// and every throttled path then degrades to a raw label — which reads exactly
+// like a deleted resource. Measured: 229 paths in one shot lost 124 of them.
+const RESOLVE_BATCH = 20;
+
 const inputSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(50)
     .describe('Line item IDs to describe, 1-50 per call. Resolve names to IDs with lookup(entity_type="line_item").'),
@@ -40,19 +46,31 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
       return gamError('ENTITY_NOT_FOUND', { entity_type: 'line_item', query: input.ids });
     }
 
-    // Resolve each referenced path exactly once, in parallel — a handful of
-    // line items can share hundreds of value ids. Ceiling: one unbounded
-    // Promise.all; if a 50-id call ever fans out to thousands of values,
-    // batching is the upgrade path (withRetries already absorbs the 429s).
+    // Resolve each referenced path exactly once, in bounded batches.
     const paths = new Set<string>();
     for (const f of found) collectPaths(f.raw.targeting, paths);
+    const unique = [...paths];
     const resolved = new Map<string, Resolved>();
-    await Promise.all([...paths].map(async (path) => {
-      // A deleted or inaccessible resource must degrade to the raw path, not
-      // fail the whole call.
-      const r = await ctx.client.getResource(path).catch(() => null);
-      if (r) resolved.set(path, toResolved(path, r));
-    }));
+    let failed = 0;
+    for (let i = 0; i < unique.length; i += RESOLVE_BATCH) {
+      await Promise.all(unique.slice(i, i + RESOLVE_BATCH).map(async (path) => {
+        try {
+          const r = await ctx.client.getResource(path);
+          // null means GAM 404'd it: the resource is gone, which is a fact
+          // about the network, not a failure of this call.
+          if (r) resolved.set(path, toResolved(path, r));
+        } catch (e) {
+          // An error must still degrade to the raw path rather than sink the
+          // whole call — but the caller has to be able to tell a throttled
+          // lookup from an absent resource, so count it and say so.
+          failed++;
+          ctx.logger.warn('describe_line_item.resolve_failed', {
+            path,
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }));
+    }
 
     const line_items = found.map((f) => ({
       ...f.raw,
@@ -64,10 +82,23 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
       summary:
         `${line_items.length} line item(s) described` +
         (notFound.length ? `, ${notFound.length} not found` : '') +
-        `; ${resolved.size} of ${paths.size} targeting resource path(s) resolved.`,
+        `; ${resolved.size} of ${unique.length} targeting resource path(s) resolved` +
+        (failed ? `, ${failed} failed to fetch` : '') + '.',
       line_items,
       resolved_paths: Object.fromEntries(resolved),
+      resolution: {
+        referenced: unique.length,
+        resolved: resolved.size,
+        missing: unique.length - resolved.size - failed,
+        failed,
+      },
       ...(notFound.length ? { not_found: notFound } : {}),
+      ...(failed ? {
+        warnings: [
+          `${failed} targeting resource path(s) could not be fetched (rate limit or permission), ` +
+          'so their labels fall back to the raw resource path. Those labels are unknown, not absent — re-run for complete output.',
+        ],
+      } : {}),
     };
   },
 };

@@ -150,6 +150,58 @@ describe('describe_line_item', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('separates a fetch failure from an absent resource and warns about it', async () => {
+    const base = createMockGamClient({ resources: RESOURCES });
+    const client = {
+      ...base,
+      getResource: async (p: string) => {
+        if (p === valPath(102)) throw new Error('getResource 429: rate limit');
+        return base.getResource(p);
+      },
+    };
+    const { ctx, dir } = makeCtx(client);
+    const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [1] }), ctx) as any;
+    // Degrades to the raw path rather than throwing...
+    expect(r.line_items[0].custom_targeting[0].values).toEqual(['val_1', valPath(102)]);
+    // ...but the caller can tell it was a failure, not a deleted value.
+    expect(r.resolution.failed).toBe(1);
+    expect(r.resolution.missing).toBe(0);
+    expect(r.warnings[0]).toContain('could not be fetched');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('resolves in bounded batches rather than one unbounded burst', async () => {
+    // 60 values across one clause: with RESOLVE_BATCH=20 no more than 20
+    // requests may be in flight at once.
+    const ids = Array.from({ length: 60 }, (_, i) => 200 + i);
+    const resources: Record<string, Record<string, unknown>> = {
+      'lineItems/9': {
+        name: `${NET}/lineItems/9`,
+        lineItemId: '9',
+        targeting: { customTargeting: { customTargetingClauses: [{ customTargetingLiterals: [literal(10, ids)] }] } },
+      },
+      [keyPath(10)]: RESOURCES[keyPath(10)],
+      ...Object.fromEntries(ids.map((i) => [valPath(i), { name: valPath(i), adTagName: `val_${i}` }])),
+    };
+    const base = createMockGamClient({ resources });
+    let inFlight = 0;
+    let peak = 0;
+    const client = {
+      ...base,
+      getResource: async (p: string) => {
+        peak = Math.max(peak, ++inFlight);
+        await new Promise((r) => setTimeout(r, 1));
+        inFlight--;
+        return base.getResource(p);
+      },
+    };
+    const { ctx, dir } = makeCtx(client);
+    const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [9] }), ctx) as any;
+    expect(peak).toBeLessThanOrEqual(20);
+    expect(r.resolution.resolved).toBe(61);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('reports ids that do not exist, and errors when none do', async () => {
     const { ctx, dir } = makeCtx();
     const partial = await describeLineItemTool.handler(
