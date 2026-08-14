@@ -38,8 +38,8 @@ async function main(): Promise<void> {
   process.stderr.write('3. By-id lookups (line_item / ad_unit / placement — these used to 400)...\n');
   await byIdLookups(client);
 
-  process.stderr.write('4. describe_line_item on one live line item...\n');
-  await describeOne(client, tz);
+  process.stderr.write('4. describe_line_item on live line items...\n');
+  await describeSome(client, tz);
 
   process.stderr.write('SMOKE OK\n');
 }
@@ -81,32 +81,45 @@ async function byIdLookups(client: GAMClient): Promise<void> {
   }
 }
 
-async function describeOne(client: GAMClient, tz: string): Promise<void> {
-  const some = await client.listEntities({ entity_type: 'line_item', limit: 1 });
+async function describeSome(client: GAMClient, tz: string): Promise<void> {
+  // Ten at a time: custom targeting is optional per line item, and one that
+  // happens to have none leaves the clause flattener untested.
+  const some = await client.listEntities({ entity_type: 'line_item', limit: 10 });
   if (some.length === 0) {
     process.stderr.write('   no line items in this network, skipped\n');
     return;
   }
   const dir = mkdtempSync(join(tmpdir(), 'gam-smoke-'));
   try {
-    const r = await describeLineItemTool.handler({ ids: [some[0].id] }, {
+    const r = await describeLineItemTool.handler({ ids: some.map((e) => e.id) }, {
       client,
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: tz,
       logger: noopLogger(),
     }) as Record<string, any>;
     if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
-    const li = r.line_items[0];
-    const paths = Object.keys(r.resolved_paths);
-    // Counts and shape only — no targeting values are printed, so the output
-    // is safe to paste anywhere.
-    const stillRaw = li.custom_targeting
+
+    const items: any[] = r.line_items;
+    const clauses = items.flatMap((li) => li.custom_targeting);
+    const withTargeting = items.filter((li) => li.custom_targeting.length > 0).length;
+    // A label that is still a resource path means resolution missed it.
+    const stillRaw = clauses
       .flatMap((c: { key: string; values: string[] }) => [c.key, ...c.values])
       .filter((v: string) => v.startsWith('networks/')).length;
+    // Counts and enums only — no targeting values are printed, so a smoke log
+    // is safe to paste anywhere.
     process.stderr.write(
-      `   status=${li.status} type=${li.lineItemType} targeting_keys=${li.targeting ? Object.keys(li.targeting).length : 0}` +
-      ` clauses=${li.custom_targeting.length} resolved_paths=${paths.length} unresolved_labels=${stillRaw}\n`,
+      `   described=${items.length} with_custom_targeting=${withTargeting} clauses=${clauses.length}` +
+      ` negated=${clauses.filter((c: { op: string }) => c.op === 'IS NONE OF').length}` +
+      ` resolved_paths=${Object.keys(r.resolved_paths).length} unresolved_labels=${stillRaw}\n`,
     );
+    if (stillRaw > 0) throw new Error(`${stillRaw} targeting label(s) stayed as raw resource paths`);
+    if (clauses.length === 0) {
+      process.stderr.write(
+        '   WARNING: none of these line items use custom targeting, so clause flattening was not exercised.\n' +
+        '   Re-run against a network segment that has key-value targeting to cover it.\n',
+      );
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
