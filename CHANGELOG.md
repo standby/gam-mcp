@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1](https://github.com/standby/gam_mcp/compare/v0.5.0...v0.5.1) (2026-08-15)
+
+
+### Added
+
+* add describe_line_item tool ([9767d1c](https://github.com/standby/gam_mcp/commit/9767d1cf4910915f2c8804c1404ee383749d8329))
+
+
+### Fixed
+
+* bound path resolution and stop swallowing fetch failures ([f9fb906](https://github.com/standby/gam_mcp/commit/f9fb906))
+* surface custom-targeting literal fields describe_line_item does not map ([d54ae11](https://github.com/standby/gam_mcp/commit/d54ae11359d0ec8f48236253aa5d572818ecd6b1))
+* use per-id direct GETs for all entity lookups ([59a1e0a](https://github.com/standby/gam_mcp/commit/59a1e0ae8af734dcd799349f29fac5e22bcc6cf7))
+
 ## [Unreleased]
 
 ## [0.5.0] — 2026-07-28
