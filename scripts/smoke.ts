@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   await byIdLookups(client);
 
   process.stderr.write('4. describe_line_item on live line items...\n');
-  await describeSome(client, tz);
+  await describeSome(client, tz, networkCode);
 
   process.stderr.write('SMOKE OK\n');
 }
@@ -86,7 +86,7 @@ async function byIdLookups(client: GAMClient): Promise<void> {
 // at explicit ids to exercise the clause flattener.
 //   GAM_SMOKE_LINE_ITEM_IDS=111,222   describe exactly these
 //   GAM_SMOKE_ORDER_ID=333            describe line items under this order
-async function pickLineItemIds(client: GAMClient): Promise<number[]> {
+async function pickLineItemIds(client: GAMClient, networkCode: string): Promise<number[]> {
   const explicit = process.env.GAM_SMOKE_LINE_ITEM_IDS;
   if (explicit) {
     const ids = explicit.split(',').map((v) => Number(v.trim())).filter((n) => Number.isInteger(n) && n > 0);
@@ -97,30 +97,44 @@ async function pickLineItemIds(client: GAMClient): Promise<number[]> {
   const orderId = process.env.GAM_SMOKE_ORDER_ID;
   if (orderId) {
     // Line items are a flat collection, not nested under orders, and
-    // listEntities only filters on displayName — so query the collection
-    // directly. Whether orderId is filter-eligible is exactly what we want to
-    // find out; a 400 here says use GAM_SMOKE_LINE_ITEM_IDS instead.
-    let page: Record<string, unknown> | null;
-    try {
-      page = await client.getResource(`lineItems?pageSize=10&filter=orderId=${encodeURIComponent(orderId)}`);
-    } catch (e) {
-      throw new Error(
-        `listing line items for order ${orderId} failed (${e instanceof Error ? e.message : String(e)}). ` +
-        'If GAM rejected the filter, pass GAM_SMOKE_LINE_ITEM_IDS=... instead.',
-      );
+    // listEntities only filters on displayName. Measured 2026-08-14:
+    // `filter=orderId=<n>` returns 400 "Field orderId is not supported for
+    // filtering" — the same PARSE_ERROR_UNPARSABLE family as lineItemId. Try
+    // the two remaining shapes and report which, if either, GAM accepts.
+    const attempts: Array<[string, string]> = [
+      ['filter on the order resource name',
+        `lineItems?pageSize=10&filter=${encodeURIComponent(`order="networks/${networkCode}/orders/${orderId}"`)}`],
+      ['nested orders/{id}/lineItems collection', `orders/${orderId}/lineItems?pageSize=10`],
+    ];
+    for (const [label, path] of attempts) {
+      let page: Record<string, unknown> | null = null;
+      try {
+        page = await client.getResource(path);
+      } catch (e) {
+        process.stderr.write(`   ${label}: ${gamMessage(e)}\n`);
+        continue;
+      }
+      if (!page) {
+        process.stderr.write(`   ${label}: 404, collection does not exist\n`);
+        continue;
+      }
+      const list = (page.lineItems as Array<Record<string, unknown>> | undefined) ?? [];
+      const ids = list
+        .map((li) => Number(li.lineItemId ?? String(li.name ?? '').split('/').pop()))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      process.stderr.write(`   ${label}: OK, ${ids.length} line item(s)\n`);
+      if (ids.length > 0) return ids;
     }
-    const list = (page?.lineItems as Array<Record<string, unknown>> | undefined) ?? [];
-    const ids = list
-      .map((li) => Number(li.lineItemId ?? String(li.name ?? '').split('/').pop()))
-      .filter((n) => Number.isInteger(n) && n > 0);
-    process.stderr.write(`   order ${orderId}: ${ids.length} line item(s)\n`);
-    return ids;
+    throw new Error(
+      `no way to list line items for order ${orderId} — GAM rejects every filter shape tried. ` +
+      'Read the ids off the order in the GAM UI and pass GAM_SMOKE_LINE_ITEM_IDS=... instead.',
+    );
   }
   return (await client.listEntities({ entity_type: 'line_item', limit: 10 })).map((e) => e.id);
 }
 
-async function describeSome(client: GAMClient, tz: string): Promise<void> {
-  const ids = (await pickLineItemIds(client)).slice(0, 10);
+async function describeSome(client: GAMClient, tz: string, networkCode: string): Promise<void> {
+  const ids = (await pickLineItemIds(client, networkCode)).slice(0, 10);
   if (ids.length === 0) {
     process.stderr.write('   no line items to describe, skipped\n');
     return;
@@ -158,6 +172,16 @@ async function describeSome(client: GAMClient, tz: string): Promise<void> {
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function gamMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  const body = raw.slice(raw.indexOf('{'));
+  try {
+    return `${raw.slice(0, raw.indexOf(':'))}: ${JSON.parse(body).error.message}`;
+  } catch {
+    return raw.split('\n')[0];
   }
 }
 
