@@ -41,6 +41,14 @@ async function main(): Promise<void> {
   process.stderr.write('4. describe_line_item on live line items...\n');
   await describeSome(client, tz, networkCode);
 
+  // Opt-in: GAM_SMOKE_SCAN=<n> walks up to n line items looking for a negated
+  // custom-targeting clause, the one branch a single line item rarely covers.
+  const scan = Number(process.env.GAM_SMOKE_SCAN ?? 0);
+  if (scan > 0) {
+    process.stderr.write(`5. Scanning up to ${scan} line items for a negated clause...\n`);
+    await scanForNegation(client, tz, scan);
+  }
+
   process.stderr.write('SMOKE OK\n');
 }
 
@@ -174,6 +182,54 @@ async function describeSome(client: GAMClient, tz: string, networkCode: string):
         '   Re-run against a network segment that has key-value targeting to cover it.\n',
       );
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Describe line items in small batches until a negated clause turns up. Stops
+// at the first hit: the point is to confirm the IS NONE OF branch against real
+// data, not to inventory the network.
+async function scanForNegation(client: GAMClient, tz: string, max: number): Promise<void> {
+  const all = await client.listEntities({ entity_type: 'line_item', limit: max });
+  const dir = mkdtempSync(join(tmpdir(), 'gam-scan-'));
+  let described = 0;
+  let clausesSeen = 0;
+  try {
+    for (let i = 0; i < all.length; i += 25) {
+      const batch = all.slice(i, i + 25).map((e) => e.id);
+      const r = await describeLineItemTool.handler({ ids: batch }, {
+        client,
+        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
+        timezone: tz,
+        logger: noopLogger(),
+      }) as Record<string, any>;
+      if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
+      described += r.line_items.length;
+      for (const li of r.line_items as any[]) {
+        clausesSeen += li.custom_targeting.length;
+        const negated = li.custom_targeting.filter((c: { op: string }) => c.op === 'IS NONE OF');
+        const unmapped = [...new Set(li.custom_targeting.flatMap(
+          (c: { unrecognized_fields?: Record<string, unknown> }) => Object.keys(c.unrecognized_fields ?? {})))];
+        if (negated.length > 0) {
+          process.stderr.write(
+            `   line item ${li.id}: ${negated.length} negated clause(s) — IS NONE OF confirmed against live data\n`,
+          );
+          return;
+        }
+        if (unmapped.length > 0) {
+          process.stderr.write(
+            `   line item ${li.id}: unmapped literal field(s) ${unmapped.join(',')} — negation may live here\n`,
+          );
+          return;
+        }
+      }
+      process.stderr.write(`   ${described}/${all.length} scanned, ${clausesSeen} clause(s), none negated yet\n`);
+    }
+    process.stderr.write(
+      `   no negated clause in ${described} line item(s) (${clausesSeen} clauses). ` +
+      'IS NONE OF stays unconfirmed; try a line item known to exclude a key-value.\n',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
