@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import type { ReportType } from './schema.js';
 
 export type EntityType =
-  | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'creative' | 'placement' | 'company'
+  | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'placement' | 'company'
   | 'custom_targeting_key';
 
 // `name` is the canonical short identifier (e.g. `adTagName` "channel_id" on a

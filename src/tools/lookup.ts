@@ -3,7 +3,7 @@ import { gamError } from '../errors.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 
 const ENTITY_TYPES = [
-  'advertiser', 'order', 'line_item', 'ad_unit', 'creative', 'placement', 'company',
+  'advertiser', 'order', 'line_item', 'ad_unit', 'placement', 'company',
   'custom_targeting_key',
 ] as const;
 
@@ -26,7 +26,7 @@ const inputSchema = z.object({
 export const lookupTool: ToolDefinition<typeof inputSchema> = {
   name: 'lookup',
   description:
-    'Resolve names ↔ IDs for GAM entities (advertiser, order, line_item, ad_unit, creative, placement, company, custom_targeting_key). With query: substring match on name by default; pass match="exact" for equality (e.g. find a custom_targeting_key whose API code is exactly "channel_id"). With ids: exact lookup. With neither: list up to `limit` entries (default 50, max 1000 — pagination is automatic across GAM\'s 200-per-page responses). For custom_targeting_key, rows include both `name` (API code emitted in KEY_VALUES_NAME) and `displayName` (human-readable label). Use this to discover the key IDs needed for run_report\'s custom_dimension_key_ids parameter.',
+    'Resolve names ↔ IDs for GAM entities (advertiser, order, line_item, ad_unit, placement, company, custom_targeting_key). With query: substring match on name by default; pass match="exact" for equality (e.g. find a custom_targeting_key whose API code is exactly "channel_id"). With ids: exact lookup. With neither: list up to `limit` entries (default 50, max 1000 — pagination is automatic across GAM\'s 200-per-page responses). For custom_targeting_key, rows include both `name` (API code emitted in KEY_VALUES_NAME) and `displayName` (human-readable label). Use this to discover the key IDs needed for run_report\'s custom_dimension_key_ids parameter.',
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
     let matches;

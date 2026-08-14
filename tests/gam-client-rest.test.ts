@@ -282,7 +282,7 @@ describe('REST GAM client', () => {
     expect(capturedFilter).toBe('name = "channel_id"');
   });
 
-  it('listEntities by ids for custom_targeting_key uses per-id direct GETs (GAM refuses to filter on customTargetingKeyId)', async () => {
+  it('listEntities by ids uses per-id direct GETs, never a list filter', async () => {
     // Regression: previous wire shape filtered with
     // `customTargetingKeyId=<n>` which GAM rejects ("Field is not supported
     // for filtering"). Fix routes by-id lookups for this resource through
@@ -324,23 +324,38 @@ describe('REST GAM client', () => {
     expect(seen).toHaveLength(3);
   });
 
-  it('listEntities by ids for non-custom_targeting_key resources still uses the OR-filter list (one request)', async () => {
-    let capturedUrl = '';
+  // GAM answers `?filter=lineItemId=<n>` with
+  // `400 Field lineItemId is not supported for filtering.` — same for adUnits,
+  // placements and customTargetingKeys. Only companies/orders accept it, which
+  // is not worth a second code path, so every type takes the direct-GET route.
+  it.each([
+    ['line_item', 'lineItems', 'lineItemId'],
+    ['ad_unit', 'adUnits', 'adUnitId'],
+    ['placement', 'placements', 'placementId'],
+    ['order', 'orders', 'orderId'],
+  ] as const)('listEntities by ids for %s GETs each id directly', async (entity_type, collection, idField) => {
+    const seen: string[] = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
-      capturedUrl = String(url);
+      const u = String(url);
+      seen.push(u);
+      // A list filter here would 400 against the live API.
+      expect(u).not.toContain('filter=');
+      const id = u.split('/').pop();
       return new Response(JSON.stringify({
-        orders: [
-          { orderId: '111', displayName: 'Order A' },
-          { orderId: '222', displayName: 'Order B' },
-        ],
+        [idField]: id,
+        displayName: `Entity ${id}`,
+        name: `networks/12345/${collection}/${id}`,
       }), { status: 200 });
     }) as unknown as typeof fetch;
     const client = createRestGamClient({ networkCode: '12345', fetchImpl });
-    const r = await client.listEntities({ entity_type: 'order', ids: [111, 222] });
-    expect(new URL(capturedUrl).searchParams.get('filter')).toBe('orderId=111 OR orderId=222');
+    const r = await client.listEntities({ entity_type, ids: [111, 222] });
+    expect(seen).toEqual([
+      `https://admanager.googleapis.com/v1/networks/12345/${collection}/111`,
+      `https://admanager.googleapis.com/v1/networks/12345/${collection}/222`,
+    ]);
     expect(r).toEqual([
-      { id: 111, name: 'Order A' },
-      { id: 222, name: 'Order B' },
+      { id: 111, name: 'Entity 111' },
+      { id: 222, name: 'Entity 222' },
     ]);
   });
 

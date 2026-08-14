@@ -21,7 +21,6 @@ const ENTITY_PATH: Record<EntityType, { collection: string; idField: string }> =
   order:      { collection: 'orders',     idField: 'orderId' },
   line_item:  { collection: 'lineItems',  idField: 'lineItemId' },
   ad_unit:    { collection: 'adUnits',    idField: 'adUnitId' },
-  creative:   { collection: 'creatives',  idField: 'creativeId' },
   placement:  { collection: 'placements', idField: 'placementId' },
   custom_targeting_key: { collection: 'customTargetingKeys', idField: 'customTargetingKeyId' },
 };
@@ -136,36 +135,23 @@ export function createRestGamClient(opts: {
       };
 
       // ---- by-id path ----
-      // GAM rejects `customTargetingKeyId=<n>` as a list filter (the field is
-      // not filter-eligible on this resource), so we GET each resource
-      // directly. Several other GAM resources have the same quirk; falling
-      // back to the per-id path is cheap (parallel GETs, typically only a
-      // handful of ids) and guarantees we never construct a filter GAM will
-      // refuse to parse.
+      // Every by-id lookup goes through a direct GET. GAM refuses to filter a
+      // list on the numeric id field for most resources ("Field lineItemId is
+      // not supported for filtering" — measured for lineItems, adUnits,
+      // placements and customTargetingKeys), and the ones that do accept it
+      // are not worth a second code path: per-id GETs are cheap (parallel,
+      // typically a handful of ids) and guarantee we never construct a filter
+      // GAM will refuse to parse.
       if (ids?.length) {
-        if (entity_type === 'custom_targeting_key') {
-          const results = await Promise.all(ids.slice(0, targetLimit).map(async (id) => {
-            const url = `${networkPath}/${meta.collection}/${id}`;
-            const res = await fetchImpl(url);
-            if (res.status === 404) return null;
-            if (!res.ok) throw new Error(`listEntities(getById) ${res.status}: ${await res.text()}`);
-            const json = await res.json() as Record<string, unknown>;
-            return toEntity(json);
-          }));
-          return results.filter((e): e is Entity => e !== null);
-        }
-        // Other resources: keep the existing OR-of-equalities list filter.
-        // Cheaper (one request for N ids) and works for orders, line items,
-        // ad units, etc. where the numeric id field *is* filter-eligible.
-        const params = new URLSearchParams();
-        params.set('pageSize', String(Math.min(targetLimit, 200)));
-        params.set('filter', ids.map((i) => `${meta.idField}=${i}`).join(' OR '));
-        const url = `${networkPath}/${meta.collection}?${params}`;
-        const res = await fetchImpl(url);
-        if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
-        const json = await res.json() as Record<string, unknown>;
-        const list = (json[meta.collection] as any[] | undefined) ?? [];
-        return list.map(toEntity).slice(0, targetLimit);
+        const results = await Promise.all(ids.slice(0, targetLimit).map(async (id) => {
+          const url = `${networkPath}/${meta.collection}/${id}`;
+          const res = await fetchImpl(url);
+          if (res.status === 404) return null;
+          if (!res.ok) throw new Error(`listEntities(getById) ${res.status}: ${await res.text()}`);
+          const json = await res.json() as Record<string, unknown>;
+          return toEntity(json);
+        }));
+        return results.filter((e): e is Entity => e !== null);
       }
 
       // ---- query/list path ----
