@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2](https://github.com/standby/gam_mcp/compare/v0.5.1...v0.5.2) (2026-09-12)
+
+
+### Fixed
+
+* build a new MCP server and transport per HTTP request ([d8a4755](https://github.com/standby/gam_mcp/commit/d8a4755499cc1dcfc3a1224d559f3e42e9d76627))
+
 ## [0.5.1](https://github.com/standby/gam_mcp/compare/v0.5.0...v0.5.1) (2026-08-15)
 
 
