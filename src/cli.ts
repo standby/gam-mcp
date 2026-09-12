@@ -72,8 +72,8 @@ async function main(): Promise<void> {
       process.stderr.write(`gam-mcp: GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}\n`);
       process.exit(2);
     }
-    const server = buildMcpServer(ctx, { networkCode });
-    await connectHttp(server, { port: httpPort, logger });
+    // A factory: stateless HTTP needs a fresh server per request, not one shared.
+    await connectHttp(() => buildMcpServer(ctx, { networkCode }), { port: httpPort, logger });
   } else {
     await startMcpServer(ctx, { networkCode });
   }

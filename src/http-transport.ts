@@ -4,6 +4,13 @@
 // Uses the SDK's StreamableHTTPServerTransport in stateless mode (no session
 // IDs) — each request is logically independent and there's no in-flight
 // state worth persisting across requests.
+//
+// Stateless means a NEW server and transport per request. A single transport
+// hoisted out of the request handler is spent once its first request finishes:
+// every later request then fails, and the SDK writes that 500 itself without
+// throwing, so nothing reaches the catch below and nothing is logged. That was
+// the shape of the bug fixed in 0.5.2 — see the regression test, which asserts
+// several sequential requests rather than one.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -11,14 +18,10 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Logger } from './log.js';
 
 export async function connectHttp(
-  server: Server,
+  // A factory, not a server: one instance cannot be reused across requests.
+  createMcpServer: () => Server,
   opts: { port: number; logger: Logger },
-): Promise<void> {
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // stateless
-  });
-  await server.connect(transport);
-
+): Promise<{ port: number; close: () => Promise<void> }> {
   const httpServer = createServer(async (req, res) => {
     // Health endpoint without authentication so probes don't pollute logs
     // with auth failures. Returns 200 if the process is up.
@@ -33,8 +36,15 @@ export async function connectHttp(
       res.end('not found');
       return;
     }
+    let server: Server | undefined;
+    let transport: StreamableHTTPServerTransport | undefined;
     try {
       const body = await readJsonBody(req);
+      server = createMcpServer();
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless
+      });
+      await server.connect(transport);
       await transport.handleRequest(req, res, body);
     } catch (e) {
       opts.logger.error('http.handle_error', { message: e instanceof Error ? e.message : String(e) });
@@ -43,6 +53,15 @@ export async function connectHttp(
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ error: 'internal_error' }));
       }
+    } finally {
+      // Release this request's pair once the response is done. Closing earlier
+      // would cut off a streaming (SSE) response mid-flight.
+      const release = () => {
+        void transport?.close().catch(() => {});
+        void server?.close().catch(() => {});
+      };
+      if (res.writableEnded) release();
+      else res.once('close', release);
     }
   });
 
@@ -62,6 +81,20 @@ export async function connectHttp(
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  const address = httpServer.address();
+  const boundPort = typeof address === 'object' && address ? address.port : opts.port;
+
+  return {
+    // The port actually bound, which differs from opts.port when 0 is passed.
+    port: boundPort,
+    close: () =>
+      new Promise<void>((resolve) => {
+        process.off('SIGINT', shutdown);
+        process.off('SIGTERM', shutdown);
+        httpServer.close(() => resolve());
+      }),
+  };
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
