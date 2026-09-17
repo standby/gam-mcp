@@ -44,6 +44,11 @@ describe('convertValue', () => {
   it('treats a non-finite double as missing', () => {
     expect(convertValue({ doubleValue: 'NaN' as unknown as number }, false)).toEqual({ value: null, type: null, unsafeInteger: false });
   });
+
+  it('normalises an intValue that arrives as a JSON number instead of a string', () => {
+    expect(convertValue({ intValue: 20260915 as unknown as string }, true).value).toBe('2026-09-15');
+    expect(convertValue({ intValue: 7 as unknown as string }, false).value).toBe(7);
+  });
 });
 
 describe('buildTable', () => {
@@ -68,6 +73,16 @@ describe('buildTable', () => {
   it('falls back to the schema type when a column has no values', () => {
     const t = buildTable(['DATE'], ['REVENUE'], []);
     expect(t.columns).toEqual([{ name: 'DATE', type: 'date' }, { name: 'REVENUE', type: 'number' }]);
+  });
+
+  it('indexes dimensions and metrics separately so a short dimensionValues array cannot shift a metric into a dimension column', () => {
+    const t = buildTable(['A', 'B'], ['METRIC'], [
+      { dimensionValues: [{ stringValue: 'x' }], metricValueGroups: [{ primaryValues: [{ intValue: '5' }] }] },
+    ]);
+    expect(t.rows).toEqual([{ A: 'x', B: null, METRIC: 5 }]);
+    expect(t.warnings).toContain(
+      "GAM returned rows whose value counts do not match the report's columns; missing values are null.",
+    );
   });
 
   it('warns once per column holding unsafe integers', () => {

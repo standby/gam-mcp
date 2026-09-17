@@ -37,11 +37,15 @@ function integer(s: string): { value: number | string; unsafe: boolean } {
 export function convertValue(v: ReportValue | null | undefined, isDateColumn: boolean): Converted {
   if (!v) return NONE;
   if (v.intValue !== undefined) {
-    if (isDateColumn && YYYYMMDD.test(v.intValue)) {
-      const s = v.intValue;
+    // GAM's own JSON sends int64 as a string, but a value that passed through
+    // a JSON round-trip elsewhere (e.g. a test fixture, or a proxy that
+    // re-serializes) can arrive as a JS number. Normalise once before the
+    // date check and integer(), both of which need string operations.
+    const s = String(v.intValue);
+    if (isDateColumn && YYYYMMDD.test(s)) {
       return { value: `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`, type: 'date', unsafeInteger: false };
     }
-    const { value, unsafe } = integer(v.intValue);
+    const { value, unsafe } = integer(s);
     return { value, type: 'integer', unsafeInteger: unsafe };
   }
   if (v.doubleValue !== undefined) {
@@ -79,19 +83,26 @@ export function buildTable(dimensions: string[], metrics: string[], rows: Report
   const dateColumn = names.map((n) => fieldType(n) === 'date');
   const types: (ColumnType | null)[] = names.map(() => null);
   const unsafe = new Set<string>();
+  let mismatchedCounts = false;
 
   const out = rows.map((row) => {
-    const values = [
-      ...(row.dimensionValues ?? []),
-      ...(row.metricValueGroups?.[0]?.primaryValues ?? []),
-    ];
+    // Dimensions and metrics are indexed from their own arrays, never
+    // concatenated: a short dimensionValues array must not shift a metric
+    // value into a dimension column.
+    const dimValues = row.dimensionValues ?? [];
+    const metValues = row.metricValueGroups?.[0]?.primaryValues ?? [];
+    if (dimValues.length !== dimensions.length || metValues.length !== metrics.length) {
+      mismatchedCounts = true;
+    }
     const record: Record<string, Cell> = {};
-    names.forEach((name, i) => {
-      const c = convertValue(values[i], dateColumn[i]);
+    const assign = (name: string, i: number, raw: ReportValue | undefined) => {
+      const c = convertValue(raw, dateColumn[i]);
       record[name] = c.value;
       if (c.type && !types[i]) types[i] = c.type;
       if (c.unsafeInteger) unsafe.add(name);
-    });
+    };
+    dimensions.forEach((name, i) => assign(name, i, dimValues[i]));
+    metrics.forEach((name, j) => assign(name, dimensions.length + j, metValues[j]));
     return record;
   });
 
@@ -102,6 +113,9 @@ export function buildTable(dimensions: string[], metrics: string[], rows: Report
   const warnings = [...unsafe].map(
     (n) => `Column ${n} holds integers beyond ±2^53; those values are strings so they stay exact.`,
   );
+  if (mismatchedCounts) {
+    warnings.push("GAM returned rows whose value counts do not match the report's columns; missing values are null.");
+  }
   return { columns, rows: out, warnings };
 }
 
