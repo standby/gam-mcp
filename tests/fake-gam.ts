@@ -33,6 +33,10 @@ export function takeViolations(): string[] {
 }
 
 type Json = Record<string, any>;
+// Rows keyed by column name. The fake encodes each one in the column order of
+// the report whose result is fetched, as GAM does, so a caller that decodes
+// with another order reads values under the wrong names.
+export type RowsByColumn = { byColumn: Record<string, ReportValue>[] };
 export type LoggedRequest = { method: string; path: string; body?: Json };
 export type Outcome =
   | { status: number; body?: unknown }
@@ -45,7 +49,7 @@ export type FakeGam = {
   requests: LoggedRequest[];
   reports: Map<string, { name: string; displayName?: string; reportDefinition: Json }>;
   network: Json;
-  setRows(rows: ReportRow[], extra?: { runTime?: string; dateRanges?: Json[] }): void;
+  setRows(rows: ReportRow[] | RowsByColumn, extra?: { runTime?: string; dateRanges?: Json[] }): void;
   inject(method: string, path: RegExp, outcome: Outcome): void;
   expire(result: string): void;
 };
@@ -58,7 +62,7 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
   const runs = new Map<string, { report: string; run: number; polls: number }>();
   const expired = new Set<string>();
   const injections: { method: string; path: RegExp; outcome: Outcome }[] = [];
-  let rows: ReportRow[] = [];
+  let rows: ReportRow[] | RowsByColumn = [];
   let extra: { runTime?: string; dateRanges?: Json[] } = {};
   let reportSeq = 0;
   let runSeq = 0;
@@ -75,6 +79,16 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   const notFound = () => json(404, { error: { code: 404, status: 'NOT_FOUND' } });
+
+  function rowsFor(definition: Json): ReportRow[] {
+    if (Array.isArray(rows)) return rows;
+    const dimensions: string[] = definition.dimensions ?? [];
+    const metrics: string[] = definition.metrics ?? [];
+    return rows.byColumn.map((r) => ({
+      dimensionValues: dimensions.map((d) => r[d] ?? {}),
+      metricValueGroups: [{ primaryValues: metrics.map((m) => r[m] ?? {}) }],
+    }));
+  }
 
   function route(method: string, path: string, body: Json | undefined): Response {
     const [pathname, query = ''] = path.split('?');
@@ -132,15 +146,16 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
         return json(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'invalid page token' } });
       }
       const offset = token ? Number(token) : 0;
-      const page: Json = { rows: rows.slice(offset, offset + pageSize) };
-      if (offset + pageSize < rows.length) page.nextPageToken = String(offset + pageSize);
+      const all = rowsFor(report.reportDefinition);
+      const page: Json = { rows: all.slice(offset, offset + pageSize) };
+      if (offset + pageSize < all.length) page.nextPageToken = String(offset + pageSize);
       if (!token) {
         page.runTime = extra.runTime ?? '2026-09-03T01:00:00Z';
         page.dateRanges = extra.dateRanges ?? [{
           startDate: report.reportDefinition.dateRange?.fixed?.startDate,
           endDate: report.reportDefinition.dateRange?.fixed?.endDate,
         }];
-        if (rows.length > 0) page.totalRowCount = rows.length;
+        if (all.length > 0) page.totalRowCount = all.length;
       }
       if (page.rows.length === 0) delete page.rows;
       return json(200, page);

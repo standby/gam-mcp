@@ -32,18 +32,20 @@ function normalizeFilter(f: unknown): unknown {
   return { ...(f as object), fieldFilter: { ...field, values: [...field.values].sort(byText) } };
 }
 
-// The form of a definition that is hashed and compared (spec §2.2). GAM gives
-// no meaning to the order of dimensions, metrics, filters or the values inside
-// a filter, so those are sorted. customDimensionKeyIds are positional (slot N
-// is CUSTOM_DIMENSION_N_VALUE) and every other list keeps its order. Absent
+// The form of a definition that is hashed and compared (spec §2.2). GAM
+// returns each row's values in the order of the report's dimensions and
+// metrics, so those keep their order: a report with its columns in another
+// order is another report, and its rows cannot be read with ours. GAM gives no
+// meaning to the order of filters or of the values inside a filter, so those
+// are sorted. customDimensionKeyIds are positional (slot N is
+// CUSTOM_DIMENSION_N_VALUE) and every other list keeps its order too. Absent
 // fields and empty lists are dropped: GAM's JSON omits empty lists, so a
 // definition read back from GAM has none.
 export function canonicalDefinition(def: ReportDefinition): Json {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(def)) {
     if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) continue;
-    if (key === 'dimensions' || key === 'metrics') out[key] = [...(value as string[])].sort();
-    else if (key === 'filters') out[key] = (value as unknown[]).map(normalizeFilter).sort(byText);
+    if (key === 'filters') out[key] = (value as unknown[]).map(normalizeFilter).sort(byText);
     else out[key] = value;
   }
   return sortKeys(out);

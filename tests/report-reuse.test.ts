@@ -102,18 +102,42 @@ describe('report reuse (spec §2.2)', () => {
     expect(gam.reports.size).toBe(2);
   });
 
-  it('reuses a listed report whose stored definition differs only in order', async () => {
+  // GAM serves a report's values in its own column order, so a report whose
+  // columns are in another order cannot answer this definition.
+  it('does not reuse a listed report whose stored definition has another dimension order', async () => {
     const gam = fakeWithRows();
-    const query = { dimensions: ['AD_UNIT_ID', 'DATE'], metrics: ['IMPRESSIONS', 'AD_REQUESTS'] };
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'debug', sink: (l) => { lines.push(JSON.parse(l)); } });
+    const query = { dimensions: ['AD_UNIT_ID', 'DATE'], metrics: ['IMPRESSIONS'] };
+    const definition = definitionFor(query, RANGE);
+    const name = reportName(definitionHash(definition));
+    gam.reports.set('networks/1234/reports/77', {
+      name: 'networks/1234/reports/77',
+      displayName: name,
+      reportDefinition: JSON.parse(JSON.stringify({ ...definition, dimensions: [...definition.dimensions].reverse() })),
+    });
+    const p = provenance(await executeReport(processOn(gam, { logger }), { ...REQUEST, query }));
+    expect(p.report).toBe(`networks/${NETWORK}/reports/1`);
+    expect(count(gam, 'POST', CREATE)).toBe(1);
+    expect(lines.filter((e) => e.msg === 'report.name_taken')).toEqual([
+      expect.objectContaining({ level: 'warn', tool: 'test', display_name: name, listed: 1 }),
+    ]);
+  });
+
+  it('reuses a listed report whose stored definition differs only in filter order', async () => {
+    const gam = fakeWithRows();
+    const query = {
+      ...QUERY,
+      filters: [
+        { field: 'AD_UNIT_ID', op: 'IN' as const, value: [7, 3] },
+        { field: 'COUNTRY_NAME', op: '!=' as const, value: 'Country B' },
+      ],
+    };
     const definition = definitionFor(query, RANGE);
     gam.reports.set('networks/1234/reports/77', {
       name: 'networks/1234/reports/77',
       displayName: reportName(definitionHash(definition)),
-      reportDefinition: JSON.parse(JSON.stringify({
-        ...definition,
-        dimensions: [...definition.dimensions].reverse(),
-        metrics: [...definition.metrics].reverse(),
-      })),
+      reportDefinition: JSON.parse(JSON.stringify({ ...definition, filters: [...definition.filters!].reverse() })),
     });
     const p = provenance(await executeReport(processOn(gam), { ...REQUEST, query }));
     expect(p.report).toBe('networks/1234/reports/77');

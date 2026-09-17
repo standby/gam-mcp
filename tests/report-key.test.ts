@@ -48,12 +48,19 @@ describe('definitionHash (B1)', () => {
     expect(sameDefinition(changed, def)).toBe(false);
   });
 
-  it('ignores the order of dimensions, metrics, filters and the values in a filter', () => {
+  // GAM returns values in the order of the report's columns, so a report with
+  // its columns in another order is another report.
+  it.each(['dimensions', 'metrics'] as const)('reordering %s changes the hash', (key) => {
+    const def = full();
+    const reordered: ReportDefinition = { ...def, [key]: [...def[key]].reverse() };
+    expect(definitionHash(reordered)).not.toBe(definitionHash(def));
+    expect(sameDefinition(reordered, def)).toBe(false);
+  });
+
+  it('ignores the order of filters and of the values in a filter', () => {
     const def = full();
     const shuffled: ReportDefinition = {
       ...def,
-      dimensions: [...def.dimensions].reverse(),
-      metrics: [...def.metrics].reverse(),
       filters: [...def.filters!].reverse().map((f) => {
         const ff = (f as { fieldFilter: { values: unknown[] } }).fieldFilter;
         return { fieldFilter: { ...ff, values: [...ff.values].reverse() } };
