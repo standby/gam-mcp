@@ -1,4 +1,4 @@
-import type { DateRange, ReportQuery } from './gam-client.js';
+import type { DateRange, NetworkInfo, ReportQuery } from './gam-client.js';
 
 export type GamDate = { year: number; month: number; day: number };
 
@@ -14,6 +14,10 @@ export type ReportDefinition = {
   // GAM's sort order, copied into provenance.sort. PR 4's top_n tools set it
   // (spec §4.2); a definition read back from GAM carries whatever it stored.
   sorts?: unknown[];
+  // Optional because a definition read back from GAM may lack them; every
+  // definition this server builds sets both (spec §2.4).
+  timeZoneSource?: string;
+  currencyCode?: string;
 };
 
 function toDateParts(iso: string): GamDate {
@@ -29,7 +33,11 @@ export function isoDate(d: Partial<GamDate> | undefined): string | undefined {
   return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }
 
-export function reportDefinition(query: ReportQuery, dateRange: DateRange): ReportDefinition {
+export function reportDefinition(
+  query: ReportQuery,
+  dateRange: DateRange,
+  network: Pick<NetworkInfo, 'currencyCode'>,
+): ReportDefinition {
   return {
     dimensions: query.dimensions,
     metrics: query.metrics,
@@ -46,6 +54,10 @@ export function reportDefinition(query: ReportQuery, dateRange: DateRange): Repo
     ...(query.custom_dimension_key_ids?.length && {
       customDimensionKeyIds: query.custom_dimension_key_ids.map(String),
     }),
+    // GAM rejects a PROVIDED zone for ordinary reports (live probe,
+    // 2026-09-17), so every report is computed in the network's own zone.
+    timeZoneSource: 'PUBLISHER',
+    currencyCode: network.currencyCode,
   };
 }
 

@@ -16,6 +16,7 @@ import { encodeCursor, decodeCursor } from './cursor.js';
 import { envelope, inferSchema, type DateSpan, type InputReport, type ResultEnvelope } from './envelope.js';
 import { Lru } from './lru.js';
 import { definitionWarnings } from './report-warnings.js';
+import { zoneWarning } from './zones.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
 export const DEFAULT_PAGE_ROWS = 5_000;
@@ -220,6 +221,8 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
       })
     : null;
   const warnings = unique([...a.warnings, ...definitionWarnings(a.definition), ...table.warnings]);
+  const zone = zoneWarning(a.ctx.timezone, a.ctx.reportTimeZone, definitionRange(a.definition) ?? a.dateRange);
+  if (zone) warnings.push(zone);
   if (a.dateRange === null) warnings.push('GAM did not report the computed date range for this result.');
   if (a.total === null) {
     warnings.push('GAM did not report how many rows this result has.');
@@ -235,7 +238,9 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
       result: a.result,
       run_time: a.runTime,
       date_range: a.dateRange,
+      report_time_zone: a.ctx.reportTimeZone,
       date_time_zone: a.ctx.timezone,
+      currency_code: a.definition.currencyCode ?? null,
       dimensions: a.definition.dimensions,
       metrics: a.definition.metrics,
       filters: a.definition.filters ?? [],
@@ -256,7 +261,7 @@ export async function executeReport(
   req: ReportRequest,
 ): Promise<ResultEnvelope | GamErrorEnvelope> {
   try {
-    const definition = reportDefinition(req.query, req.dateRange);
+    const definition = reportDefinition(req.query, req.dateRange, ctx);
     const first = await firstPage(ctx, definition, pageRows(ctx), req.tool);
     if ('error' in first) return first;
     return pageEnvelope({
@@ -369,7 +374,7 @@ export async function executeReportRows(
   tool: string,
 ): Promise<ReportRows | GamErrorEnvelope> {
   try {
-    const definition = reportDefinition(query, dateRange);
+    const definition = reportDefinition(query, dateRange, ctx);
     const first = await firstPage(ctx, definition, GAM_MAX_PAGE_ROWS, tool);
     if ('error' in first) return first;
     const reported = first.facts.total_row_count;
@@ -392,6 +397,8 @@ export async function executeReportRows(
         `GAM reported ${reportedTotal} rows for ${first.result} but served ${count}; results below were computed from ${count} rows.`,
       );
     }
+    const zone = zoneWarning(ctx.timezone, ctx.reportTimeZone, dateRange);
+    if (zone) warnings.push(zone);
     return {
       columns: table.columns,
       rows: table.rows,
@@ -416,7 +423,13 @@ export function derivedEnvelope(
   if (d.rows.length > limit) return tooLarge(d.rows.length, limit, 'output');
   return envelope({
     summary: d.summary,
-    provenance: { network_code: ctx.networkCode, date_time_zone: ctx.timezone, inputs: d.inputs },
+    provenance: {
+      network_code: ctx.networkCode,
+      report_time_zone: ctx.reportTimeZone,
+      date_time_zone: ctx.timezone,
+      currency_code: ctx.currencyCode,
+      inputs: d.inputs,
+    },
     total_row_count: d.rows.length,
     truncated: false,
     next_cursor: null,

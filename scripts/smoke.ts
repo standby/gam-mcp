@@ -3,7 +3,7 @@ import { createGoogleAuth, createAuthFetch, resolveAuthSource } from '../src/aut
 import { resolveDateRange } from '../src/dates.js';
 import { describeLineItemTool } from '../src/tools/describe_line_item.js';
 import { noopLogger } from '../src/log.js';
-import type { GAMClient } from '../src/gam-client.js';
+import type { GAMClient, NetworkInfo } from '../src/gam-client.js';
 import { reportDefinition } from '../src/report-definition.js';
 
 async function main(): Promise<void> {
@@ -19,43 +19,47 @@ async function main(): Promise<void> {
     process.stderr.write(`${resolved.error.message} ${resolved.error.hint}\n`);
     process.exit(2);
   }
-  const tz = process.env.GAM_TIMEZONE ?? 'America/Los_Angeles';
-
   const auth = createGoogleAuth(resolved.source);
   // Same retry wrapper the server installs (src/cli.ts), so the smoke run
   // absorbs 429s the way a real session does instead of dropping them.
   const fetchImpl = withRetries(createAuthFetch(auth));
   const client = createRestGamClient({ networkCode, fetchImpl });
 
+  process.stderr.write('0. Reading the network identity...\n');
+  const network = await client.getNetwork();
+  process.stderr.write(`   time zone=${network.timeZone} currency=${network.currencyCode}\n`);
+  const tz = process.env.GAM_TIMEZONE ?? network.timeZone;
+
   process.stderr.write('1. Listing 5 most recent orders...\n');
   const orders = await client.listEntities({ entity_type: 'order' });
   process.stderr.write(`   got ${orders.length} orders; first: ${JSON.stringify(orders[0])}\n`);
 
   process.stderr.write('2. Running tiny report (yesterday, top advertisers, impressions)...\n');
-  await tinyReport(client, tz);
+  await tinyReport(client, tz, network);
 
   process.stderr.write('3. By-id lookups (line_item / ad_unit / placement — these used to 400)...\n');
   await byIdLookups(client);
 
   process.stderr.write('4. describe_line_item on live line items...\n');
-  await describeSome(client, tz, networkCode);
+  await describeSome(client, tz, network);
 
   // Opt-in: GAM_SMOKE_SCAN=<n> walks up to n line items looking for a negated
   // custom-targeting clause, the one branch a single line item rarely covers.
   const scan = Number(process.env.GAM_SMOKE_SCAN ?? 0);
   if (scan > 0) {
     process.stderr.write(`5. Scanning up to ${scan} line items for a negated clause...\n`);
-    await scanForNegation(client, tz, networkCode, scan);
+    await scanForNegation(client, tz, network, scan);
   }
 
   process.stderr.write('SMOKE OK\n');
 }
 
-async function tinyReport(client: GAMClient, tz: string): Promise<void> {
+async function tinyReport(client: GAMClient, tz: string, network: NetworkInfo): Promise<void> {
   const range = resolveDateRange({ relative: 'yesterday' }, tz);
   const { report } = await client.defineReport(reportDefinition(
     { dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
     range,
+    network,
   ));
   const { operation } = await client.runReport(report);
   process.stderr.write(`   report: ${report} operation: ${operation}\n`);
@@ -140,8 +144,8 @@ async function pickLineItemIds(client: GAMClient, networkCode: string): Promise<
   return (await client.listEntities({ entity_type: 'line_item', limit: 10 })).map((e) => e.id);
 }
 
-async function describeSome(client: GAMClient, tz: string, networkCode: string): Promise<void> {
-  const ids = (await pickLineItemIds(client, networkCode)).slice(0, 10);
+async function describeSome(client: GAMClient, tz: string, network: NetworkInfo): Promise<void> {
+  const ids = (await pickLineItemIds(client, network.networkCode)).slice(0, 10);
   if (ids.length === 0) {
     process.stderr.write('   no line items to describe, skipped\n');
     return;
@@ -150,7 +154,9 @@ async function describeSome(client: GAMClient, tz: string, networkCode: string):
     client,
     timezone: tz,
     logger: noopLogger(),
-    networkCode,
+    networkCode: network.networkCode,
+    reportTimeZone: network.timeZone,
+    currencyCode: network.currencyCode,
   }) as Record<string, any>;
   if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
 
@@ -193,7 +199,7 @@ async function describeSome(client: GAMClient, tz: string, networkCode: string):
 // Describe line items in small batches until a negated clause turns up. Stops
 // at the first hit: the point is to confirm the IS NONE OF branch against real
 // data, not to inventory the network.
-async function scanForNegation(client: GAMClient, tz: string, networkCode: string, max: number): Promise<void> {
+async function scanForNegation(client: GAMClient, tz: string, network: NetworkInfo, max: number): Promise<void> {
   const all = await client.listEntities({ entity_type: 'line_item', limit: max });
   let described = 0;
   let clausesSeen = 0;
@@ -203,7 +209,9 @@ async function scanForNegation(client: GAMClient, tz: string, networkCode: strin
       client,
       timezone: tz,
       logger: noopLogger(),
-      networkCode,
+      networkCode: network.networkCode,
+      reportTimeZone: network.timeZone,
+      currencyCode: network.currencyCode,
     }) as Record<string, any>;
     if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
     described += r.line_items.length;

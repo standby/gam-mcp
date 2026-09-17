@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { canonicalDefinition, definitionHash, reportName, sameDefinition } from '../src/report-key.js';
 import { reportDefinition, type ReportDefinition } from '../src/report-definition.js';
 import type { DateRange, ReportQuery } from '../src/gam-client.js';
+import { TEST_NETWORK } from './helpers.js';
 
-const build = (q: ReportQuery, r: DateRange) => reportDefinition(q, r);
+const build = (q: ReportQuery, r: DateRange) => reportDefinition(q, r, TEST_NETWORK);
 
 // A query that fills every optional part of a definition.
 const QUERY: ReportQuery = {
@@ -36,7 +37,7 @@ function mutate(v: unknown): unknown {
 describe('definitionHash (B1)', () => {
   it('uses a fixture that has every key a definition can carry', () => {
     expect(Object.keys(full()).sort()).toEqual([
-      'customDimensionKeyIds', 'dateRange', 'dimensions', 'filters', 'metrics', 'reportType',
+      'currencyCode', 'customDimensionKeyIds', 'dateRange', 'dimensions', 'filters', 'metrics', 'reportType', 'timeZoneSource',
     ]);
   });
 

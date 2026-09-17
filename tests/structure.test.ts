@@ -88,4 +88,20 @@ describe('structure', () => {
     expect(setup).toMatch(/afterEach\(/);
     expect(setup).toMatch(/takeViolations\(\)/);
   });
+
+  it('D5: a fake GAM records a create without the network zone source and currency', async () => {
+    const gam = createFakeGam();
+    const create = (reportDefinition: unknown) =>
+      gam.fetch('https://admanager.googleapis.com/v1/networks/1234/reports', {
+        method: 'POST',
+        body: JSON.stringify({ reportDefinition }),
+      });
+    await create({ timeZoneSource: 'PUBLISHER', currencyCode: 'USD' });
+    await create({ timeZoneSource: 'PROVIDED', timeZone: 'Asia/Seoul', currencyCode: 'USD' });
+    // A currency the fake network does not use: this one must violate.
+    await create({ timeZoneSource: 'PUBLISHER', currencyCode: 'EUR' });
+    await create({ dimensions: ['DATE'] });
+    const expected = 'POST networks/1234/reports without timeZoneSource PUBLISHER and currencyCode USD';
+    expect(takeViolations()).toEqual([expected, expected, expected]);
+  });
 });

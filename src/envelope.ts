@@ -11,7 +11,12 @@ export type Provenance = {
   result: string;
   run_time: string | null;
   date_range: DateSpan | null;
+  // The network's zone: GAM counted every day of this result in it.
+  report_time_zone: string;
+  // GAM_TIMEZONE: the zone in which the requested dates were chosen.
   date_time_zone: string;
+  // From the definition GAM ran; null for a report that did not name one.
+  currency_code: string | null;
   dimensions: string[];
   metrics: string[];
   filters: unknown[];
@@ -29,7 +34,9 @@ export type InputReport = {
 // Tools that compute from rows name every report they read (spec §1.4).
 export type DerivedProvenance = {
   network_code: string;
+  report_time_zone: string;
   date_time_zone: string;
+  currency_code: string;
   inputs: InputReport[];
 };
 

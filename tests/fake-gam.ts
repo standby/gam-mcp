@@ -157,6 +157,15 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
     requests.push({ method, path, ...(body !== undefined && { body }) });
     violations.push(...findViolations([{ method, path }]));
 
+    // D5: every report is created in the network's zone and currency.
+    const pathname = path.split('?')[0];
+    if (method === 'POST' && /^networks\/\d+\/reports$/.test(pathname)) {
+      const d = body?.reportDefinition;
+      if (d?.timeZoneSource !== 'PUBLISHER' || d?.currencyCode !== network.currencyCode || (d && 'timeZone' in d)) {
+        violations.push(`POST ${pathname} without timeZoneSource PUBLISHER and currencyCode ${network.currencyCode}`);
+      }
+    }
+
     const i = injections.findIndex((x) => x.method === method && x.path.test(path));
     if (i >= 0) {
       const { outcome } = injections.splice(i, 1)[0];

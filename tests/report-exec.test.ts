@@ -37,7 +37,8 @@ describe('executeReport', () => {
       network_code: NETWORK, report_type: 'HISTORICAL',
       report: `networks/${NETWORK}/reports/1`, result: `networks/${NETWORK}/reports/1/results/1`,
       run_time: '2026-09-03T01:00:00Z', date_range: { start: '2026-08-31', end: '2026-09-02' },
-      date_time_zone: 'Asia/Tokyo', dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'],
+      report_time_zone: 'Asia/Tokyo', date_time_zone: 'Asia/Tokyo', currency_code: 'USD',
+      dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'],
       filters: [], sort: [], cache: { hit: false },
     });
     expect(r).toMatchObject({ summary: 'S', total_row_count: 2, returned_row_count: 2, truncated: false, next_cursor: null });

@@ -10,7 +10,14 @@ import type { GamErrorEnvelope } from './errors.js';
 
 export type ToolContext = {
   client: GAMClient;
+  // The date time zone (GAM_TIMEZONE): what "yesterday" is and how relative
+  // ranges resolve (spec §2.4). Recorded as provenance.date_time_zone.
   timezone: string;
+  // The network's own zone. GAM computes every report in it (timeZoneSource
+  // PUBLISHER); recorded as provenance.report_time_zone.
+  reportTimeZone: string;
+  // The network's primary currency; every report asks GAM for it.
+  currencyCode: string;
   logger: Logger;
   // The network every report and cursor must belong to.
   networkCode: string;

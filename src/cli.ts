@@ -63,6 +63,8 @@ async function main(): Promise<void> {
   const ctx = {
     client,
     timezone,
+    reportTimeZone: network.timeZone,
+    currencyCode: network.currencyCode,
     networkCode,
     pageRows,
     reportTimeoutMs: settings.reportTimeoutMs,

@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { definitionRange, reportDefinition, toReportFilters, type ReportDefinition } from '../src/report-definition.js';
 import type { DateRange, ReportQuery } from '../src/gam-client.js';
 
-const build = (q: ReportQuery, r: DateRange) => reportDefinition(q, r);
+const USD = { currencyCode: 'USD' };
+const build = (q: ReportQuery, r: DateRange) => reportDefinition(q, r, USD);
 const RANGE = { start: '2026-04-01', end: '2026-04-29' };
 
 describe('reportDefinition', () => {
@@ -12,7 +13,18 @@ describe('reportDefinition', () => {
       metrics: ['IMPRESSIONS'],
       dateRange: { fixed: { startDate: { year: 2026, month: 4, day: 1 }, endDate: { year: 2026, month: 4, day: 29 } } },
       reportType: 'HISTORICAL',
+      timeZoneSource: 'PUBLISHER',
+      currencyCode: 'USD',
     });
+  });
+
+  it('D5: never asks for a provided time zone, and uses the currency it is given', () => {
+    // A currency the fake network does not use, so this proves the given
+    // currency is used rather than the network's default.
+    const d = reportDefinition({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, RANGE, { currencyCode: 'EUR' });
+    expect(d).not.toHaveProperty('timeZone');
+    expect(d.timeZoneSource).toBe('PUBLISHER');
+    expect(d.currencyCode).toBe('EUR');
   });
 
   it('forwards report_type so reach metrics run as a REACH report', () => {
