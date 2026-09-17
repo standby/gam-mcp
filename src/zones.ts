@@ -3,11 +3,17 @@
 // for. The two may differ as long as their UTC offsets agree on every day a
 // result covers.
 
+import { Lru } from './lru.js';
+
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 // Transitions happen on quarter-hour boundaries in every zone in use.
 const STEP = 15 * MINUTE;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Ranges longer than this (about ten years) are not compared day by day.
+export const MAX_COMPARED_DAYS = 3_700;
+// Comparisons already made: every page of a result asks the same question.
+const compared = new Lru<string, boolean>(1_000);
 
 // The canonical IANA name for a zone, or null if this runtime does not know
 // it, or if `name` is a raw UTC offset (e.g. "+08:00", "-0500") rather than an
@@ -46,16 +52,32 @@ export function offsetMinutes(zone: string, at: number): number {
   return m[1] === '-' ? -minutes : minutes;
 }
 
+function spanDays(range: { start: string; end: string }): number {
+  return (Date.parse(`${range.end}T00:00:00Z`) - Date.parse(`${range.start}T00:00:00Z`)) / DAY + 1;
+}
+
 // Whether two zones have different UTC offsets at any instant that can fall on
 // a calendar day of `range` in either of them. Offsets are compared at every
 // UTC midnight from the day before `start` to two days after `end`; a day on
 // which either zone changes offset is also checked every 15 minutes. A range
-// that cannot be read, or that ends before it starts, proves nothing, so it
-// counts as differing.
+// that cannot be read, that ends before it starts, or that is longer than
+// MAX_COMPARED_DAYS proves nothing, so it counts as differing. Answers are
+// remembered.
 export function offsetsDiffer(a: string, b: string, range: { start: string; end: string }): boolean {
+  const key = `${a}|${b}|${range.start}|${range.end}`;
+  let differ = compared.get(key);
+  if (differ === undefined) {
+    differ = compareOffsets(a, b, range);
+    compared.set(key, differ);
+  }
+  return differ;
+}
+
+function compareOffsets(a: string, b: string, range: { start: string; end: string }): boolean {
   const start = Date.parse(`${range.start}T00:00:00Z`);
   const end = Date.parse(`${range.end}T00:00:00Z`);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return true;
+  if (spanDays(range) > MAX_COMPARED_DAYS) return true;
   const first = start - DAY;
   const last = end + 2 * DAY;
   for (let day = first; day < last; day += DAY) {
@@ -84,9 +106,34 @@ export function zoneWarning(
   if (dateZone === reportZone) return null;
   const head = `Dates were chosen in ${dateZone} (GAM_TIMEZONE), but GAM counts each day in the network's time zone, ${reportZone}`;
   if (range && readable(range)) {
+    if (spanDays(range) > MAX_COMPARED_DAYS) {
+      return `${head}, and ${range.start}..${range.end} is too long for this server to compare the two zones' UTC offsets on every day.`;
+    }
     if (!offsetsDiffer(dateZone, reportZone, range)) return null;
     return `${head}, and the two zones' UTC offsets differ on at least one day of ${range.start}..${range.end}: ` +
       'those days do not cover the same hours as the dates you asked for.';
   }
   return `${head}, and this result does not say which days it covers, so it cannot show that their day boundaries line up.`;
+}
+
+// The zone GAM counted a report's days in, from its definition's time zone
+// source (spec §2.4), or null when this server cannot name it: a report
+// created elsewhere may use the Ad Exchange zone, or not say.
+export function reportZoneOf(definition: { timeZoneSource?: string; timeZone?: string }, networkZone: string): string | null {
+  switch (definition.timeZoneSource) {
+    case 'PUBLISHER':
+      return networkZone;
+    case 'UTC':
+      return 'UTC';
+    case 'PROVIDED':
+      return definition.timeZone ? canonicalTimeZone(definition.timeZone) : null;
+    default:
+      return null;
+  }
+}
+
+// The warning for a result whose report zone this server cannot name.
+export function unknownZoneWarning(dateZone: string, source: string | undefined): string {
+  return `GAM counted this report's days in a time zone this server cannot name (time zone source ${source ?? 'not stated'}), ` +
+    `so they may not cover the same hours as dates chosen in ${dateZone} (GAM_TIMEZONE).`;
 }

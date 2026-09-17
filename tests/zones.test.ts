@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { canonicalTimeZone, offsetMinutes, offsetsDiffer, zoneWarning } from '../src/zones.js';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  MAX_COMPARED_DAYS,
+  canonicalTimeZone,
+  offsetMinutes,
+  offsetsDiffer,
+  reportZoneOf,
+  zoneWarning,
+} from '../src/zones.js';
 
 describe('canonicalTimeZone', () => {
   it('returns the canonical IANA name, or null for a name the runtime does not know', () => {
@@ -87,5 +94,54 @@ describe('zoneWarning', () => {
       expect(w).toContain('Asia/Seoul');
       expect(w).toContain('does not say which days it covers');
     }
+  });
+});
+
+describe('offset comparisons are remembered and bounded (PR 2 review)', () => {
+  it('answers a repeated question without reading an offset again', () => {
+    const read = vi.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts');
+    try {
+      const range = { start: '2016-02-01', end: '2026-01-31' };
+      expect(offsetsDiffer('Europe/Paris', 'Europe/Berlin', range)).toBe(false);
+      const reads = read.mock.calls.length;
+      expect(reads).toBeGreaterThan(3_000);
+      expect(offsetsDiffer('Europe/Paris', 'Europe/Berlin', range)).toBe(false);
+      expect(read.mock.calls.length).toBe(reads);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  it('compares a range of MAX_COMPARED_DAYS days, and not a longer one', () => {
+    const endAfter = (days: number) => new Date(Date.parse('2016-01-01T00:00:00Z') + (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    expect(MAX_COMPARED_DAYS).toBe(3_700);
+    expect(offsetsDiffer('Asia/Seoul', 'Asia/Tokyo', { start: '2016-01-01', end: endAfter(MAX_COMPARED_DAYS) })).toBe(false);
+    const read = vi.spyOn(Intl.DateTimeFormat.prototype, 'formatToParts');
+    try {
+      const long = { start: '2016-01-01', end: endAfter(MAX_COMPARED_DAYS + 1) };
+      expect(offsetsDiffer('Asia/Seoul', 'Asia/Tokyo', long)).toBe(true);
+      expect(zoneWarning('Asia/Seoul', 'Asia/Tokyo', long)).toBe(
+        "Dates were chosen in Asia/Seoul (GAM_TIMEZONE), but GAM counts each day in the network's time zone, Asia/Tokyo, " +
+        `and 2016-01-01..${long.end} is too long for this server to compare the two zones' UTC offsets on every day.`,
+      );
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+});
+
+describe('reportZoneOf (PR 2 review)', () => {
+  it.each([
+    [{ timeZoneSource: 'PUBLISHER' }, 'Asia/Tokyo'],
+    [{ timeZoneSource: 'UTC' }, 'UTC'],
+    [{ timeZoneSource: 'PROVIDED', timeZone: 'asia/seoul' }, 'Asia/Seoul'],
+    [{ timeZoneSource: 'PROVIDED', timeZone: 'Mars/Olympus' }, null],
+    [{ timeZoneSource: 'PROVIDED' }, null],
+    [{ timeZoneSource: 'AD_EXCHANGE' }, null],
+    [{ timeZoneSource: 'TIME_ZONE_SOURCE_UNSPECIFIED' }, null],
+    [{}, null],
+  ])('%j is counted in %s', (definition, zone) => {
+    expect(reportZoneOf(definition, 'Asia/Tokyo')).toBe(zone);
   });
 });

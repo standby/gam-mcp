@@ -17,6 +17,9 @@ export type ReportDefinition = {
   // Optional because a definition read back from GAM may lack them; every
   // definition this server builds sets both (spec §2.4).
   timeZoneSource?: string;
+  // Read back only, for a report created elsewhere with a PROVIDED zone; this
+  // server never sends it (spec §2.4).
+  timeZone?: string;
   currencyCode?: string;
 };
 

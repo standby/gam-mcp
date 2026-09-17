@@ -16,7 +16,7 @@ import { encodeCursor, decodeCursor } from './cursor.js';
 import { envelope, inferSchema, type DateSpan, type InputReport, type ResultEnvelope } from './envelope.js';
 import { Lru } from './lru.js';
 import { definitionWarnings } from './report-warnings.js';
-import { zoneWarning } from './zones.js';
+import { reportZoneOf, unknownZoneWarning, zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
 import { findOrCreateReport, forgetReport } from './report-reuse.js';
 import { checkReportQuery } from './schema.js';
@@ -356,7 +356,10 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
       })
     : null;
   const warnings = unique([...a.warnings, ...definitionWarnings(a.definition), ...table.warnings]);
-  const zone = zoneWarning(a.ctx.timezone, a.ctx.reportTimeZone, definitionRange(a.definition) ?? a.dateRange);
+  const reportZone = reportZoneOf(a.definition, a.ctx.reportTimeZone);
+  const zone = reportZone === null
+    ? unknownZoneWarning(a.ctx.timezone, a.definition.timeZoneSource)
+    : zoneWarning(a.ctx.timezone, reportZone, definitionRange(a.definition) ?? a.dateRange);
   if (zone) warnings.push(zone);
   if (a.dateRange === null) warnings.push('GAM did not report the computed date range for this result.');
   if (a.total === null) {
@@ -373,7 +376,7 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
       result: a.result,
       run_time: a.runTime,
       date_range: a.dateRange,
-      report_time_zone: a.ctx.reportTimeZone,
+      report_time_zone: reportZone,
       date_time_zone: a.ctx.timezone,
       currency_code: a.definition.currencyCode ?? null,
       dimensions: a.definition.dimensions,

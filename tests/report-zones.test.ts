@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { derivedEnvelope, executeReport, executeReportRows, fetchReportPage } from '../src/report-exec.js';
+import { derivedEnvelope, executeReport, executeReportRows, fetchReportPage, pollUntilDone } from '../src/report-exec.js';
+import { encodeCursor } from '../src/cursor.js';
 import { createRestGamClient } from '../src/gam-client-rest.js';
 import { definitionRange, type ReportDefinition } from '../src/report-definition.js';
 import { runReportTool } from '../src/tools/run_report.js';
 import type { ResultEnvelope } from '../src/envelope.js';
 import { createFakeGam, int } from './fake-gam.js';
-import { makeCtx, NETWORK, ok } from './helpers.js';
+import { definitionFor, makeCtx, NETWORK, ok } from './helpers.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
@@ -88,5 +89,44 @@ describe('report time zone and currency (spec §2.4)', () => {
     const computed = await executeReportRows(ctx, query, RANGE, 'test');
     if ('error' in computed) throw new Error(JSON.stringify(computed));
     expect(computed.warnings.some((w) => ZONE_WARNING.test(w))).toBe(true);
+  });
+});
+
+describe('a later page names the zone its stored report was counted in (PR 2 review)', () => {
+  // Page 2 of a three-row report stored with this definition.
+  async function laterPage(definition: ReportDefinition) {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3) }] }, { pageRows: 2 });
+    const { report } = await ctx.client.defineReport(definition);
+    const { operation } = await ctx.client.runReport(report);
+    const done = await pollUntilDone(ctx, operation);
+    if ('error' in done) throw new Error(JSON.stringify(done));
+    const cursor = encodeCursor({
+      result: done.result, page_token: '2', offset: 2, total_row_count: 3, run_time: null, date_range: null,
+    });
+    return ok(await fetchReportPage(ctx, cursor));
+  }
+  const stored = (zone: Partial<ReportDefinition>): ReportDefinition => {
+    const { timeZoneSource: _unused, ...rest } = definitionFor(query, RANGE);
+    return { ...rest, ...zone };
+  };
+
+  it.each([
+    [{ timeZoneSource: 'PUBLISHER' }, 'Asia/Tokyo', false],
+    [{ timeZoneSource: 'UTC' }, 'UTC', true],
+    [{ timeZoneSource: 'PROVIDED', timeZone: 'Asia/Seoul' }, 'Asia/Seoul', false],
+    [{ timeZoneSource: 'PROVIDED', timeZone: 'America/New_York' }, 'America/New_York', true],
+  ])('%j: report_time_zone %s', async (zone, name, warned) => {
+    const page = await laterPage(stored(zone));
+    expect(page.provenance.report_time_zone).toBe(name);
+    expect(page.warnings.some((w) => ZONE_WARNING.test(w))).toBe(warned);
+  });
+
+  it.each([{ timeZoneSource: 'AD_EXCHANGE' }, {}])('%j: a zone this server cannot name is null, with a warning', async (zone) => {
+    const page = await laterPage(stored(zone));
+    expect(page.provenance.report_time_zone).toBeNull();
+    expect(page.warnings).toContain(
+      `GAM counted this report's days in a time zone this server cannot name (time zone source ${zone.timeZoneSource ?? 'not stated'}), ` +
+      'so they may not cover the same hours as dates chosen in Asia/Tokyo (GAM_TIMEZONE).',
+    );
   });
 });

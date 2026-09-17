@@ -11,8 +11,11 @@ export type Provenance = {
   result: string;
   run_time: string | null;
   date_range: DateSpan | null;
-  // The network's zone: GAM counted every day of this result in it.
-  report_time_zone: string;
+  // The zone GAM counted every day of this result in, from the definition's
+  // time zone source: the network's zone for every report this server
+  // creates; null when a report made elsewhere uses a zone this server
+  // cannot name.
+  report_time_zone: string | null;
   // GAM_TIMEZONE: the zone in which the requested dates were chosen.
   date_time_zone: string;
   // From the definition GAM ran; null for a report that did not name one.
