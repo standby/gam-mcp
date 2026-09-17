@@ -134,7 +134,7 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
 
     // Cache hit: skip create→poll→download entirely.
     const cached = ctx.reportCache?.get(query, dateRange);
-    if (cached) return ctx.output.fromInlineRows(cached, `${summary} (cached)`);
+    if (cached) return ctx.output!.fromInlineRows(cached, `${summary} (cached)`);
 
     try {
       ctx.logger.debug('report.create', {
@@ -147,7 +147,7 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       const op = await ctx.client.createReport(query, dateRange);
       const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
       if ('error' in status) return status;
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(status.download_url, dest);
       // Read once for the cache, then either inline-or-file via output manager.
       // The output manager re-reads the file but on subsequent identical
@@ -158,7 +158,7 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
           ctx.reportCache.set(query, dateRange, rows);
         } catch { /* cache best-effort; envelope path is authoritative */ }
       }
-      return ctx.output.fromCsvGzFile(dest, summary, warnings.length ? warnings : undefined);
+      return ctx.output!.fromCsvGzFile(dest, summary, warnings.length ? warnings : undefined);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

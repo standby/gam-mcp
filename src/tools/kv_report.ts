@@ -131,7 +131,7 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
     ];
 
     const cached = ctx.reportCache?.get(query, dateRange);
-    if (cached) return ctx.output.fromInlineRows(cached, `${summary} (cached)`);
+    if (cached) return ctx.output!.fromInlineRows(cached, `${summary} (cached)`);
 
     try {
       ctx.logger.debug('report.create', {
@@ -144,7 +144,7 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       const op = await ctx.client.createReport(query, dateRange);
       const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
       if ('error' in status) return status;
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(status.download_url, dest);
       if (ctx.reportCache) {
         try {
@@ -152,7 +152,7 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
           ctx.reportCache.set(query, dateRange, rows);
         } catch { /* cache best-effort */ }
       }
-      return ctx.output.fromCsvGzFile(dest, summary, warnings);
+      return ctx.output!.fromCsvGzFile(dest, summary, warnings);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

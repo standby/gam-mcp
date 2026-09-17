@@ -78,7 +78,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
         `Compare: dims=[${input.dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
         `base=${baseRange.start}..${baseRange.end} vs prev=${prevRange.start}..${prevRange.end} ` +
         `(${joined.length} keys, top_n=${input.top_n})`;
-      return ctx.output.fromInlineRows(top, summary);
+      return ctx.output!.fromInlineRows(top, summary);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }
@@ -127,7 +127,7 @@ async function runAndRead(
   while (Date.now() - start < timeoutMs) {
     const s = await ctx.client.pollOperation(op.operation_name);
     if (s.state === 'done') {
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(s.download_url, dest);
       const { rows } = await readCsvGz(dest);
       try { unlinkSync(dest); } catch { /* ignore */ }

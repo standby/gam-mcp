@@ -66,7 +66,7 @@ async function main(): Promise<void> {
     ...(process.env.GAM_REPORT_CACHE_TTL_MS && { ttlMs: Number(process.env.GAM_REPORT_CACHE_TTL_MS) }),
   });
   const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
-  const ctx = { client, output, timezone, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters };
+  const ctx = { client, output, timezone, networkCode, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters };
   if (httpPort !== null) {
     if (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535) {
       process.stderr.write(`gam-mcp: GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}\n`);

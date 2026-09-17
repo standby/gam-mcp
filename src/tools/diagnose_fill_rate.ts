@@ -110,7 +110,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
       const summary =
         `Fill-rate diagnosis (${baseRange.start}..${baseRange.end}${cmpDesc}): ` +
         `${diagnosed.length} ad units examined (min_requests=${input.min_requests}), top ${top.length} by unfilled-impression volume.`;
-      return ctx.output.fromInlineRows(top, summary);
+      return ctx.output!.fromInlineRows(top, summary);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

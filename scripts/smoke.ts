@@ -155,6 +155,7 @@ async function describeSome(client: GAMClient, tz: string, networkCode: string):
       client,
       output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
       timezone: tz,
+      networkCode,
       logger: noopLogger(),
     }) as Record<string, any>;
     if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);

@@ -40,9 +40,9 @@ export const pacingStatusTool: ToolDefinition<typeof inputSchema> = {
     while (Date.now() - start < timeout) {
       const s = await ctx.client.pollOperation(op.operation_name);
       if (s.state === 'done') {
-        const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+        const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
         await ctx.client.downloadReport(s.download_url, dest);
-        return ctx.output.fromCsvGzFile(dest, 'Pacing status (current month)');
+        return ctx.output!.fromCsvGzFile(dest, 'Pacing status (current month)');
       }
       if (s.state === 'failed') return gamError('REPORT_FAILED', { reason: s.reason });
       await new Promise((r) => setTimeout(r, delay));

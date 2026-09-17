@@ -79,7 +79,7 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         .filter((r) => r.requests >= input.min_requests);
 
       if (qualifying.length === 0) {
-        return ctx.output.fromInlineRows(
+        return ctx.output!.fromInlineRows(
           [],
           `Floor-pricing diagnosis (${range.start}..${range.end}): no ad units with >= ${input.min_requests} AdX requests.`,
         );
@@ -133,7 +133,7 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         `(min_requests=${input.min_requests}; network median match=${pct(medMatch)}%, median eCPM=${medEcpm.toFixed(2)}), ` +
         `top ${top.length} by estimated opportunity. est_opportunity is an upper-bound estimate in publisher currency — ` +
         `floors are inferred from match-rate × eCPM, not read from UPRs.`;
-      return ctx.output.fromInlineRows(top, summary);
+      return ctx.output!.fromInlineRows(top, summary);
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

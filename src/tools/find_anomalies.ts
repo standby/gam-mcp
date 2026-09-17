@@ -100,7 +100,7 @@ async function pacingUnderdelivery(
     `Pacing underdelivery (MTD ${range.start}..${range.end}, day ${daysElapsed}/${daysInMonth}, ` +
     `expected ${(expectedProgress * 100).toFixed(0)}%, threshold ${thresholdPct}%): ` +
     `${annotated.length} line items at risk, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+  return ctx.output!.fromInlineRows(top, summary);
 }
 
 async function fillRateDrops(
@@ -145,7 +145,7 @@ async function fillRateDrops(
     `Fill-rate drops (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPct}pp drop): ` +
     `${drops.length} ad units flagged, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+  return ctx.output!.fromInlineRows(top, summary);
 }
 
 async function ecpmRegression(
@@ -196,7 +196,7 @@ async function ecpmRegression(
     `eCPM regression (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPct}% AdX-eCPM drop): ` +
     `${regressions.length} buyer networks flagged, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+  return ctx.output!.fromInlineRows(top, summary);
 }
 
 async function viewabilityDrops(
@@ -244,7 +244,7 @@ async function viewabilityDrops(
     `Viewability drops (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPp}pp viewable-rate drop): ` +
     `${drops.length} ad units flagged, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+  return ctx.output!.fromInlineRows(top, summary);
 }
 
 async function runAndRead(
@@ -261,7 +261,7 @@ async function runAndRead(
   while (Date.now() - start < timeoutMs) {
     const s = await ctx.client.pollOperation(op.operation_name);
     if (s.state === 'done') {
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(s.download_url, dest);
       const { rows } = await readCsvGz(dest);
       try { unlinkSync(dest); } catch { /* ignore */ }

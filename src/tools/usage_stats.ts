@@ -31,7 +31,7 @@ export const usageStatsTool: ToolDefinition<typeof inputSchema> = {
       report_cache_misses: String(cache.misses),
       report_cache_hit_rate_pct: hitRatePct,
     };
-    return ctx.output.fromInlineRows(
+    return ctx.output!.fromInlineRows(
       [row],
       `Usage since ${counters.started_at}: ${counters.report_jobs_created} report jobs, ${cache.hits} cache hits / ${cache.misses} misses (${hitRatePct}% hit rate).`,
     );

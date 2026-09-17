@@ -7,17 +7,27 @@ import type { ReportCache } from './cache.js';
 import type { Logger } from './log.js';
 import type { SavedQueryStore } from './saved-queries.js';
 import type { UsageCounters } from './usage.js';
+import type { ResultEnvelope } from './envelope.js';
+import type { GamErrorEnvelope } from './errors.js';
 
 export type ToolContext = {
   client: GAMClient;
-  output: OutputManager;
   timezone: string;
   logger: Logger;
+  // The network every report and cursor must belong to.
+  networkCode: string;
+  // Rows per page (GAM_PAGE_ROWS); report-exec clamps it to GAM's maximum.
+  pageRows?: number;
   now?: Date;
   reportTimeoutMs?: number;
+  // Injected by tests to observe poll delays without waiting.
+  sleep?: (ms: number) => Promise<void>;
+  // Not used by the report path until the cache is rebuilt (0.6.0 PR 2).
   reportCache?: ReportCache;
   savedQueries?: SavedQueryStore;
   usageCounters?: UsageCounters;
+  // Legacy; removed once every tool uses envelope.ts.
+  output?: OutputManager;
 };
 
 // Tools that return a nested configuration object rather than report rows
@@ -33,7 +43,7 @@ export type ToolDefinition<I extends ZodTypeAny> = {
   handler: (
     input: z.infer<I>,
     ctx: ToolContext,
-  ) => Promise<OutputEnvelope | JsonEnvelope | { error: unknown }>;
+  ) => Promise<ResultEnvelope | OutputEnvelope | JsonEnvelope | GamErrorEnvelope>;
 };
 
 export type ReportToolConfig<I extends ZodTypeAny> = {
@@ -78,10 +88,10 @@ export function buildReportTool<I extends ZodTypeAny>(
       );
       if ('error' in status) return status;
 
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(status.download_url, dest);
       const warnings = cfg.warnings?.(input);
-      return ctx.output.fromCsvGzFile(
+      return ctx.output!.fromCsvGzFile(
         dest,
         cfg.summary(input),
         warnings?.length ? warnings : undefined,
@@ -95,7 +105,7 @@ async function pollUntilDone(
   name: string,
   timeoutMs: number,
   logger: Logger,
-): Promise<{ download_url: string } | { error: unknown }> {
+): Promise<{ download_url: string } | GamErrorEnvelope> {
   const start = Date.now();
   let delay = 2000;
   while (Date.now() - start < timeoutMs) {

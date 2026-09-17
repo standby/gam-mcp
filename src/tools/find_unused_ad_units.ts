@@ -74,7 +74,7 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
         (allUnits.length === input.max_units
           ? `Hit max_units cap (${input.max_units}) — raise it to scan more.`
           : '');
-      return ctx.output.fromInlineRows(unused, summary.trim());
+      return ctx.output!.fromInlineRows(unused, summary.trim());
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }
@@ -113,7 +113,7 @@ async function runAndRead(
   while (Date.now() - start < timeoutMs) {
     const s = await ctx.client.pollOperation(op.operation_name);
     if (s.state === 'done') {
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(s.download_url, dest);
       const { rows } = await readCsvGz(dest);
       try { unlinkSync(dest); } catch { /* ignore */ }

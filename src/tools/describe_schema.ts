@@ -44,7 +44,7 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
 
     const reportType = input.report_type?.toUpperCase();
     if (reportType && !(REPORT_TYPES as readonly string[]).includes(reportType)) {
-      return ctx.output.fromInlineRows(
+      return ctx.output!.fromInlineRows(
         [],
         `Unknown report_type '${input.report_type}'. Valid: ${REPORT_TYPES.join(', ')}`,
       );
@@ -115,6 +115,6 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
       ] : []),
     ];
 
-    return ctx.output.fromInlineRows(rows, `GAM schema — ${bits.join('; ')}`, schema);
+    return ctx.output!.fromInlineRows(rows, `GAM schema — ${bits.join('; ')}`, schema);
   },
 };

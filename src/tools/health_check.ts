@@ -15,7 +15,7 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
     try {
       const entities = await ctx.client.listEntities({ entity_type: 'company', limit: 1 });
       const latency_ms = Date.now() - start;
-      return ctx.output.fromInlineRows(
+      return ctx.output!.fromInlineRows(
         [{
           status: 'ok',
           latency_ms: String(latency_ms),
@@ -31,7 +31,7 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
       // Return a SUCCESS envelope (not an error envelope) so the LLM sees the
       // diagnostic detail rather than a generic INTERNAL_ERROR. The whole
       // point of this tool is to surface the failure, not to fail itself.
-      return ctx.output.fromInlineRows(
+      return ctx.output!.fromInlineRows(
         [{
           status: 'failed',
           latency_ms: String(latency_ms),

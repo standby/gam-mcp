@@ -56,7 +56,7 @@ export async function runAndRead(
   while (Date.now() - start < timeoutMs) {
     const s = await ctx.client.pollOperation(op.operation_name);
     if (s.state === 'done') {
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
+      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
       await ctx.client.downloadReport(s.download_url, dest);
       const { rows } = await readCsvGz(dest);
       try { unlinkSync(dest); } catch { /* ignore */ }

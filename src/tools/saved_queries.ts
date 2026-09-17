@@ -73,7 +73,7 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
       },
       input.description,
     );
-    return ctx.output.fromInlineRows(
+    return ctx.output!.fromInlineRows(
       [{ name: entry.name, saved_at: entry.saved_at, description: entry.description ?? '' }],
       `Saved query "${entry.name}" (${existing ? 'replaced' : 'new'}).`,
     );
@@ -100,7 +100,7 @@ export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
       metrics: e.body.metrics.join(','),
       saved_at: e.saved_at,
     }));
-    return ctx.output.fromInlineRows(rows, `${entries.length} saved query template(s).`);
+    return ctx.output!.fromInlineRows(rows, `${entries.length} saved query template(s).`);
   },
 };
 
@@ -158,7 +158,7 @@ export const deleteSavedQueryTool: ToolDefinition<typeof deleteInput> = {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
     }
     const removed = ctx.savedQueries.delete(input.name);
-    return ctx.output.fromInlineRows(
+    return ctx.output!.fromInlineRows(
       [{ name: input.name, removed: String(removed) }],
       removed ? `Deleted saved query "${input.name}".` : `No saved query named "${input.name}".`,
     );

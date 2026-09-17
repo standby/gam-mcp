@@ -86,7 +86,7 @@ export const lookupTool: ToolDefinition<typeof inputSchema> = {
       : input.ids?.length
         ? ` matching ids ${JSON.stringify(input.ids)}`
         : '';
-    return ctx.output.fromInlineRows(
+    return ctx.output!.fromInlineRows(
       rows,
       `${trimmed.length} ${input.entity_type}(s)${filterDesc}`,
       [
