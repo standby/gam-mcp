@@ -125,6 +125,30 @@ export function reportTypesFor(name: string): string[] {
   return DIM_BY_NAME.get(name)?.report_types ?? METRIC_BY_NAME.get(name)?.report_types ?? [];
 }
 
+// What is wrong with a query for its report type, or null. Every report the
+// report path builds passes this first (spec §2.1 step 1, test H3): each
+// dimension, metric and filter field exists, and is offered under the
+// report type. An entry the schema lists without report types (the
+// publisher-configured slots) is not restricted, as in resolveReportType.
+export function checkReportQuery(q: {
+  dimensions: string[];
+  metrics: string[];
+  filters?: { field: string }[];
+  report_type?: string;
+}): string | null {
+  const unknown = validateCombo(q);
+  if (unknown) return unknown;
+  const filterFields = (q.filters ?? []).map((f) => f.field);
+  const badFilter = filterFields.find((f) => !isValidDimension(f));
+  if (badFilter !== undefined) return `Unknown filter dimension: ${badFilter}`;
+  const type = q.report_type ?? 'HISTORICAL';
+  for (const name of [...q.dimensions, ...q.metrics, ...filterFields]) {
+    const types = reportTypesFor(name);
+    if (types.length > 0 && !types.includes(type)) return `${name} is not offered in ${type} reports`;
+  }
+  return null;
+}
+
 /**
  * Derives the GAM `reportType` a query implies by intersecting the report
  * types every requested metric and dimension is compatible with.

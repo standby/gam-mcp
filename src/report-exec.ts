@@ -19,6 +19,7 @@ import { definitionWarnings } from './report-warnings.js';
 import { zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
 import { findOrCreateReport, forgetReport } from './report-reuse.js';
+import { checkReportQuery } from './schema.js';
 import { names, type DoneEntry, type PendingEntry, type ResultRef } from './cache.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
@@ -390,10 +391,23 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
   });
 }
 
+// A query its report type cannot run is refused before anything reaches GAM.
+function queryProblem(query: ReportQuery): GamErrorEnvelope | null {
+  const problem = checkReportQuery(query);
+  return problem === null
+    ? null
+    : gamError('INVALID_INPUT', {
+        reason: problem,
+        hint: 'Call describe_schema with report_type to see the names each report type offers.',
+      });
+}
+
 export async function executeReport(
   ctx: ToolContext,
   req: ReportRequest,
 ): Promise<ResultEnvelope | GamErrorEnvelope> {
+  const invalid = queryProblem(req.query);
+  if (invalid) return invalid;
   try {
     const definition = reportDefinition(req.query, req.dateRange, ctx);
     const first = await firstPage(ctx, definition, pageRows(ctx), req.tool);
@@ -514,6 +528,8 @@ export async function executeReportRows(
   dateRange: DateRange,
   tool: string,
 ): Promise<ReportRows | GamErrorEnvelope> {
+  const invalid = queryProblem(query);
+  if (invalid) return invalid;
   try {
     const definition = reportDefinition(query, dateRange, ctx);
     const first = await firstPage(ctx, definition, GAM_MAX_PAGE_ROWS, tool);
