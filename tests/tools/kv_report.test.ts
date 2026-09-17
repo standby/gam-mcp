@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { kvReportTool } from '../../src/tools/kv_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
-import { makeCtx } from '../helpers.js';
+import { counted, makeCtx } from '../helpers.js';
 import type { GAMClient } from '../../src/gam-client.js';
 import { definitionRange, type ReportDefinition } from '../../src/report-definition.js';
 
@@ -107,5 +107,60 @@ describe('kv_report', () => {
       { fieldFilter: { field: { dimension: 'CUSTOM_DIMENSION_0_VALUE' }, operation: 'IN', values: [{ stringValue: '479' }] } },
       { fieldFilter: { field: { dimension: 'AD_UNIT_ID' }, operation: 'IN', values: [{ intValue: '777' }] } },
     ]);
+  });
+
+  describe('names that match more than one entity (spec §3.3)', () => {
+    const range = { start: '2026-05-01', end: '2026-05-07' };
+    const query = { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['AD_REQUESTS'] };
+
+    it('I11: an ambiguous key name is AMBIGUOUS_NAME with the candidates, and no report runs', async () => {
+      const { ctx, counters } = counted({
+        entities: {
+          custom_targeting_key: [
+            { id: 11, name: 'section', displayName: 'Section' },
+            { id: 12, name: 'section', displayName: 'Section (old)' },
+          ],
+        },
+        reports: [{ query, rows: [] }],
+      });
+      const r = await kvReportTool.handler(
+        kvReportTool.input.parse({ kv: 'section=news', date_range: range, metrics: ['AD_REQUESTS'] }),
+        ctx,
+      );
+      expect(r).toMatchObject({
+        error: {
+          code: 'AMBIGUOUS_NAME',
+          details: {
+            candidates: [
+              { id: 11, name: 'section', displayName: 'Section' },
+              { id: 12, name: 'section', displayName: 'Section (old)' },
+            ],
+          },
+        },
+      });
+      expect(counters.report_definitions_created).toBe(0);
+    });
+
+    it('an ad_unit_name shared by two ad units is AMBIGUOUS_NAME, not the first unit', async () => {
+      const { ctx, counters } = counted({
+        entities: {
+          custom_targeting_key: [{ id: 11, name: 'section' }],
+          ad_unit: [{ id: 701, name: 'Top banner' }, { id: 702, name: 'Top banner' }],
+        },
+        reports: [{ query, rows: [] }],
+      });
+      const r = await kvReportTool.handler(
+        kvReportTool.input.parse({ kv: 'section=news', ad_unit_name: 'Top banner', date_range: range, metrics: ['AD_REQUESTS'] }),
+        ctx,
+      );
+      expect(r).toMatchObject({
+        error: {
+          code: 'AMBIGUOUS_NAME',
+          hint: 'Pick an ad unit from details.candidates and pass its ID as ad_unit_id.',
+          details: { entity_type: 'ad_unit', candidates: [{ id: 701, name: 'Top banner' }, { id: 702, name: 'Top banner' }] },
+        },
+      });
+      expect(counters.report_definitions_created).toBe(0);
+    });
   });
 });

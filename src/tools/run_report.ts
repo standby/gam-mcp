@@ -110,6 +110,8 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
         tool: 'run_report',
         warning: rewrite.warning,
       });
+    } else if ('failure' in rewrite) {
+      return rewrite.failure;
     } else if ('error' in rewrite && rewrite.error) {
       return gamError('INVALID_INPUT', {
         reason: rewrite.error,

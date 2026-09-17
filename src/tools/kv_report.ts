@@ -3,7 +3,7 @@ import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
 import { executeReport } from '../report-exec.js';
-import { makeKvResolver, parseKvPair } from '../kv-rewrite.js';
+import { AMBIGUOUS_KEY_HINT, ambiguousName, makeKvResolver, parseKvPair } from '../kv-rewrite.js';
 import { READS_GAM, type ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
@@ -62,14 +62,15 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
     if ('error' in dateRange) return dateRange;
 
     // Resolve the KV key → ID
-    const resolve = makeKvResolver(ctx.client);
-    const keyId = await resolve(parsed.key);
-    if (!keyId) {
+    const key = await makeKvResolver(ctx.client)(parsed.key);
+    if (!key) {
       return gamError('ENTITY_NOT_FOUND', {
         entity_type: 'custom_targeting_key',
         query: parsed.key,
       });
     }
+    if ('ambiguous' in key) return ambiguousName('custom_targeting_key', parsed.key, key.ambiguous, AMBIGUOUS_KEY_HINT);
+    const keyId = key.id;
 
     // Resolve ad_unit_name if given
     let adUnitId = input.ad_unit_id;
@@ -80,16 +81,16 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
         match: 'exact',
         limit: 5,
       });
-      const hit = matches.find((m) => m.name === input.ad_unit_name)
-        ?? matches.find((m) => m.displayName === input.ad_unit_name)
-        ?? matches[0];
-      if (!hit) {
+      if (matches.length === 0) {
         return gamError('ENTITY_NOT_FOUND', {
           entity_type: 'ad_unit',
           query: input.ad_unit_name,
         });
       }
-      adUnitId = hit.id;
+      if (matches.length > 1) {
+        return ambiguousName('ad_unit', input.ad_unit_name, matches, 'Pick an ad unit from details.candidates and pass its ID as ad_unit_id.');
+      }
+      adUnitId = matches[0].id;
     }
 
     // Slot 0 is fine; we own the whole report. The CUSTOM_DIMENSION_0_VALUE

@@ -58,7 +58,7 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
   }),
   AMBIGUOUS_NAME: (d) => ({
     message: `Multiple ${d.entity_type}s matched ${JSON.stringify(d.query)}.`,
-    hint: 'Pick a specific candidate from details.candidates and re-run with its numeric ID.',
+    hint: String(d.hint ?? 'Pick a specific candidate from details.candidates and re-run with its numeric ID.'),
   }),
   UNSUPPORTED_DIMENSION_COMBO: (d) => ({
     message: `Dimension combination not supported: ${d.dims}.`,

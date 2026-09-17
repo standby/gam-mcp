@@ -150,4 +150,23 @@ describe('run_report', () => {
     expect(r).not.toHaveProperty('file_path');
     expect(typeof (r as { next_cursor: unknown }).next_cursor).toBe('string');
   });
+
+  it('refuses to rewrite a key-value filter whose key name matches two keys (spec §3.3)', async () => {
+    const ctx = makeCtx({
+      entities: { custom_targeting_key: [{ id: 11, name: 'section' }, { id: 12, name: 'section' }] },
+      reports: [{ query: { dimensions: ['DATE'], metrics: ['AD_REQUESTS'] }, rows: [] }],
+    });
+    const r = await runReportTool.handler(
+      runReportTool.input.parse({
+        dimensions: ['DATE'],
+        metrics: ['AD_REQUESTS'],
+        date_range: { start: '2026-09-01', end: '2026-09-07' },
+        filters: [{ field: 'KEY_VALUES_NAME', op: '=', value: 'section=news' }],
+      }),
+      ctx,
+    );
+    expect(r).toMatchObject({
+      error: { code: 'AMBIGUOUS_NAME', details: { candidates: [{ id: 11, name: 'section' }, { id: 12, name: 'section' }] } },
+    });
+  });
 });
