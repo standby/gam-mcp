@@ -1,18 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { kvBreakdownTool } from '../../src/tools/kv_breakdown.js';
 import { makeCtx, NETWORK } from '../helpers.js';
-import type { GAMClient, ReportQuery, DateRange } from '../../src/gam-client.js';
+import type { GAMClient } from '../../src/gam-client.js';
+import { definitionRange, type ReportDefinition } from '../../src/report-definition.js';
 
 // A full GAMClient spy over the new report path (defineReport → runReport →
 // pollOperation → fetchRows), used where the fixture matcher in the mock
-// client isn't precise enough — this captures the exact query/dateRange the
-// tool hands to GAM.
-function spyClient(onDefine: (query: ReportQuery, dateRange: DateRange) => void): GAMClient {
+// client isn't precise enough — this captures the exact definition the tool
+// hands to GAM.
+function spyClient(onDefine: (definition: ReportDefinition) => void): GAMClient {
   return {
     async listEntities() { return []; },
     async getResource() { return null; },
-    async defineReport(query, dateRange) {
-      onDefine(query, dateRange);
+    async defineReport(definition) {
+      onDefine(definition);
       return { report: `networks/${NETWORK}/reports/1` };
     },
     async runReport() { return { operation: `networks/${NETWORK}/operations/reports/runs/1` }; },
@@ -63,8 +64,8 @@ describe('kv_breakdown', () => {
   // basic mock test above. Capture the raw query/dateRange that hits the
   // client and assert their exact shape.
   it('wires custom_dimension_key_ids[0] = key and applies entity filters', async () => {
-    let captured: { query: ReportQuery; dateRange: DateRange } | null = null;
-    const client = spyClient((query, dateRange) => { captured = { query, dateRange }; });
+    let captured: ReportDefinition | null = null;
+    const client = spyClient((definition) => { captured = definition; });
 
     const args = kvBreakdownTool.input.parse({
       custom_targeting_key_id: 4242,
@@ -77,19 +78,19 @@ describe('kv_breakdown', () => {
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(captured).not.toBeNull();
-    expect(captured!.query.dimensions).toEqual(['CUSTOM_DIMENSION_0_VALUE']);
-    expect(captured!.query.metrics).toEqual(['IMPRESSIONS']);
-    expect(captured!.query.custom_dimension_key_ids).toEqual([4242]);
-    expect(captured!.query.filters).toEqual([
-      { field: 'AD_UNIT_ID', op: '=', value: 77 },
-      { field: 'ORDER_ID', op: '=', value: 88 },
+    expect(captured!.dimensions).toEqual(['CUSTOM_DIMENSION_0_VALUE']);
+    expect(captured!.metrics).toEqual(['IMPRESSIONS']);
+    expect(captured!.customDimensionKeyIds).toEqual(['4242']);
+    expect(captured!.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'AD_UNIT_ID' }, operation: 'IN', values: [{ intValue: '77' }] } },
+      { fieldFilter: { field: { dimension: 'ORDER_ID' }, operation: 'IN', values: [{ intValue: '88' }] } },
     ]);
-    expect(captured!.dateRange).toEqual({ start: '2026-05-01', end: '2026-05-07' });
+    expect(definitionRange(captured!)).toEqual({ start: '2026-05-01', end: '2026-05-07' });
   });
 
   it('omits filters when no entity narrowing is given', async () => {
-    let captured: ReportQuery | null = null;
-    const client = spyClient((query) => { captured = query; });
+    let captured: ReportDefinition | null = null;
+    const client = spyClient((definition) => { captured = definition; });
 
     const args = kvBreakdownTool.input.parse({
       custom_targeting_key_id: 1,

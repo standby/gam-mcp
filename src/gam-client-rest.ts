@@ -1,16 +1,14 @@
 import type {
   GAMClient,
   EntityType,
-  ReportQuery,
   OperationStatus,
   Entity,
-  DateRange,
 } from './gam-client.js';
 import { ResultUnavailableError } from './gam-client.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 import type { ReportRow } from './values.js';
-import { reportDefinition, type GamDate, type ReportDefinition } from './report-definition.js';
+import { isoDate, type GamDate, type ReportDefinition } from './report-definition.js';
 
 const BASE = 'https://admanager.googleapis.com/v1';
 
@@ -67,11 +65,6 @@ function sleepWithJitter(ms: number): Promise<void> {
   // Add 0-25% jitter so concurrent retries don't synchronize.
   const jittered = ms * (1 + Math.random() * 0.25);
   return new Promise((r) => setTimeout(r, jittered));
-}
-
-function isoDate(d: Partial<GamDate> | undefined): string | undefined {
-  if (!d?.year || !d.month || !d.day) return undefined;
-  return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }
 
 export function createRestGamClient(opts: {
@@ -215,11 +208,13 @@ export function createRestGamClient(opts: {
       return { state: 'done', result: resultPath };
     },
 
-    async defineReport(query: ReportQuery, dateRange: DateRange) {
+    async defineReport(definition: ReportDefinition) {
       const res = await fetchImpl(`${networkPath}/reports`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ reportDefinition: reportDefinition(query, dateRange) }),
+        // visibility stays unset: GAM's default, HIDDEN, keeps these reports
+        // out of the Ad Manager UI.
+        body: JSON.stringify({ reportDefinition: definition }),
       });
       if (!res.ok) throw new Error(`defineReport ${res.status}: ${await res.text()}`);
       const report = await res.json() as { name: string };

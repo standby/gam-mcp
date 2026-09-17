@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { runReportTool } from '../../src/tools/run_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { makeCtx } from '../helpers.js';
-import type { GAMClient, ReportQuery } from '../../src/gam-client.js';
+import type { GAMClient } from '../../src/gam-client.js';
+import type { ReportDefinition } from '../../src/report-definition.js';
 
 describe('run_report', () => {
   it('runs a valid query', async () => {
@@ -44,7 +45,7 @@ describe('run_report', () => {
   });
 
   it('rewrites the CREATIVE_SIZE alias to RENDERED_CREATIVE_SIZE and warns', async () => {
-    let captured: ReportQuery | null = null;
+    let captured: ReportDefinition | null = null;
     const mock = createMockGamClient({
       reports: [{
         query: { dimensions: ['AD_UNIT_NAME', 'RENDERED_CREATIVE_SIZE'], metrics: ['AVERAGE_ECPM'] },
@@ -53,9 +54,9 @@ describe('run_report', () => {
     });
     const client: GAMClient = {
       ...mock,
-      defineReport: (query, dateRange) => {
-        captured = query;
-        return mock.defineReport(query, dateRange);
+      defineReport: (definition) => {
+        captured = definition;
+        return mock.defineReport(definition);
       },
     };
 
@@ -74,7 +75,7 @@ describe('run_report', () => {
   });
 
   it('auto-rewrites KEY_VALUES_NAME filter + AD_REQUESTS to CUSTOM_DIMENSION_0_VALUE', async () => {
-    let captured: ReportQuery | null = null;
+    let captured: ReportDefinition | null = null;
     const mock = createMockGamClient({
       entities: { custom_targeting_key: [{ id: 4242, name: 'channel_id', displayName: 'Channel ID' }] },
       reports: [{
@@ -84,9 +85,9 @@ describe('run_report', () => {
     });
     const client: GAMClient = {
       ...mock,
-      defineReport: (query, dateRange) => {
-        captured = query;
-        return mock.defineReport(query, dateRange);
+      defineReport: (definition) => {
+        captured = definition;
+        return mock.defineReport(definition);
       },
     };
 
@@ -104,9 +105,9 @@ describe('run_report', () => {
     // Filter is rewritten to CUSTOM_DIMENSION_0_VALUE='479'; the original
     // KEY_VALUES_NAME filter is gone.
     expect(captured!.filters).toEqual([
-      { field: 'CUSTOM_DIMENSION_0_VALUE', op: '=', value: '479' },
+      { fieldFilter: { field: { dimension: 'CUSTOM_DIMENSION_0_VALUE' }, operation: 'IN', values: [{ stringValue: '479' }] } },
     ]);
-    expect(captured!.custom_dimension_key_ids).toEqual([4242]);
+    expect(captured!.customDimensionKeyIds).toEqual(['4242']);
     // Caller learns about the rewrite via the envelope warnings array.
     expect(r.warnings.length).toBeGreaterThan(0);
     expect(r.warnings[0]).toContain('CUSTOM_DIMENSION_0_VALUE');

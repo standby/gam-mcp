@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   derivedEnvelope, executeReport, executeReportRows, fetchReportPage, pollUntilDone, resolvePageRows,
 } from '../src/report-exec.js';
-import { decodeCursor } from '../src/cursor.js';
+import { decodeCursor, encodeCursor } from '../src/cursor.js';
 import { createLogger } from '../src/log.js';
-import { makeCtx, NETWORK } from './helpers.js';
-import type { ResultEnvelope } from '../src/envelope.js';
+import { definitionFor, makeCtx, NETWORK } from './helpers.js';
+import type { Provenance, ResultEnvelope } from '../src/envelope.js';
+import type { ReportDefinition } from '../src/report-definition.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
@@ -169,7 +170,7 @@ describe('pollUntilDone', () => {
       reportTimeoutMs: 60_000,
       sleep: async (ms) => { delays.push(ms); if (delays.length === 8) throw new Error('stop'); },
     });
-    const { report } = await ctx.client.defineReport(query, RANGE);
+    const { report } = await ctx.client.defineReport(definitionFor(query, RANGE));
     const { operation } = await ctx.client.runReport(report);
     await expect(pollUntilDone(ctx, operation)).rejects.toThrow('stop');
     expect(delays).toEqual([2000, 3000, 4500, 6750, 10125, 15000, 15000, 15000]);
@@ -177,7 +178,7 @@ describe('pollUntilDone', () => {
 
   it('times out with REPORT_TIMEOUT naming the operation', async () => {
     const ctx = makeCtx({ reports: [{ query, rows: rows(1) }], runOutcomes: { 1: 'never' } }, { reportTimeoutMs: 0 });
-    const { report } = await ctx.client.defineReport(query, RANGE);
+    const { report } = await ctx.client.defineReport(definitionFor(query, RANGE));
     const { operation } = await ctx.client.runReport(report);
     expect(await pollUntilDone(ctx, operation)).toMatchObject({
       error: { code: 'REPORT_TIMEOUT', details: { operation } },
@@ -232,5 +233,40 @@ describe('executeReportRows and derivedEnvelope', () => {
       provenance: { network_code: NETWORK, date_time_zone: 'Asia/Tokyo', inputs: [input] },
       total_row_count: 1, truncated: false, next_cursor: null,
     });
+  });
+});
+
+describe('one definition per call', () => {
+  it('hands the client the definition that provenance describes, once per call', async () => {
+    const q = { ...query, filters: [{ field: 'AD_UNIT_ID', op: 'IN' as const, value: [2, 1] }] };
+    const ctx = makeCtx({ reports: [{ query: q, rows: rows(1) }] });
+    const seen: ReportDefinition[] = [];
+    const inner = ctx.client;
+    ctx.client = {
+      ...inner,
+      defineReport: (definition) => { seen.push(definition); return inner.defineReport(definition); },
+    };
+    const r = ok(await executeReport(ctx, { query: q, dateRange: RANGE, summary: 'S' }));
+    expect(seen).toEqual([definitionFor(q, RANGE)]);
+    const p = r.provenance as Provenance;
+    expect(p.report_type).toBe(seen[0].reportType);
+    expect(p.dimensions).toEqual(seen[0].dimensions);
+    expect(p.filters).toEqual(seen[0].filters);
+    const other = { start: '2026-09-03', end: '2026-09-03' };
+    await executeReportRows(ctx, q, other);
+    expect(seen).toEqual([definitionFor(q, RANGE), definitionFor(q, other)]);
+  });
+
+  it('reports the sort and cache state of the definition GAM stored', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3) }] }, { pageRows: 2 });
+    const sorts = [{ field: { metric: 'IMPRESSIONS' }, descending: true }];
+    const { report } = await ctx.client.defineReport({ ...definitionFor(query, RANGE), sorts });
+    const { operation } = await ctx.client.runReport(report);
+    const done = await pollUntilDone(ctx, operation);
+    if ('error' in done) throw new Error(JSON.stringify(done));
+    const cursor = encodeCursor({
+      result: done.result, page_token: '2', offset: 2, total_row_count: 3, run_time: null, date_range: null,
+    });
+    expect(ok(await fetchReportPage(ctx, cursor)).provenance).toMatchObject({ sort: sorts, cache: { hit: false } });
   });
 });

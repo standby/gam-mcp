@@ -2,7 +2,7 @@ import { gamError, type GamErrorEnvelope } from './errors.js';
 import { ResultUnavailableError, type DateRange, type ReportQuery, type RowsPage, type StoredReport } from './gam-client.js';
 import type { Logger } from './log.js';
 import type { ToolContext } from './report-tool-builder.js';
-import { reportDefinition, type ReportDefinition } from './report-definition.js';
+import { definitionRange, reportDefinition, type ReportDefinition } from './report-definition.js';
 import { buildTable, type Cell, type Column } from './values.js';
 import { encodeCursor, decodeCursor } from './cursor.js';
 import { envelope, inferSchema, type DateSpan, type InputReport, type ResultEnvelope } from './envelope.js';
@@ -73,18 +73,19 @@ export async function pollUntilDone(
   }
 }
 
+// Creates the report for a definition, runs it and waits for the result.
 async function runToResult(
   ctx: ToolContext,
-  query: ReportQuery,
-  dateRange: DateRange,
+  definition: ReportDefinition,
 ): Promise<{ report: string; result: string } | GamErrorEnvelope> {
+  const range = definitionRange(definition);
   ctx.logger.debug('report.create', {
-    dimensions: query.dimensions,
-    metrics: query.metrics,
-    date_start: dateRange.start,
-    date_end: dateRange.end,
+    dimensions: definition.dimensions,
+    metrics: definition.metrics,
+    date_start: range?.start ?? null,
+    date_end: range?.end ?? null,
   });
-  const { report } = await ctx.client.defineReport(query, dateRange);
+  const { report } = await ctx.client.defineReport(definition);
   const { operation } = await ctx.client.runReport(report);
   const done = await pollUntilDone(ctx, operation);
   return 'error' in done ? done : { report, result: done.result };
@@ -95,10 +96,49 @@ function toGamError(e: unknown): GamErrorEnvelope {
   return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
 }
 
+// What a result's first page says about the whole result. GAM sends these on
+// the first page only.
+type ResultFacts = {
+  run_time: string | null;
+  date_range: DateSpan | null;
+  total_row_count: number | null;
+};
+
 // A first page with no totalRowCount and no further page has exactly its own
 // rows: proto3 JSON omits zero. With a further page the count is unknown.
 function firstPageTotal(page: RowsPage): number | null {
   return page.totalRowCount ?? (page.nextPageToken ? null : page.rows.length);
+}
+
+function factsOf(page: RowsPage): ResultFacts {
+  return {
+    run_time: page.runTime ?? null,
+    date_range: page.dateRanges?.[0] ?? null,
+    total_row_count: firstPageTotal(page),
+  };
+}
+
+type FirstPage = {
+  report: string;
+  result: string;
+  page: RowsPage;
+  facts: ResultFacts;
+  // True when an earlier call produced the result (spec §1.1).
+  cacheHit: boolean;
+};
+
+// The one step both report functions share: obtain the result that answers a
+// definition, and read its first page. Report reuse, shared runs, the result
+// cache and the re-run of an expired cached result all live here (spec §2.1).
+async function firstPage(
+  ctx: ToolContext,
+  definition: ReportDefinition,
+  pageSize: number,
+): Promise<FirstPage | GamErrorEnvelope> {
+  const ran = await runToResult(ctx, definition);
+  if ('error' in ran) return ran;
+  const page = await ctx.client.fetchRows(ran.result, { pageSize });
+  return { report: ran.report, result: ran.result, page, facts: factsOf(page), cacheHit: false };
 }
 
 // Definition-derived caveats (reach non-additivity, the alias/KV rewrite
@@ -120,6 +160,7 @@ type PageArgs = {
   total: number | null;
   runTime: string | null;
   dateRange: DateSpan | null;
+  cacheHit: boolean;
 };
 
 function pageEnvelope(a: PageArgs): ResultEnvelope {
@@ -155,8 +196,8 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
       dimensions: a.definition.dimensions,
       metrics: a.definition.metrics,
       filters: a.definition.filters ?? [],
-      sort: [],
-      cache: { hit: false },
+      sort: a.definition.sorts ?? [],
+      cache: { hit: a.cacheHit },
     },
     total_row_count: a.total,
     truncated: nextCursor !== null || (a.total !== null && a.offset + returned < a.total),
@@ -172,21 +213,22 @@ export async function executeReport(
   req: ReportRequest,
 ): Promise<ResultEnvelope | GamErrorEnvelope> {
   try {
-    const ran = await runToResult(ctx, req.query, req.dateRange);
-    if ('error' in ran) return ran;
-    const page = await ctx.client.fetchRows(ran.result, { pageSize: pageRows(ctx) });
+    const definition = reportDefinition(req.query, req.dateRange);
+    const first = await firstPage(ctx, definition, pageRows(ctx));
+    if ('error' in first) return first;
     return pageEnvelope({
       ctx,
-      report: ran.report,
-      result: ran.result,
-      definition: reportDefinition(req.query, req.dateRange),
+      report: first.report,
+      result: first.result,
+      definition,
       summary: req.summary,
       warnings: req.warnings ?? [],
-      page,
+      page: first.page,
       offset: 0,
-      total: firstPageTotal(page),
-      runTime: page.runTime ?? null,
-      dateRange: page.dateRanges?.[0] ?? null,
+      total: first.facts.total_row_count,
+      runTime: first.facts.run_time,
+      dateRange: first.facts.date_range,
+      cacheHit: first.cacheHit,
     });
   } catch (e) {
     return toGamError(e);
@@ -244,6 +286,7 @@ export async function fetchReportPage(
       total,
       runTime: cursor.run_time,
       dateRange: cursor.date_range,
+      cacheHit: false,
     });
   } catch (e) {
     return toGamError(e);
@@ -260,30 +303,27 @@ export async function executeReportRows(
   dateRange: DateRange,
 ): Promise<ReportRows | GamErrorEnvelope> {
   try {
-    const ran = await runToResult(ctx, query, dateRange);
-    if ('error' in ran) return ran;
-    const pages: RowsPage[] = [];
-    let token: string | undefined;
-    let count = 0;
-    do {
-      const page = await ctx.client.fetchRows(ran.result, {
-        pageSize: GAM_MAX_PAGE_ROWS,
-        ...(token && { pageToken: token }),
-      });
-      if (pages.length === 0 && (page.totalRowCount ?? 0) > MAX_INPUT_ROWS) {
-        return tooLarge(page.totalRowCount!, MAX_INPUT_ROWS, 'input report');
-      }
+    const definition = reportDefinition(query, dateRange);
+    const first = await firstPage(ctx, definition, GAM_MAX_PAGE_ROWS);
+    if ('error' in first) return first;
+    const reported = first.facts.total_row_count;
+    if (reported !== null && reported > MAX_INPUT_ROWS) return tooLarge(reported, MAX_INPUT_ROWS, 'input report');
+    const pages: RowsPage[] = [first.page];
+    let count = first.page.rows.length;
+    let token = first.page.nextPageToken;
+    while (token) {
+      const page = await ctx.client.fetchRows(first.result, { pageSize: GAM_MAX_PAGE_ROWS, pageToken: token });
       count += page.rows.length;
       if (count > MAX_INPUT_ROWS) return tooLarge(count, MAX_INPUT_ROWS, 'input report');
       pages.push(page);
       token = page.nextPageToken;
-    } while (token);
-    const table = buildTable(query.dimensions, query.metrics, pages.flatMap((p) => p.rows));
+    }
+    const table = buildTable(definition.dimensions, definition.metrics, pages.flatMap((p) => p.rows));
     const warnings = [...table.warnings];
-    const reportedTotal = pages[0].totalRowCount;
+    const reportedTotal = first.page.totalRowCount;
     if (reportedTotal !== undefined && reportedTotal !== count) {
       warnings.push(
-        `GAM reported ${reportedTotal} rows for ${ran.result} but served ${count}; results below were computed from ${count} rows.`,
+        `GAM reported ${reportedTotal} rows for ${first.result} but served ${count}; results below were computed from ${count} rows.`,
       );
     }
     return {
@@ -291,10 +331,10 @@ export async function executeReportRows(
       rows: table.rows,
       warnings,
       input: {
-        report: ran.report,
-        result: ran.result,
-        run_time: pages[0].runTime ?? null,
-        date_range: pages[0].dateRanges?.[0] ?? null,
+        report: first.report,
+        result: first.result,
+        run_time: first.facts.run_time,
+        date_range: first.facts.date_range,
       },
     };
   } catch (e) {

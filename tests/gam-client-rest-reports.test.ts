@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createRestGamClient } from '../src/gam-client-rest.js';
 import { ResultUnavailableError } from '../src/gam-client.js';
 import { createFakeGam, int, dbl, str } from './fake-gam.js';
+import { definitionFor } from './helpers.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 
@@ -15,14 +16,13 @@ describe('REST client report methods', () => {
     ]);
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
 
-    const { report } = await client.defineReport(
-      { dimensions: ['AD_UNIT_NAME'], metrics: ['IMPRESSIONS', 'REVENUE'] }, RANGE,
-    );
+    const definition = definitionFor({ dimensions: ['AD_UNIT_NAME'], metrics: ['IMPRESSIONS', 'REVENUE'] }, RANGE);
+    const { report } = await client.defineReport(definition);
     expect(report).toBe('networks/1234/reports/1');
-    expect(gam.requests.at(-1)).toMatchObject({
+    expect(gam.requests.at(-1)).toEqual({
       method: 'POST',
       path: 'networks/1234/reports',
-      body: { reportDefinition: { dimensions: ['AD_UNIT_NAME'], reportType: 'HISTORICAL' } },
+      body: { reportDefinition: definition },
     });
 
     const { operation } = await client.runReport(report);
@@ -56,10 +56,11 @@ describe('REST client report methods', () => {
   it('returns a stored report definition, or null for a missing report', async () => {
     const gam = createFakeGam();
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
-    const { report } = await client.defineReport(
+    const definition = definitionFor(
       { dimensions: ['AD_UNIT_ID'], metrics: ['AD_REQUESTS'], filters: [{ field: 'AD_UNIT_ID', op: '=', value: 5 }] },
       RANGE,
     );
+    const { report } = await client.defineReport(definition);
     const stored = await client.getReport(report);
     expect(stored?.name).toBe(report);
     expect(stored?.definition.filters).toEqual([
@@ -75,7 +76,7 @@ describe('REST client report methods', () => {
       { dateRanges: [{ startDate: {}, endDate: {} }] },
     );
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
-    const { report } = await client.defineReport({ dimensions: ['AD_UNIT_NAME'], metrics: ['IMPRESSIONS'] }, RANGE);
+    const { report } = await client.defineReport(definitionFor({ dimensions: ['AD_UNIT_NAME'], metrics: ['IMPRESSIONS'] }, RANGE));
     const { operation } = await client.runReport(report);
     await client.pollOperation(operation);
     const done = await client.pollOperation(operation);
@@ -87,7 +88,7 @@ describe('REST client report methods', () => {
   it('omits totalRowCount for an empty first page, as proto3 JSON does', async () => {
     const gam = createFakeGam({ completeAfterPolls: 0 });
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
-    const { report } = await client.defineReport({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, RANGE);
+    const { report } = await client.defineReport(definitionFor({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, RANGE));
     const { operation } = await client.runReport(report);
     const done = await client.pollOperation(operation);
     if (done.state !== 'done') throw new Error('expected done');

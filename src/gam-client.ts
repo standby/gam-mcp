@@ -1,7 +1,7 @@
 import type { ReportType } from './schema.js';
 import { fieldType } from './schema.js';
 import type { ReportRow, ReportValue } from './values.js';
-import { reportDefinition, type ReportDefinition } from './report-definition.js';
+import { definitionRange, type ReportDefinition } from './report-definition.js';
 
 export type EntityType =
   | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'placement' | 'company'
@@ -86,8 +86,8 @@ export type GAMClient = {
   // on 404 so callers can degrade to the raw path instead of throwing.
   getResource: (path: string) => Promise<Record<string, unknown> | null>;
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
-  // Create the report resource only. Returns its resource name.
-  defineReport: (query: ReportQuery, dateRange: DateRange) => Promise<{ report: string }>;
+  // Create a report that runs exactly this definition. Returns its resource name.
+  defineReport: (definition: ReportDefinition) => Promise<{ report: string }>;
   // Start a run of an existing report. Returns the operation name to poll.
   runReport: (report: string) => Promise<{ operation: string }>;
   // One page of a finished result. Throws ResultUnavailableError on 404.
@@ -142,10 +142,10 @@ function toFixtureValue(c: FixtureCell, column: string): ReportValue {
   return { stringValue: c };
 }
 
-function fixtureRows(fixture: ReportFixture, query: ReportQuery): ReportRow[] {
+function fixtureRows(fixture: ReportFixture, fields: { dimensions: string[]; metrics: string[] }): ReportRow[] {
   return fixture.rows.map((r) => ({
-    dimensionValues: query.dimensions.map((d) => toFixtureValue(r[d], d)),
-    metricValueGroups: [{ primaryValues: query.metrics.map((m) => toFixtureValue(r[m], m)) }],
+    dimensionValues: fields.dimensions.map((d) => toFixtureValue(r[d], d)),
+    metricValueGroups: [{ primaryValues: fields.metrics.map((m) => toFixtureValue(r[m], m)) }],
   }));
 }
 
@@ -153,15 +153,15 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
   const reports = state.reports ?? [];
 
   const network = state.networkCode ?? '1234';
-  const defined = new Map<string, { fixture: ReportFixture; query: ReportQuery; dateRange: DateRange }>();
+  const defined = new Map<string, { fixture: ReportFixture; definition: ReportDefinition; range: DateRange }>();
   const runs = new Map<string, { report: string; run: number; polls: number }>();
   let reportSeq = 0;
   let runSeq = 0;
 
-  const matchFixture = (q: ReportQuery, dr?: DateRange): ReportFixture | undefined =>
+  const matchFixture = (definition: ReportDefinition, range: DateRange): ReportFixture | undefined =>
     reports.find((r) =>
-      sameDimsMetrics(r.query, q) &&
-      (!r.dateRange || (dr?.start === r.dateRange.start && dr?.end === r.dateRange.end)),
+      sameDimsMetrics(r.query, definition) &&
+      (!r.dateRange || (range.start === r.dateRange.start && range.end === r.dateRange.end)),
     );
 
   return {
@@ -194,15 +194,17 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
       const result = `${run.report}/results/${run.run}`;
       return { state: 'done', result };
     },
-    async defineReport(query, dateRange) {
-      const fixture = matchFixture(query, dateRange);
+    async defineReport(definition) {
+      const range = definitionRange(definition);
+      if (!range) throw new Error('mock: the definition has no fixed date range');
+      const fixture = matchFixture(definition, range);
       if (!fixture) {
         throw new Error(
-          `mock: no report fixture matches query dimensions=${query.dimensions.join(',')} metrics=${query.metrics.join(',')}`,
+          `mock: no report fixture matches query dimensions=${definition.dimensions.join(',')} metrics=${definition.metrics.join(',')}`,
         );
       }
       const report = `networks/${network}/reports/${++reportSeq}`;
-      defined.set(report, { fixture, query, dateRange });
+      defined.set(report, { fixture, definition, range });
       return { report };
     },
     async runReport(report) {
@@ -215,7 +217,7 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     async fetchRows(result, { pageSize, pageToken }) {
       const d = defined.get(result.split('/results/')[0]);
       if (!d || state.expiredResults?.includes(result)) throw new ResultUnavailableError(result, 404);
-      const all = fixtureRows(d.fixture, d.query);
+      const all = fixtureRows(d.fixture, d.definition);
       if (pageToken !== undefined && !/^\d+$/.test(pageToken)) {
         throw new Error(`fetchRows 400: invalid page token`);
       }
@@ -228,18 +230,21 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
         ...(!pageToken && {
           ...(all.length > 0 && { totalRowCount: all.length }),
           runTime: d.fixture.runTime ?? '2026-01-01T00:00:00Z',
-          dateRanges: [d.fixture.computedDateRange ?? d.dateRange],
+          dateRanges: [d.fixture.computedDateRange ?? d.range],
         }),
       };
     },
     async getReport(report) {
       const d = defined.get(report);
-      return d ? { name: report, definition: reportDefinition(d.query, d.dateRange) } : null;
+      return d ? { name: report, definition: d.definition } : null;
     },
   };
 }
 
-function sameDimsMetrics(a: ReportQuery, b: ReportQuery): boolean {
+function sameDimsMetrics(
+  a: { dimensions: string[]; metrics: string[] },
+  b: { dimensions: string[]; metrics: string[] },
+): boolean {
   const sa = new Set(a.dimensions); const sb = new Set(b.dimensions);
   const ma = new Set(a.metrics);    const mb = new Set(b.metrics);
   return setEq(sa, sb) && setEq(ma, mb);

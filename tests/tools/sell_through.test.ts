@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { sellThroughTool } from '../../src/tools/sell_through.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { makeCtx, NETWORK } from '../helpers.js';
-import type { ReportQuery, DateRange } from '../../src/gam-client.js';
+import { definitionRange, type ReportDefinition } from '../../src/report-definition.js';
 
 const METRICS = [
   'SELL_THROUGH_FORECASTED_IMPRESSIONS',
@@ -17,15 +17,14 @@ function spyClient(dimensions: string[], rows: Record<string, number | string>[]
     networkCode: NETWORK,
     reports: [{ query: { dimensions, metrics: METRICS }, rows }],
   });
-  const seen: { query?: ReportQuery; dateRange?: DateRange } = {};
+  const seen: { definition?: ReportDefinition } = {};
   return {
     seen,
     client: {
       ...mock,
-      defineReport: (q: ReportQuery, dr: DateRange) => {
-        seen.query = q;
-        seen.dateRange = dr;
-        return mock.defineReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen.definition = definition;
+        return mock.defineReport(definition);
       },
     },
   };
@@ -62,11 +61,11 @@ describe('sell_through', () => {
     const r = await sellThroughTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.report_type).toBe('FUTURE_SELL_THROUGH');
-    expect(seen.query?.metrics).toEqual(METRICS);
-    expect(seen.query?.dimensions).toEqual(['AD_UNIT_ID', 'AD_UNIT_NAME']);
+    expect(seen.definition?.reportType).toBe('FUTURE_SELL_THROUGH');
+    expect(seen.definition?.metrics).toEqual(METRICS);
+    expect(seen.definition?.dimensions).toEqual(['AD_UNIT_ID', 'AD_UNIT_NAME']);
     // The future window is passed through untouched.
-    expect(seen.dateRange).toEqual({ start: '2026-09-01', end: '2026-09-30' });
+    expect(definitionRange(seen.definition!)).toEqual({ start: '2026-09-01', end: '2026-09-30' });
 
     // Rows come back from the fixture, and available = forecasted - reserved.
     expect(r.total_row_count).toBe(2);
@@ -102,8 +101,10 @@ describe('sell_through', () => {
     const r = await sellThroughTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.filters).toEqual([{ field: 'LINE_ITEM_ID', op: 'IN', value: [55] }]);
-    expect(seen.query?.dimensions).toEqual(['LINE_ITEM_ID', 'LINE_ITEM_NAME']);
+    expect(seen.definition?.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'LINE_ITEM_ID' }, operation: 'IN', values: [{ intValue: '55' }] } },
+    ]);
+    expect(seen.definition?.dimensions).toEqual(['LINE_ITEM_ID', 'LINE_ITEM_NAME']);
   });
 
   it('omits the filter entirely when no ids are given', async () => {
@@ -126,7 +127,7 @@ describe('sell_through', () => {
     const r = await sellThroughTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.filters).toBeUndefined();
+    expect(seen.definition?.filters).toBeUndefined();
   });
 
   it('warns that the numbers are forecasts that shift as bookings land', async () => {

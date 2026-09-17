@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { adSpeedTool } from '../../src/tools/ad_speed.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { makeCtx, NETWORK } from '../helpers.js';
-import type { ReportQuery, DateRange } from '../../src/gam-client.js';
+import type { ReportDefinition } from '../../src/report-definition.js';
 
 const BUCKETS = ['0_500', '500_1000', '1000_2000', '2000_4000', '4000_8000', 'GT_8000'];
 const family = (f: string) => BUCKETS.map((b) => `${f}_${b}_PERCENT`);
@@ -26,14 +26,14 @@ const UNVIEWED_REASON = [
 // Wraps the mock so the query the tool actually sent can be asserted on —
 // the mock only matches dimensions/metrics as sets and ignores report_type.
 function capturing(mock: ReturnType<typeof createMockGamClient>) {
-  const seen: { query?: ReportQuery } = {};
+  const seen: { definition?: ReportDefinition } = {};
   return {
     seen,
     client: {
       ...mock,
-      defineReport: (q: ReportQuery, dr: DateRange) => {
-        seen.query = q;
-        return mock.defineReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen.definition = definition;
+        return mock.defineReport(definition);
       },
     },
   };
@@ -68,9 +68,9 @@ describe('ad_speed', () => {
     const r = await adSpeedTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.report_type).toBe('AD_SPEED');
-    expect(seen.query?.dimensions).toEqual(['AD_UNIT_NAME']);
-    expect(seen.query?.metrics).toEqual(CREATIVE_LOAD);
+    expect(seen.definition?.reportType).toBe('AD_SPEED');
+    expect(seen.definition?.dimensions).toEqual(['AD_UNIT_NAME']);
+    expect(seen.definition?.metrics).toEqual(CREATIVE_LOAD);
     expect(r.total_row_count).toBe(1);
     expect(r.rows[0]?.CREATIVE_LOAD_TIME_GT_8000_PERCENT).toBe(0.02);
   });
@@ -96,11 +96,11 @@ describe('ad_speed', () => {
     const r = await adSpeedTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.report_type).toBe('AD_SPEED');
+    expect(seen.definition?.reportType).toBe('AD_SPEED');
     // All three funnel stages, or the caller cannot tell a late tag from a slow one.
-    expect(seen.query?.metrics).toEqual(PAGE_TIMING);
-    expect(seen.query?.metrics).toContain('DOM_LOAD_TO_TAG_LOAD_TIME_GT_8000_PERCENT');
-    expect(seen.query?.metrics).toContain('TAG_LOAD_TO_FIRST_AD_REQUEST_0_500_PERCENT');
+    expect(seen.definition?.metrics).toEqual(PAGE_TIMING);
+    expect(seen.definition?.metrics).toContain('DOM_LOAD_TO_TAG_LOAD_TIME_GT_8000_PERCENT');
+    expect(seen.definition?.metrics).toContain('TAG_LOAD_TO_FIRST_AD_REQUEST_0_500_PERCENT');
     expect(r.total_row_count).toBe(1);
     expect(r.warnings.join(' ')).toMatch(/funnel/i);
   });
@@ -132,8 +132,8 @@ describe('ad_speed', () => {
     const r = await adSpeedTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.report_type).toBe('AD_SPEED');
-    expect(seen.query?.metrics).toEqual(UNVIEWED_REASON);
+    expect(seen.definition?.reportType).toBe('AD_SPEED');
+    expect(seen.definition?.metrics).toEqual(UNVIEWED_REASON);
     expect(r.rows[0]?.UNVIEWED_REASON_SLOT_NEVER_ENTERED_VIEWPORT_PERCENT).toBe(0.20);
   });
 

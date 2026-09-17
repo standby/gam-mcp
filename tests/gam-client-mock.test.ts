@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createMockGamClient } from '../src/gam-client.js';
+import { definitionFor } from './helpers.js';
 
 describe('mock GAM client', () => {
   it('returns canned entities for listEntities', async () => {
@@ -25,6 +26,7 @@ describe('mock GAM client', () => {
 
 describe('mock client typed report path', () => {
   const query = { dimensions: ['DATE', 'AD_UNIT_ID'], metrics: ['IMPRESSIONS', 'REVENUE'] };
+  const range = { start: '2026-09-01', end: '2026-09-02' };
   const fixture = {
     query,
     rows: [
@@ -35,7 +37,8 @@ describe('mock client typed report path', () => {
 
   it('serves typed rows in definition order, one page at a time', async () => {
     const client = createMockGamClient({ reports: [fixture] });
-    const { report } = await client.defineReport(query, { start: '2026-09-01', end: '2026-09-02' });
+    const definition = definitionFor(query, range);
+    const { report } = await client.defineReport(definition);
     const { operation } = await client.runReport(report);
     expect((await client.pollOperation(operation)).state).toBe('running');
     const done = await client.pollOperation(operation);
@@ -46,12 +49,19 @@ describe('mock client typed report path', () => {
       metricValueGroups: [{ primaryValues: [{ intValue: '10' }, { doubleValue: 2 }] }],
     }]);
     expect(p1.totalRowCount).toBe(2);
-    expect(p1.dateRanges).toEqual([{ start: '2026-09-01', end: '2026-09-02' }]);
+    expect(p1.dateRanges).toEqual([range]);
     const p2 = await client.fetchRows(done.result, { pageSize: 1, pageToken: p1.nextPageToken });
     expect(p2.rows[0].metricValueGroups?.[0].primaryValues?.[0]).toEqual({});
     expect(p2.nextPageToken).toBeUndefined();
     expect(p2.totalRowCount).toBeUndefined();
-    expect((await client.getReport(report))?.definition.dimensions).toEqual(['DATE', 'AD_UNIT_ID']);
+    expect(await client.getReport(report)).toEqual({ name: report, definition });
+  });
+
+  it("matches a fixture on the definition's dimensions, metrics and fixed range", async () => {
+    const client = createMockGamClient({ reports: [{ ...fixture, dateRange: range }] });
+    await expect(client.defineReport(definitionFor(query, { start: '2026-08-01', end: '2026-08-02' })))
+      .rejects.toThrow('no report fixture matches');
+    await expect(client.defineReport(definitionFor(query, range))).resolves.toEqual({ report: 'networks/1234/reports/1' });
   });
 
   it('can fail or stall a run and expire a result', async () => {
@@ -60,13 +70,13 @@ describe('mock client typed report path', () => {
       runOutcomes: { 1: 'failed', 2: 'never' },
       expiredResults: ['networks/1234/reports/3/results/3'],
     });
-    const range = { start: '2026-09-01', end: '2026-09-02' };
-    const a = await client.runReport((await client.defineReport(query, range)).report);
+    const define = async () => (await client.defineReport(definitionFor(query, range))).report;
+    const a = await client.runReport(await define());
     expect(await client.pollOperation(a.operation)).toEqual({ state: 'failed', reason: 'mock: report failed' });
-    const b = await client.runReport((await client.defineReport(query, range)).report);
+    const b = await client.runReport(await define());
     await client.pollOperation(b.operation);
     expect(await client.pollOperation(b.operation)).toEqual({ state: 'running' });
-    const c = await client.runReport((await client.defineReport(query, range)).report);
+    const c = await client.runReport(await define());
     await client.pollOperation(c.operation);
     const done = await client.pollOperation(c.operation);
     if (done.state !== 'done') throw new Error('expected done');

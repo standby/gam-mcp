@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createUsageCounters, instrumentGamClient } from '../src/usage.js';
 import { createMockGamClient } from '../src/gam-client.js';
+import { definitionFor } from './helpers.js';
 
 describe('UsageCounters + instrumentGamClient', () => {
   it('counts list_entities and report-job calls separately', async () => {
@@ -12,10 +13,7 @@ describe('UsageCounters + instrumentGamClient', () => {
     const wrapped = instrumentGamClient(inner, counters);
 
     await wrapped.listEntities({ entity_type: 'ad_unit', limit: 10 });
-    const { report } = await wrapped.defineReport(
-      { dimensions: ['DATE'], metrics: ['REVENUE'] },
-      { start: '2026-04-01', end: '2026-04-01' },
-    );
+    const { report } = await wrapped.defineReport(definitionFor({ dimensions: ['DATE'], metrics: ['REVENUE'] }, { start: '2026-04-01', end: '2026-04-01' }));
     const { operation } = await wrapped.runReport(report);
     await wrapped.pollOperation(operation); // running
     await wrapped.pollOperation(operation); // done
@@ -34,10 +32,7 @@ describe('UsageCounters + instrumentGamClient', () => {
       }],
     });
     const wrapped = instrumentGamClient(inner, counters);
-    const { report } = await wrapped.defineReport(
-      { dimensions: ['DATE'], metrics: ['REVENUE'] },
-      { start: '2026-04-01', end: '2026-04-01' },
-    );
+    const { report } = await wrapped.defineReport(definitionFor({ dimensions: ['DATE'], metrics: ['REVENUE'] }, { start: '2026-04-01', end: '2026-04-01' }));
     await wrapped.runReport(report);
     expect(counters.cumulative_report_latency_ms).toBeGreaterThanOrEqual(0);
   });
@@ -49,10 +44,7 @@ describe('UsageCounters + instrumentGamClient', () => {
     });
     const wrapped = instrumentGamClient(inner, counters);
 
-    const { report } = await wrapped.defineReport(
-      { dimensions: ['DATE'], metrics: ['IMPRESSIONS'] },
-      { start: '2026-09-01', end: '2026-09-01' },
-    );
+    const { report } = await wrapped.defineReport(definitionFor({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, { start: '2026-09-01', end: '2026-09-01' }));
     const { operation } = await wrapped.runReport(report);
     await wrapped.pollOperation(operation); // running
     const done = await wrapped.pollOperation(operation); // done

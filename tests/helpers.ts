@@ -1,4 +1,5 @@
-import { createMockGamClient, type MockState } from '../src/gam-client.js';
+import { createMockGamClient, type DateRange, type MockState, type ReportQuery } from '../src/gam-client.js';
+import { reportDefinition, type ReportDefinition } from '../src/report-definition.js';
 import { noopLogger } from '../src/log.js';
 import type { ToolContext } from '../src/report-tool-builder.js';
 
@@ -15,4 +16,9 @@ export function makeCtx(state: MockState = {}, over: Partial<ToolContext> = {}):
     sleep: async () => {},
     ...over,
   };
+}
+
+// The definition the report path builds for a query, and hands to defineReport.
+export function definitionFor(query: ReportQuery, range: DateRange): ReportDefinition {
+  return reportDefinition(query, range);
 }

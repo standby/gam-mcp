@@ -11,11 +11,22 @@ export type ReportDefinition = {
   reportType: string;
   filters?: unknown[];
   customDimensionKeyIds?: string[];
+  // GAM's sort order, copied into provenance.sort. PR 4's top_n tools set it
+  // (spec §4.2); a definition read back from GAM carries whatever it stored.
+  sorts?: unknown[];
 };
 
 function toDateParts(iso: string): GamDate {
   const [year, month, day] = iso.split('-').map(Number);
   return { year, month, day };
+}
+
+// A GAM date read back from a stored definition may have missing parts (proto3
+// JSON omits zero fields); undefined in, undefined out, so callers never dress
+// absence up as an empty string.
+export function isoDate(d: Partial<GamDate> | undefined): string | undefined {
+  if (!d?.year || !d.month || !d.day) return undefined;
+  return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }
 
 export function reportDefinition(query: ReportQuery, dateRange: DateRange): ReportDefinition {
@@ -36,6 +47,16 @@ export function reportDefinition(query: ReportQuery, dateRange: DateRange): Repo
       customDimensionKeyIds: query.custom_dimension_key_ids.map(String),
     }),
   };
+}
+
+// The fixed range a definition asks for, or null when it has none (a report
+// created elsewhere may use a relative range).
+export function definitionRange(def: ReportDefinition): DateRange | null {
+  const fixed = def.dateRange?.fixed;
+  const start = isoDate(fixed?.startDate);
+  const end = isoDate(fixed?.endDate);
+  if (!start || !end) return null;
+  return { start, end };
 }
 
 // GAM REST Reports API expects structured filters wrapped in

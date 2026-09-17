@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { kvReportTool } from '../../src/tools/kv_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { makeCtx } from '../helpers.js';
-import type { GAMClient, ReportQuery, DateRange } from '../../src/gam-client.js';
+import type { GAMClient } from '../../src/gam-client.js';
+import { definitionRange, type ReportDefinition } from '../../src/report-definition.js';
 
 describe('kv_report', () => {
   it('resolves the key, runs a CUSTOM_DIMENSION report, and surfaces a resolution warning', async () => {
-    let captured: { query: ReportQuery; dateRange: DateRange } | null = null;
+    let captured: ReportDefinition | null = null;
     const mock = createMockGamClient({
       entities: { custom_targeting_key: [{ id: 12345, name: 'channel_id', displayName: 'Channel ID' }] },
       reports: [{
@@ -23,9 +24,9 @@ describe('kv_report', () => {
         }
         return mock.listEntities(q);
       },
-      defineReport: (query, dateRange) => {
-        captured = { query, dateRange };
-        return mock.defineReport(query, dateRange);
+      defineReport: (definition) => {
+        captured = definition;
+        return mock.defineReport(definition);
       },
     };
 
@@ -39,13 +40,13 @@ describe('kv_report', () => {
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(captured).not.toBeNull();
-    expect(captured!.query.dimensions).toEqual(['CUSTOM_DIMENSION_0_VALUE', 'DATE']);
-    expect(captured!.query.metrics).toEqual(['AD_REQUESTS', 'IMPRESSIONS']);
-    expect(captured!.query.filters).toEqual([
-      { field: 'CUSTOM_DIMENSION_0_VALUE', op: '=', value: '479' },
+    expect(captured!.dimensions).toEqual(['CUSTOM_DIMENSION_0_VALUE', 'DATE']);
+    expect(captured!.metrics).toEqual(['AD_REQUESTS', 'IMPRESSIONS']);
+    expect(captured!.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'CUSTOM_DIMENSION_0_VALUE' }, operation: 'IN', values: [{ stringValue: '479' }] } },
     ]);
-    expect(captured!.query.custom_dimension_key_ids).toEqual([12345]);
-    expect(captured!.dateRange).toEqual({ start: '2026-05-01', end: '2026-05-07' });
+    expect(captured!.customDimensionKeyIds).toEqual(['12345']);
+    expect(definitionRange(captured!)).toEqual({ start: '2026-05-01', end: '2026-05-07' });
     expect(r.warnings[0]).toContain('channel_id');
     expect(r.warnings[0]).toContain('12345');
   });
@@ -76,7 +77,7 @@ describe('kv_report', () => {
   });
 
   it('narrows by ad_unit_name via exact lookup', async () => {
-    let capturedFilters: ReportQuery['filters'];
+    let capturedFilters: unknown[] | undefined;
     const mock = createMockGamClient({
       entities: {
         custom_targeting_key: [{ id: 12345, name: 'channel_id', displayName: 'Channel ID' }],
@@ -89,9 +90,9 @@ describe('kv_report', () => {
     });
     const client: GAMClient = {
       ...mock,
-      defineReport: (query, dateRange) => {
-        capturedFilters = query.filters;
-        return mock.defineReport(query, dateRange);
+      defineReport: (definition) => {
+        capturedFilters = definition.filters;
+        return mock.defineReport(definition);
       },
     };
 
@@ -103,8 +104,8 @@ describe('kv_report', () => {
     });
     await kvReportTool.handler(args, makeCtx({}, { client, timezone: 'America/Los_Angeles' }));
     expect(capturedFilters).toEqual([
-      { field: 'CUSTOM_DIMENSION_0_VALUE', op: '=', value: '479' },
-      { field: 'AD_UNIT_ID', op: '=', value: 777 },
+      { fieldFilter: { field: { dimension: 'CUSTOM_DIMENSION_0_VALUE' }, operation: 'IN', values: [{ stringValue: '479' }] } },
+      { fieldFilter: { field: { dimension: 'AD_UNIT_ID' }, operation: 'IN', values: [{ intValue: '777' }] } },
     ]);
   });
 });

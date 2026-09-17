@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { createFakeGam } from './fake-gam.js';
+import { definitionFor } from './helpers.js';
 
 describe('REST GAM client', () => {
   it('listEntities GETs the right path and maps fields', async () => {
@@ -23,112 +24,23 @@ describe('REST GAM client', () => {
     ]);
   });
 
-  it('defineReport POSTs the report resource with reportDefinition body shape; runReport POSTs :run', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-
-    const { report } = await client.defineReport(
+  it('defineReport POSTs exactly the definition it is given; runReport POSTs :run', async () => {
+    const gam = createFakeGam();
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    const definition = definitionFor(
       { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
       { start: '2026-04-01', end: '2026-04-29' },
     );
-    expect(report).toBe('networks/12345/reports/1');
-    const createReq = gam.requests.at(-1);
-    expect(createReq?.path).toBe('networks/12345/reports');
-    const body = createReq?.body as any;
-    expect(body.reportDefinition.dimensions).toEqual(['ADVERTISER_NAME']);
-    expect(body.reportDefinition.metrics).toEqual(['IMPRESSIONS']);
-    expect(body.reportDefinition.dateRange.fixed.startDate).toEqual({ year: 2026, month: 4, day: 1 });
-    expect(body.reportDefinition.dateRange.fixed.endDate).toEqual({ year: 2026, month: 4, day: 29 });
-    expect(body.reportDefinition.reportType).toBe('HISTORICAL');
-
+    const { report } = await client.defineReport(definition);
+    expect(report).toBe('networks/1234/reports/1');
+    expect(gam.requests.at(-1)).toEqual({
+      method: 'POST',
+      path: 'networks/1234/reports',
+      body: { reportDefinition: definition },
+    });
     const { operation } = await client.runReport(report);
-    expect(operation).toBe('networks/12345/operations/reports/runs/1');
-    expect(gam.requests.at(-1)).toMatchObject({ method: 'POST', path: `${report}:run` });
-  });
-
-  it('defineReport forwards report_type so reach metrics run as a REACH report', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-    await client.defineReport(
-      { dimensions: ['LINE_ITEM_NAME'], metrics: ['UNIQUE_VISITORS'], report_type: 'REACH' },
-      { start: '2026-04-01', end: '2026-04-29' },
-    );
-    expect((gam.requests.at(-1)?.body as any)?.reportDefinition.reportType).toBe('REACH');
-  });
-
-  it('defineReport encodes filters in GAM REST shape (fieldFilter + EQUALS/IN + scalar/list value)', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-    await client.defineReport(
-      {
-        dimensions: ['AD_UNIT_NAME'],
-        metrics: ['IMPRESSIONS'],
-        filters: [
-          { field: 'AD_UNIT_NAME', op: '=', value: 'Foo' },
-          { field: 'AD_UNIT_ID', op: 'IN', value: [1, 2, 3] },
-          { field: 'COUNTRY_NAME', op: '!=', value: 'XX' },
-        ],
-      },
-      { start: '2026-04-01', end: '2026-04-29' },
-    );
-
-    const createBody = gam.requests.at(-1)?.body as any;
-    expect(createBody.reportDefinition).not.toHaveProperty('filter');
-    // GAM REST shape: field.dimension, operation IN/NOT_IN only, values is
-    // always an array of ReportValue, intValue is JSON string (int64).
-    expect(createBody.reportDefinition.filters).toEqual([
-      { fieldFilter: { field: { dimension: 'AD_UNIT_NAME' }, operation: 'IN',     values: [{ stringValue: 'Foo' }] } },
-      { fieldFilter: { field: { dimension: 'AD_UNIT_ID'   }, operation: 'IN',     values: [{ intValue: '1' }, { intValue: '2' }, { intValue: '3' }] } },
-      { fieldFilter: { field: { dimension: 'COUNTRY_NAME' }, operation: 'NOT_IN', values: [{ stringValue: 'XX' }] } },
-    ]);
-  });
-
-  it('defineReport encodes CONTAINS / NOT_CONTAINS filter ops directly (no aliasing)', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-    await client.defineReport(
-      {
-        dimensions: ['AD_UNIT_NAME'],
-        metrics: ['IMPRESSIONS'],
-        filters: [
-          { field: 'AD_UNIT_NAME', op: 'CONTAINS',     value: 'sports' },
-          { field: 'AD_UNIT_NAME', op: 'NOT_CONTAINS', value: 'house' },
-        ],
-      },
-      { start: '2026-04-01', end: '2026-04-29' },
-    );
-    const createBody = gam.requests.at(-1)?.body as any;
-    expect(createBody.reportDefinition.filters).toEqual([
-      { fieldFilter: { field: { dimension: 'AD_UNIT_NAME' }, operation: 'CONTAINS',     values: [{ stringValue: 'sports' }] } },
-      { fieldFilter: { field: { dimension: 'AD_UNIT_NAME' }, operation: 'NOT_CONTAINS', values: [{ stringValue: 'house' }] } },
-    ]);
-  });
-
-  it('defineReport passes custom_dimension_key_ids through as customDimensionKeyIds (string array)', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-    await client.defineReport(
-      {
-        dimensions: ['CUSTOM_DIMENSION_0_VALUE', 'DATE'],
-        metrics: ['IMPRESSIONS'],
-        custom_dimension_key_ids: [98765],
-      },
-      { start: '2026-04-01', end: '2026-04-29' },
-    );
-    // GAM expects int64 IDs as JSON strings; index in array maps to slot N.
-    const createBody = gam.requests.at(-1)?.body as any;
-    expect(createBody.reportDefinition.customDimensionKeyIds).toEqual(['98765']);
-  });
-
-  it('defineReport omits customDimensionKeyIds when not provided', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-    await client.defineReport(
-      { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
-      { start: '2026-04-01', end: '2026-04-29' },
-    );
-    const createBody = gam.requests.at(-1)?.body as any;
-    expect(createBody.reportDefinition).not.toHaveProperty('customDimensionKeyIds');
+    expect(operation).toBe('networks/1234/operations/reports/runs/1');
+    expect(gam.requests.at(-1)).toEqual({ method: 'POST', path: `${report}:run`, body: {} });
   });
 
   it('listEntities query emits AIP-160 has-operator on displayName (no CONTAINS keyword)', async () => {
@@ -385,17 +297,5 @@ describe('REST GAM client', () => {
     const client = createRestGamClient({ networkCode: '12345', fetchImpl });
     await client.listEntities({ entity_type: 'order', query: 'Q1 Brand', match: 'exact' });
     expect(capturedFilter).toBe('displayName = "Q1 Brand"');
-  });
-
-  it('defineReport omits filters field entirely when none provided', async () => {
-    const gam = createFakeGam({ networkCode: '12345' });
-    const client = createRestGamClient({ networkCode: '12345', fetchImpl: gam.fetch });
-    await client.defineReport(
-      { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
-      { start: '2026-04-01', end: '2026-04-29' },
-    );
-    const createBody = gam.requests.at(-1)?.body as any;
-    expect(createBody.reportDefinition).not.toHaveProperty('filters');
-    expect(createBody.reportDefinition).not.toHaveProperty('filter');
   });
 });

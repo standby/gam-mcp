@@ -55,9 +55,9 @@ export function instrumentGamClient(client: GAMClient, counters: UsageCounters):
         counters.cumulative_report_latency_ms += Date.now() - start;
       }
     },
-    async defineReport(query, dateRange) {
+    async defineReport(definition) {
       counters.report_definitions_created += 1;
-      return client.defineReport(query, dateRange);
+      return client.defineReport(definition);
     },
     async runReport(report) {
       counters.report_jobs_created += 1;

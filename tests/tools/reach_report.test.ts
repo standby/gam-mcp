@@ -4,7 +4,7 @@ import { runReportTool } from '../../src/tools/run_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { makeCtx, NETWORK } from '../helpers.js';
 import { resolveReportType, GAM_SCHEMA } from '../../src/schema.js';
-import type { ReportQuery, DateRange } from '../../src/gam-client.js';
+import type { ReportDefinition } from '../../src/report-definition.js';
 
 const METRICS = ['UNIQUE_VISITORS', 'REACH_IMPRESSIONS', 'AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR'];
 
@@ -55,12 +55,12 @@ describe('reach_report', () => {
         }],
       }],
     });
-    let seen: ReportQuery | undefined;
+    let seen: ReportDefinition | undefined;
     const client = {
       ...mock,
-      defineReport: (q: ReportQuery, dr: DateRange) => {
-        seen = q;
-        return mock.defineReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen = definition;
+        return mock.defineReport(definition);
       },
     };
 
@@ -71,7 +71,7 @@ describe('reach_report', () => {
     const r = await reachReportTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen?.report_type).toBe('REACH');
+    expect(seen?.reportType).toBe('REACH');
     expect(seen?.metrics).toEqual(METRICS);
     expect(r.rows[0]?.AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR).toBe(4.0);
     expect(r.warnings.join(' ')).toMatch(/NOT additive/i);
@@ -92,12 +92,12 @@ describe('reach_report', () => {
         }],
       }],
     });
-    let seen: ReportQuery | undefined;
+    let seen: ReportDefinition | undefined;
     const client = {
       ...mock,
-      defineReport: (q: ReportQuery, dr: DateRange) => {
-        seen = q;
-        return mock.defineReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen = definition;
+        return mock.defineReport(definition);
       },
     };
 
@@ -110,14 +110,16 @@ describe('reach_report', () => {
     const r = await reachReportTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen?.filters).toEqual([{ field: 'ORDER_ID', op: 'IN', value: [7] }]);
+    expect(seen?.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'ORDER_ID' }, operation: 'IN', values: [{ intValue: '7' }] } },
+    ]);
     expect(seen?.dimensions).toEqual(['ORDER_ID', 'ORDER_NAME', 'COUNTRY_NAME']);
   });
 });
 
 describe('run_report with reach metrics', () => {
   it('sets report_type REACH and attaches the dedup warning', async () => {
-    let seen: ReportQuery | undefined;
+    let seen: ReportDefinition | undefined;
     const mock = createMockGamClient({
       reports: [{
         query: { dimensions: ['LINE_ITEM_NAME'], metrics: ['UNIQUE_VISITORS'] },
@@ -126,9 +128,9 @@ describe('run_report with reach metrics', () => {
     });
     const client = {
       ...mock,
-      defineReport: (q: ReportQuery, dr: DateRange) => {
-        seen = q;
-        return mock.defineReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen = definition;
+        return mock.defineReport(definition);
       },
     };
 
@@ -140,7 +142,7 @@ describe('run_report with reach metrics', () => {
     const r = await runReportTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen?.report_type).toBe('REACH');
+    expect(seen?.reportType).toBe('REACH');
     expect(r.warnings.join(' ')).toMatch(/NOT additive/i);
   });
 

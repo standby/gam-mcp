@@ -4,6 +4,7 @@ import { resolveDateRange } from '../src/dates.js';
 import { describeLineItemTool } from '../src/tools/describe_line_item.js';
 import { noopLogger } from '../src/log.js';
 import type { GAMClient } from '../src/gam-client.js';
+import { reportDefinition } from '../src/report-definition.js';
 
 async function main(): Promise<void> {
   const networkCode = process.env.GAM_NETWORK_CODE;
@@ -52,10 +53,10 @@ async function main(): Promise<void> {
 
 async function tinyReport(client: GAMClient, tz: string): Promise<void> {
   const range = resolveDateRange({ relative: 'yesterday' }, tz);
-  const { report } = await client.defineReport(
+  const { report } = await client.defineReport(reportDefinition(
     { dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
     range,
-  );
+  ));
   const { operation } = await client.runReport(report);
   process.stderr.write(`   report: ${report} operation: ${operation}\n`);
   for (let attempts = 0; attempts < 60; attempts++) {

@@ -3,7 +3,7 @@ import { consentMessagingTool } from '../../src/tools/consent_messaging.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { makeCtx, NETWORK } from '../helpers.js';
 import { GAM_SCHEMA } from '../../src/schema.js';
-import type { ReportQuery, DateRange } from '../../src/gam-client.js';
+import type { ReportDefinition } from '../../src/report-definition.js';
 
 const EU_METRICS = [
   'EUROPEAN_REGULATIONS_MESSAGES_SHOWN',
@@ -33,14 +33,14 @@ const ATT_METRICS = [
 // Capture the query the tool hands to the client so the report type and the
 // per-focus metric set can be asserted directly.
 const spyClient = (mock: ReturnType<typeof createMockGamClient>) => {
-  const seen: { query?: ReportQuery } = {};
+  const seen: { definition?: ReportDefinition } = {};
   return {
     seen,
     client: {
       ...mock,
-      defineReport: (q: ReportQuery, dr: DateRange) => {
-        seen.query = q;
-        return mock.defineReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen.definition = definition;
+        return mock.defineReport(definition);
       },
     },
   };
@@ -77,9 +77,9 @@ describe('consent_messaging', () => {
     const r = await consentMessagingTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.report_type).toBe('PRIVACY_AND_MESSAGING');
-    expect(seen.query?.metrics).toEqual(EU_METRICS);
-    expect(seen.query?.dimensions).toEqual(['COUNTRY_NAME']);
+    expect(seen.definition?.reportType).toBe('PRIVACY_AND_MESSAGING');
+    expect(seen.definition?.metrics).toEqual(EU_METRICS);
+    expect(seen.definition?.dimensions).toEqual(['COUNTRY_NAME']);
     expect(r.total_row_count).toBe(2);
     expect(r.rows[0]?.EUROPEAN_REGULATIONS_CONSENT_RATE).toBe(0.71);
   });
@@ -106,11 +106,11 @@ describe('consent_messaging', () => {
       const r = await consentMessagingTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
       if ('error' in r) throw new Error(JSON.stringify(r));
 
-      expect(seen.query?.report_type).toBe('PRIVACY_AND_MESSAGING');
-      expect(seen.query?.metrics).toEqual(metrics);
+      expect(seen.definition?.reportType).toBe('PRIVACY_AND_MESSAGING');
+      expect(seen.definition?.metrics).toEqual(metrics);
       // group_by defaults to 'none' — a single total row, no dimensions.
-      expect(seen.query?.dimensions).toEqual([]);
-      expect(seen.query?.metrics.some((m) => EU_METRICS.includes(m))).toBe(false);
+      expect(seen.definition?.dimensions).toEqual([]);
+      expect(seen.definition?.metrics.some((m) => EU_METRICS.includes(m))).toBe(false);
     }
   });
 
