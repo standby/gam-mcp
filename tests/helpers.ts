@@ -3,6 +3,7 @@ import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { reportDefinition, type ReportDefinition } from '../src/report-definition.js';
 import { noopLogger } from '../src/log.js';
 import type { ToolContext } from '../src/report-tool-builder.js';
+import type { Provenance, ResultEnvelope } from '../src/envelope.js';
 import type { FakeGam } from './fake-gam.js';
 
 export const NETWORK = '1234';
@@ -41,4 +42,12 @@ export function clientFor(gam: FakeGam, retries = false): GAMClient {
 // since per-client memory is keyed by the client object.
 export function restCtx(gam: FakeGam, over: Partial<ToolContext> = {}, retries = false): ToolContext {
   return makeCtx({}, { client: clientFor(gam, retries), ...over });
+}
+
+// A successful result envelope, unwrapped from the error/success union tools
+// and report-exec return; throws if the call actually failed.
+export type Page = ResultEnvelope & { provenance: Provenance };
+export function ok(r: unknown): Page {
+  if (r && typeof r === 'object' && 'error' in r) throw new Error(JSON.stringify(r));
+  return r as Page;
 }

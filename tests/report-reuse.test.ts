@@ -7,6 +7,7 @@ import type { Provenance, ResultEnvelope } from '../src/envelope.js';
 import type { ToolContext } from '../src/report-tool-builder.js';
 import { createFakeGam, int, type FakeGam } from './fake-gam.js';
 import { definitionFor, restCtx, NETWORK } from './helpers.js';
+import { createReportCache } from '../src/cache.js';
 
 // These run against the fake GAM, which stores whatever body it was sent and
 // can hold a report planted with a different definition under the same name.
@@ -61,9 +62,9 @@ describe('report reuse (spec §2.2)', () => {
     expect(gam.reports.size).toBe(1);
   });
 
-  it('B3: the same process reuses the report it remembers: no list, no create', async () => {
+  it('B3: the same process with the result cache off reuses the report it remembers: no list, no create', async () => {
     const gam = fakeWithRows();
-    const ctx = processOn(gam);
+    const ctx = processOn(gam, { reportCache: createReportCache({ ttlMs: 0 }) });
     await executeReport(ctx, REQUEST);
     const from = gam.requests.length;
     const p = provenance(await executeReport(ctx, REQUEST));

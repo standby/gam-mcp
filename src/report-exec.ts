@@ -19,6 +19,7 @@ import { definitionWarnings } from './report-warnings.js';
 import { zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
 import { findOrCreateReport } from './report-reuse.js';
+import type { DoneEntry } from './cache.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
 export const DEFAULT_PAGE_ROWS = 5_000;
@@ -107,16 +108,36 @@ function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorE
   return err;
 }
 
-// Finds or creates the report for a definition, runs it and waits for the result.
-async function runToResult(
+// The result that answers a definition, and the cache entry it came from.
+type Obtained = { report: string; result: string; cached: DoneEntry | null };
+
+// Finds or creates the report for `key`, runs it and waits for the result.
+async function runOnce(
   ctx: ToolContext,
   definition: ReportDefinition,
+  key: string,
   tool: string,
-): Promise<{ report: string; result: string } | GamErrorEnvelope> {
-  const report = await findOrCreateReport(ctx, definition, definitionHash(definition), tool);
+): Promise<Obtained | GamErrorEnvelope> {
+  const report = await findOrCreateReport(ctx, definition, key, tool);
   const { operation } = await ctx.client.runReport(report);
   const done = await pollUntilDone(ctx, operation);
-  return 'error' in done ? done : { report, result: done.result };
+  return 'error' in done ? done : { report, result: done.result, cached: null };
+}
+
+// A live cached result for `key`, else a new run (spec §2.1 steps 4 and 6).
+async function obtainResult(
+  ctx: ToolContext,
+  definition: ReportDefinition,
+  key: string,
+  tool: string,
+  useCache: boolean,
+): Promise<Obtained | GamErrorEnvelope> {
+  const entry = useCache ? ctx.reportCache?.get(key) : undefined;
+  if (entry?.kind === 'done') {
+    ctx.logger.info('report.cache_hit', { tool, key: key.slice(0, 16), result: entry.result, run_time: entry.run_time });
+    return { report: entry.report, result: entry.result, cached: entry };
+  }
+  return runOnce(ctx, definition, key, tool);
 }
 
 function toGamError(e: unknown, extra: Record<string, unknown> = {}): GamErrorEnvelope {
@@ -169,12 +190,32 @@ async function firstPage(
   pageSize: number,
   tool: string,
 ): Promise<FirstPage | GamErrorEnvelope> {
-  const ran = await runToResult(ctx, definition, tool);
-  if ('error' in ran) return ran;
-  const page = await ctx.client.fetchRows(ran.result, { pageSize });
-  const facts = factsOf(page);
-  clientMemory(ctx).facts.set(ran.result, facts);
-  return { report: ran.report, result: ran.result, page, facts, cacheHit: false };
+  // One function names the report and keys the cache (spec §2.2, test E7).
+  const key = definitionHash(definition);
+  for (let attempt = 0; ; attempt++) {
+    const got = await obtainResult(ctx, definition, key, tool, attempt === 0);
+    if ('error' in got) return got;
+    let page: RowsPage;
+    try {
+      page = await ctx.client.fetchRows(got.result, { pageSize });
+    } catch (e) {
+      // A cached result GAM no longer serves is dropped and the report run
+      // once more. A fresh result that is already gone is an error.
+      if (e instanceof ResultUnavailableError && got.cached && attempt === 0) {
+        ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
+        ctx.reportCache?.delete(key);
+        continue;
+      }
+      throw e;
+    }
+    // A hit keeps the facts of the call that produced the result.
+    const facts: ResultFacts = got.cached
+      ? { run_time: got.cached.run_time, date_range: got.cached.date_range, total_row_count: got.cached.total_row_count }
+      : factsOf(page);
+    if (!got.cached) ctx.reportCache?.putDone(key, { report: got.report, result: got.result, ...facts });
+    clientMemory(ctx).facts.set(got.result, facts);
+    return { report: got.report, result: got.result, page, facts, cacheHit: got.cached !== null };
+  }
 }
 
 const unique = (items: string[]): string[] => [...new Set(items)];

@@ -27,7 +27,8 @@ export type ToolContext = {
   reportTimeoutMs?: number;
   // Injected by tests to observe poll delays without waiting.
   sleep?: (ms: number) => Promise<void>;
-  // Not used by the report path until the cache is rebuilt (0.6.0 PR 2).
+  // Which GAM result answers each definition, and runs still in progress
+  // (spec §2.5, §2.6). Absent: every call runs its report.
   reportCache?: ReportCache;
   savedQueries?: SavedQueryStore;
   usageCounters?: UsageCounters;

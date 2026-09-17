@@ -3,21 +3,15 @@ import { derivedEnvelope, executeReport, executeReportRows, fetchReportPage } fr
 import { createRestGamClient } from '../src/gam-client-rest.js';
 import { definitionRange, type ReportDefinition } from '../src/report-definition.js';
 import { runReportTool } from '../src/tools/run_report.js';
-import type { Provenance, ResultEnvelope } from '../src/envelope.js';
+import type { ResultEnvelope } from '../src/envelope.js';
 import { createFakeGam, int } from './fake-gam.js';
-import { makeCtx, NETWORK } from './helpers.js';
+import { makeCtx, NETWORK, ok } from './helpers.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
 const request = { tool: 'test', query, dateRange: RANGE, summary: 'S' };
 const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ AD_UNIT_ID: i + 1, IMPRESSIONS: i }));
 const ZONE_WARNING = /GAM_TIMEZONE/;
-
-type Page = ResultEnvelope & { provenance: Provenance };
-function ok(r: unknown): Page {
-  if (r && typeof r === 'object' && 'error' in r) throw new Error(JSON.stringify(r));
-  return r as Page;
-}
 
 describe('report time zone and currency (spec §2.4)', () => {
   it('D5: the definition GAM receives runs in the network zone and currency, and provenance says so', async () => {

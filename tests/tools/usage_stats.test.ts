@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { usageStatsTool } from '../../src/tools/usage_stats.js';
 import { makeCtx } from '../helpers.js';
-import { createUsageCounters } from '../../src/usage.js';
+import { createUsageCounters, instrumentGamClient } from '../../src/usage.js';
 import { createReportCache } from '../../src/cache.js';
+import { executeReport } from '../../src/report-exec.js';
 
 describe('usage_stats', () => {
   it('returns the counters and the hit rate of the result cache', async () => {
@@ -35,5 +36,28 @@ describe('usage_stats', () => {
   it('returns an error when usageCounters is not configured', async () => {
     const r = await usageStatsTool.handler({}, makeCtx());
     expect('error' in r).toBe(true);
+  });
+
+  it('counts what a miss and then a hit really cost', async () => {
+    const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
+    const usageCounters = createUsageCounters();
+    const reportCache = createReportCache();
+    const ctx = makeCtx({ reports: [{ query, rows: [{ AD_UNIT_ID: 1, IMPRESSIONS: 2 }] }] }, { usageCounters, reportCache });
+    ctx.client = instrumentGamClient(ctx.client, usageCounters);
+    const request = { tool: 'test', query, dateRange: { start: '2026-09-01', end: '2026-09-01' }, summary: 'S' };
+    await executeReport(ctx, request); // miss: list, create, run, two polls, first page
+    await executeReport(ctx, request); // hit: the cached result's first page only
+    const r = await usageStatsTool.handler({}, ctx);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+    expect(r.rows[0]).toMatchObject({
+      report_definitions_created: 1,
+      report_jobs_created: 1,
+      poll_operations: 2,
+      report_pages_fetched: 2,
+      report_lookups: 1,
+      report_cache_hits: 1,
+      report_cache_misses: 1,
+      report_cache_hit_rate_pct: '50.0',
+    });
   });
 });
