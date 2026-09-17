@@ -2,10 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { executeReport } from '../src/report-exec.js';
 import { createReportCache, PENDING_TTL_MS } from '../src/cache.js';
 import { definitionHash } from '../src/report-key.js';
-import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { createLogger } from '../src/log.js';
 import { createFakeGam, int } from './fake-gam.js';
-import { counted, definitionFor, makeCtx, NETWORK, ok } from './helpers.js';
+import { counted, definitionFor, NETWORK, ok, restCtx } from './helpers.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
@@ -57,15 +56,81 @@ describe('shared runs (spec §2.6)', () => {
     expect(ok(await executeReport(ctx, request)).provenance.result).toBe(result(2));
     expect(counters.report_jobs_created).toBe(2);
   });
+
+  it('a call arriving after the run settles but before the first page is recorded still joins it', async () => {
+    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache() });
+    const inner = ctx.client;
+    let releaseFetch!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+    let signalEntered!: () => void;
+    const enteredFetch = new Promise<void>((resolve) => { signalEntered = resolve; });
+    let fetchCalls = 0;
+    ctx.client = {
+      ...inner,
+      fetchRows: async (r, p) => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) {
+          // The run has settled (obtainResult's promise resolved) by the
+          // time this fires; the flight must still be registered so the
+          // second call below joins it instead of starting a new run.
+          signalEntered();
+          await gate;
+        }
+        return inner.fetchRows(r, p);
+      },
+    };
+    const first = executeReport(ctx, request);
+    await enteredFetch;
+    const second = executeReport(ctx, { ...request, tool: 'second_tool' });
+    releaseFetch();
+    const [a, b] = await Promise.all([first, second]);
+    expect(ok(a).provenance.result).toBe(result(1));
+    expect(ok(b).provenance.result).toBe(result(1));
+    expect(counters.report_jobs_created).toBe(1);
+  });
+
+  it('two different clients running the same definition at once do not share a flight', async () => {
+    const a = counted({ reports: [{ query, rows }] });
+    const b = counted({ reports: [{ query, rows }] });
+    const [ra, rb] = await Promise.all([executeReport(a.ctx, request), executeReport(b.ctx, request)]);
+    expect(ok(ra).provenance.result).toBe(result(1));
+    expect(ok(rb).provenance.result).toBe(result(1));
+    expect(a.counters.report_jobs_created).toBe(1);
+    expect(b.counters.report_jobs_created).toBe(1);
+  });
+
+  it('two concurrent callers waiting on a run whose runReport throws both get the same error, and the next call starts fresh', async () => {
+    const { ctx, counters } = counted({ reports: [{ query, rows }] });
+    const inner = ctx.client;
+    let fail = true;
+    ctx.client = {
+      ...inner,
+      runReport: async (report) => {
+        if (fail) throw new Error('boom');
+        return inner.runReport(report);
+      },
+    };
+    const [a, b] = await Promise.all([
+      executeReport(ctx, request),
+      executeReport(ctx, { ...request, tool: 'second_tool' }),
+    ]);
+    expect(a).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
+    expect(b).toEqual(a);
+    fail = false;
+    expect(ok(await executeReport(ctx, request)).provenance.result).toBe(result(1));
+    expect(counters.report_jobs_created).toBe(1);
+  });
 });
 
 describe('runs that outlive their caller (spec §2.6)', () => {
   it('F4: after REPORT_TIMEOUT the next identical call waits for the same operation', async () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const cache = createReportCache();
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'info', sink: (l) => { lines.push(JSON.parse(l)); } });
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: outcomes },
-      { reportCache: cache, reportTimeoutMs: 0 },
+      { reportCache: cache, reportTimeoutMs: 0, logger },
     );
     expect(await executeReport(ctx, request)).toMatchObject({
       error: { code: 'REPORT_TIMEOUT', details: { operation: operation(1) } },
@@ -76,6 +141,9 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     expect(later.provenance).toMatchObject({ result: result(1), cache: { hit: false } });
     expect(counters.report_jobs_created).toBe(1);
     expect(cache.get(KEY)?.kind).toBe('done');
+    expect(lines.filter((e) => e.msg === 'report.resume')).toEqual([
+      expect.objectContaining({ tool: 'test', report: `networks/${NETWORK}/reports/1`, operation: operation(1) }),
+    ]);
   });
 
   it('F4: a run that times out again keeps its first start time', async () => {
@@ -96,12 +164,17 @@ describe('runs that outlive their caller (spec §2.6)', () => {
 
   it('F4: a pending run older than an hour is abandoned for a new one', async () => {
     let t = Date.parse('2026-09-17T04:00:00Z');
+    const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const { ctx, counters } = counted(
-      { reports: [{ query, rows }], runOutcomes: { 1: 'never' } },
+      { reports: [{ query, rows }], runOutcomes: outcomes },
       { reportCache: createReportCache({ now: () => t }), reportTimeoutMs: 0 },
     );
     await executeReport(ctx, request);
     t += PENDING_TTL_MS;
+    // If the pending entry were wrongly treated as still live, the next call
+    // would resume operation 1: make that fail fast instead of hanging
+    // forever polling an operation that never finishes.
+    outcomes[1] = 'failed';
     const later = ok(await executeReport({ ...ctx, reportTimeoutMs: 60_000 }, request));
     expect(later.provenance.result).toBe(result(2));
     expect(counters.report_jobs_created).toBe(2);
@@ -115,6 +188,44 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     outcomes[1] = 'failed';
     expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_FAILED' } });
     expect(cache.get(KEY)).toBeUndefined();
+  });
+
+  it('a resumed run whose result is gone runs again once, leaving no stale pending entry', async () => {
+    const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
+    const expired: string[] = [];
+    const cache = createReportCache();
+    const { ctx, counters } = counted(
+      { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
+      { reportCache: cache, reportTimeoutMs: 0 },
+    );
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
+    delete outcomes[1]; // GAM finishes the run
+    expired.push(result(1)); // ...but its result is gone by the time it's fetched
+    const later = ok(await executeReport({ ...ctx, reportTimeoutMs: 60_000 }, request));
+    expect(later.provenance.result).toBe(result(2));
+    expect(counters.report_jobs_created).toBe(2);
+    expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: result(2) });
+  });
+
+  it('a resumed run whose re-run result is also gone fails once, and the next call after that starts fresh', async () => {
+    const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
+    const expired: string[] = [];
+    const cache = createReportCache();
+    const { ctx, counters } = counted(
+      { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
+      { reportCache: cache, reportTimeoutMs: 0 },
+    );
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
+    delete outcomes[1];
+    expired.push(result(1), result(2));
+    expect(await executeReport({ ...ctx, reportTimeoutMs: 60_000 }, request)).toMatchObject({
+      error: { code: 'REPORT_RESULT_EXPIRED', details: { result: result(2) } },
+    });
+    expect(counters.report_jobs_created).toBe(2);
+    expect(cache.get(KEY)).toBeUndefined();
+    const later = ok(await executeReport({ ...ctx, reportTimeoutMs: 60_000 }, request));
+    expect(later.provenance.result).toBe(result(3));
+    expect(counters.report_jobs_created).toBe(3);
   });
 
   it('after a poll that could not reach GAM, the next call waits for the same operation', async () => {
@@ -140,8 +251,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     const gam = createFakeGam();
     gam.setRows([{ dimensionValues: [int(1)], metricValueGroups: [{ primaryValues: [int(5)] }] }]);
     for (let i = 0; i < 4; i++) gam.inject('GET', /^networks\/1234\/operations\//, { status: 429 });
-    const client = createRestGamClient({ networkCode: NETWORK, fetchImpl: withRetries(gam.fetch, { baseDelayMs: 1 }) });
-    const ctx = makeCtx({}, { client, reportCache: createReportCache() });
+    const ctx = restCtx(gam, { reportCache: createReportCache() }, true);
     expect(await executeReport(ctx, request)).toMatchObject({
       error: { code: 'QUOTA_EXCEEDED', details: { operation: operation(1) } },
     });

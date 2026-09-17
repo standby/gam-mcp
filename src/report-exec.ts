@@ -109,7 +109,11 @@ function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorE
 }
 
 // The result that answers a definition, and the cache entry it came from.
-type Obtained = { report: string; result: string; cached: DoneEntry | null };
+// `resumed` is true when this came from waiting on a run a timed-out (or
+// otherwise interrupted) call left behind: like a cached result, its result
+// may already be gone by the time it's fetched, so firstPage retries once
+// rather than treating that as a hard failure.
+type Obtained = { report: string; result: string; cached: DoneEntry | null; resumed: boolean };
 
 // Finds or creates the report for `key` and runs it, or resumes the run a
 // timed-out call left behind, then waits. A wait that ends because GAM says
@@ -133,7 +137,7 @@ async function runOnce(
     operation = (await ctx.client.runReport(report)).operation;
   }
   const done = await pollUntilDone(ctx, operation);
-  if (!('error' in done)) return { report, result: done.result, cached: null };
+  if (!('error' in done)) return { report, result: done.result, cached: null, resumed: pending !== undefined };
   if (done.error.code === 'REPORT_FAILED') {
     ctx.reportCache?.delete(key);
   } else {
@@ -142,35 +146,46 @@ async function runOnce(
   return done;
 }
 
-// Spec §2.1 steps 3–6: join an identical run in flight, else use a live cached
-// result, else resume a timed-out run, else start one. Every caller of a
-// shared run gets its outcome, failures included; the flight is removed as
-// soon as the run settles, so the next call starts fresh.
+// A run in flight, and — only for the caller that started or resumed it —
+// how to release it once that caller is done acting on the outcome. A
+// joiner (the flight already existed) gets no `release`: only the caller
+// that registered the flight retires it, and only once it has finished with
+// the result (recorded `done`, decided to retry, or given up) rather than
+// merely once the run itself settles — otherwise an identical call arriving
+// in that window would start a second run instead of joining (spec §2.6).
+type ObtainedRun = {
+  promise: Promise<Obtained | GamErrorEnvelope>;
+  release?: () => void;
+};
+
+// Spec §2.1 steps 3–6: join an identical run in flight, else use a live
+// cached result, else resume a timed-out run, else start one.
 function obtainResult(
   ctx: ToolContext,
   definition: ReportDefinition,
   key: string,
   tool: string,
   useCache: boolean,
-): Promise<Obtained | GamErrorEnvelope> {
+): ObtainedRun {
   const { flights } = clientMemory(ctx);
   const joined = flights.get(key);
   if (joined) {
     ctx.logger.info('report.shared', { tool, key: key.slice(0, 16) });
-    return joined;
+    return { promise: joined };
   }
   const entry = useCache ? ctx.reportCache?.get(key) : undefined;
   if (entry?.kind === 'done') {
     ctx.logger.info('report.cache_hit', { tool, key: key.slice(0, 16), result: entry.result, run_time: entry.run_time });
-    return Promise.resolve({ report: entry.report, result: entry.result, cached: entry });
+    return { promise: Promise.resolve({ report: entry.report, result: entry.result, cached: entry, resumed: false }) };
   }
   const run = runOnce(ctx, definition, key, tool, entry?.kind === 'pending' ? entry : undefined);
   flights.set(key, run);
-  const settle = () => {
-    if (flights.get(key) === run) flights.delete(key);
+  return {
+    promise: run,
+    release: () => {
+      if (flights.get(key) === run) flights.delete(key);
+    },
   };
-  run.then(settle, settle);
-  return run;
 }
 
 function toGamError(e: unknown, extra: Record<string, unknown> = {}): GamErrorEnvelope {
@@ -226,28 +241,38 @@ async function firstPage(
   // One function names the report and keys the cache (spec §2.2, test E7).
   const key = definitionHash(definition);
   for (let attempt = 0; ; attempt++) {
-    const got = await obtainResult(ctx, definition, key, tool, attempt === 0);
-    if ('error' in got) return got;
-    let page: RowsPage;
+    const obtained = obtainResult(ctx, definition, key, tool, attempt === 0);
+    // The flight (if this call is its leader) stays registered through this
+    // whole attempt — including the fetch and the `done` record below — so a
+    // call arriving before that finishes still joins instead of starting a
+    // second run (spec §2.6).
     try {
-      page = await ctx.client.fetchRows(got.result, { pageSize });
-    } catch (e) {
-      // A cached result GAM no longer serves is dropped and the report run
-      // once more. A fresh result that is already gone is an error.
-      if (e instanceof ResultUnavailableError && got.cached && attempt === 0) {
-        ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
-        ctx.reportCache?.delete(key);
-        continue;
+      const got = await obtained.promise;
+      if ('error' in got) return got;
+      let page: RowsPage;
+      try {
+        page = await ctx.client.fetchRows(got.result, { pageSize });
+      } catch (e) {
+        // A cached or resumed result GAM no longer serves is dropped and the
+        // report run once more. A result from a fresh run that is already
+        // gone is an error.
+        if (e instanceof ResultUnavailableError && (got.cached || got.resumed) && attempt === 0) {
+          ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
+          ctx.reportCache?.delete(key);
+          continue;
+        }
+        throw e;
       }
-      throw e;
+      // A hit keeps the facts of the call that produced the result.
+      const facts: ResultFacts = got.cached
+        ? { run_time: got.cached.run_time, date_range: got.cached.date_range, total_row_count: got.cached.total_row_count }
+        : factsOf(page);
+      if (!got.cached) ctx.reportCache?.putDone(key, { report: got.report, result: got.result, ...facts });
+      clientMemory(ctx).facts.set(got.result, facts);
+      return { report: got.report, result: got.result, page, facts, cacheHit: got.cached !== null };
+    } finally {
+      obtained.release?.();
     }
-    // A hit keeps the facts of the call that produced the result.
-    const facts: ResultFacts = got.cached
-      ? { run_time: got.cached.run_time, date_range: got.cached.date_range, total_row_count: got.cached.total_row_count }
-      : factsOf(page);
-    if (!got.cached) ctx.reportCache?.putDone(key, { report: got.report, result: got.result, ...facts });
-    clientMemory(ctx).facts.set(got.result, facts);
-    return { report: got.report, result: got.result, page, facts, cacheHit: got.cached !== null };
   }
 }
 
