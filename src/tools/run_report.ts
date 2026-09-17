@@ -11,7 +11,6 @@ import { executeReport } from '../report-exec.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
-import { REACH_NON_ADDITIVE_WARNING } from './reach_report.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -93,9 +92,6 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       report_type: reportType,
     };
     const warnings: string[] = [...aliasWarnings];
-    if (reportType === 'REACH') {
-      warnings.push(REACH_NON_ADDITIVE_WARNING);
-    }
     // The whitelist covers every metric GAM declares, including families whose
     // report type this server has no purpose-built tool for. Those requests are
     // forwarded as-is — GAM may still reject them for reasons we can't predict.

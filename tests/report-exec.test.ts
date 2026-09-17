@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   derivedEnvelope, executeReport, executeReportRows, fetchReportPage, pollUntilDone, resolvePageRows,
+  REMEMBERED_RESULTS_MAX,
 } from '../src/report-exec.js';
-import { decodeCursor, encodeCursor } from '../src/cursor.js';
+import { decodeCursor, encodeCursor, type Cursor } from '../src/cursor.js';
+import { REACH_COVERAGE_WARNING, REACH_NON_ADDITIVE_WARNING } from '../src/report-warnings.js';
 import { createLogger } from '../src/log.js';
 import { definitionFor, makeCtx, NETWORK } from './helpers.js';
 import type { Provenance, ResultEnvelope } from '../src/envelope.js';
@@ -11,6 +13,8 @@ import type { ReportDefinition } from '../src/report-definition.js';
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
 const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ AD_UNIT_ID: i + 1, IMPRESSIONS: (i + 1) * 10 }));
+const LATER_PAGE_NOTICE =
+  "Some caveats, such as renamed dimensions or rewritten key-value filters, are listed only on this report's first page; read them with these rows.";
 
 function ok(r: unknown): ResultEnvelope {
   if (r && typeof r === 'object' && 'error' in r) throw new Error(JSON.stringify(r));
@@ -88,9 +92,7 @@ describe('executeReport', () => {
     const first = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S', warnings: ['caveat'] }));
     expect(first.warnings).toEqual(['caveat']);
     const second = ok(await fetchReportPage(ctx, first.next_cursor!));
-    expect(second.warnings).toContain(
-      'Caveats that apply to this whole report are listed on its first page; read them with these rows.',
-    );
+    expect(second.warnings).toContain(LATER_PAGE_NOTICE);
   });
 
   it('A6: later pages are labelled from the stored definition, not from memory', async () => {
@@ -268,5 +270,60 @@ describe('one definition per call', () => {
       result: done.result, page_token: '2', offset: 2, total_row_count: 3, run_time: null, date_range: null,
     });
     expect(ok(await fetchReportPage(ctx, cursor)).provenance).toMatchObject({ sort: sorts, cache: { hit: false } });
+  });
+});
+
+describe('later pages take their facts from the server (PR 1 review)', () => {
+  const facts = { runTime: '2026-09-03T01:00:00Z', computedDateRange: { start: '2026-08-31', end: '2026-09-02' } };
+
+  it('reports GAM run time, dates and total even when the cursor claims others', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3), ...facts }] }, { pageRows: 2 });
+    const first = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }));
+    const cursor = decodeCursor(first.next_cursor!, NETWORK) as Cursor;
+    const forged = encodeCursor({
+      ...cursor,
+      run_time: '1999-01-01T00:00:00Z',
+      date_range: { start: '1999-01-01', end: '1999-01-02' },
+      total_row_count: 999,
+    });
+    const page = ok(await fetchReportPage(ctx, forged));
+    expect(page.provenance).toMatchObject({ run_time: facts.runTime, date_range: facts.computedDateRange });
+    expect(page.total_row_count).toBe(3);
+    expect(page.summary).toBe(`Rows 3–3 of 3 from networks/${NETWORK}/reports/1`);
+  });
+
+  it('reads the facts again from GAM, one row, when this process has none', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3), ...facts }] }, { pageRows: 2 });
+    const first = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }));
+    const cursor = decodeCursor(first.next_cursor!, NETWORK) as Cursor;
+    const blank = encodeCursor({ ...cursor, run_time: null, date_range: null, total_row_count: null });
+    // A new client object stands for a restarted process: it remembers nothing.
+    const inner = ctx.client;
+    const sizes: number[] = [];
+    const restarted = {
+      ...ctx,
+      client: { ...inner, fetchRows: (r: string, p: { pageSize: number; pageToken?: string }) => { sizes.push(p.pageSize); return inner.fetchRows(r, p); } },
+    };
+    const page = ok(await fetchReportPage(restarted, blank));
+    expect(sizes).toEqual([1, 2]);
+    expect(page.provenance).toMatchObject({ run_time: facts.runTime, date_range: facts.computedDateRange });
+    expect(page.total_row_count).toBe(3);
+    expect(page.warnings).not.toContain('GAM did not report the computed date range for this result.');
+  });
+
+  it('carries the caveats a stored definition implies, and the pointer to the rest', async () => {
+    const reach = { dimensions: ['LINE_ITEM_ID'], metrics: ['UNIQUE_VISITORS'], report_type: 'REACH' as const };
+    const reachRows = [1, 2, 3].map((n) => ({ LINE_ITEM_ID: n, UNIQUE_VISITORS: n }));
+    const ctx = makeCtx({ reports: [{ query: reach, rows: reachRows }] }, { pageRows: 2 });
+    const first = ok(await executeReport(ctx, {
+      query: reach, dateRange: RANGE, summary: 'S', warnings: [REACH_NON_ADDITIVE_WARNING, 'renamed a dimension'],
+    }));
+    expect(first.warnings).toEqual([REACH_NON_ADDITIVE_WARNING, 'renamed a dimension', REACH_COVERAGE_WARNING]);
+    const second = ok(await fetchReportPage(ctx, first.next_cursor!));
+    expect(second.warnings).toEqual([LATER_PAGE_NOTICE, REACH_NON_ADDITIVE_WARNING, REACH_COVERAGE_WARNING]);
+  });
+
+  it('remembers stored definitions and facts for a bounded number of results', () => {
+    expect(REMEMBERED_RESULTS_MAX).toBe(1000);
   });
 });

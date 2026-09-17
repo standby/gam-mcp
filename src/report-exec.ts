@@ -6,11 +6,15 @@ import { definitionRange, reportDefinition, type ReportDefinition } from './repo
 import { buildTable, type Cell, type Column } from './values.js';
 import { encodeCursor, decodeCursor } from './cursor.js';
 import { envelope, inferSchema, type DateSpan, type InputReport, type ResultEnvelope } from './envelope.js';
+import { Lru } from './lru.js';
+import { definitionWarnings } from './report-warnings.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
 export const DEFAULT_PAGE_ROWS = 5_000;
 // ponytail: fixed ceiling on rows a computing tool reads; page its output if a real network needs more.
 export const MAX_INPUT_ROWS = 50_000;
+// How many stored definitions and first-page facts each client remembers.
+export const REMEMBERED_RESULTS_MAX = 1000;
 
 export type ReportRequest = {
   query: ReportQuery;
@@ -138,15 +142,19 @@ async function firstPage(
   const ran = await runToResult(ctx, definition);
   if ('error' in ran) return ran;
   const page = await ctx.client.fetchRows(ran.result, { pageSize });
-  return { report: ran.report, result: ran.result, page, facts: factsOf(page), cacheHit: false };
+  const facts = factsOf(page);
+  clientMemory(ctx).facts.set(ran.result, facts);
+  return { report: ran.report, result: ran.result, page, facts, cacheHit: false };
 }
 
-// Definition-derived caveats (reach non-additivity, the alias/KV rewrite
-// notes, ...) are only computed once, for the first page. A later page has
-// no access to them, so rather than silently drop them it points back at
-// where they live. PR 2 rebuilds them per page instead of pointing back.
+const unique = (items: string[]): string[] => [...new Set(items)];
+
+// Caveats a stored definition implies are rebuilt on every page
+// (definitionWarnings). Those that came from the request, such as a renamed
+// dimension or a rewritten key-value filter, exist only on the first page, so
+// later pages point back to it.
 const CAVEATS_ON_FIRST_PAGE =
-  'Caveats that apply to this whole report are listed on its first page; read them with these rows.';
+  "Some caveats, such as renamed dimensions or rewritten key-value filters, are listed only on this report's first page; read them with these rows.";
 
 type PageArgs = {
   ctx: ToolContext;
@@ -176,7 +184,7 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
         date_range: a.dateRange,
       })
     : null;
-  const warnings = [...a.warnings, ...table.warnings];
+  const warnings = unique([...a.warnings, ...definitionWarnings(a.definition), ...table.warnings]);
   if (a.dateRange === null) warnings.push('GAM did not report the computed date range for this result.');
   if (a.total === null) {
     warnings.push('GAM did not report how many rows this result has.');
@@ -235,22 +243,45 @@ export async function executeReport(
   }
 }
 
-// Stored definitions never change (reports are never patched), so they can be
-// remembered per client for the life of the process.
-const storedReports = new WeakMap<object, Map<string, StoredReport>>();
-const STORED_REPORTS_MAX = 1000;
+// What this process remembers per client (the server builds one client per
+// process): stored definitions, which never change because reports are never
+// patched, and each result's first-page facts, which later pages report
+// instead of trusting a cursor.
+type ClientMemory = {
+  stored: Lru<string, StoredReport>;
+  facts: Lru<string, ResultFacts>;
+};
+
+const memories = new WeakMap<object, ClientMemory>();
+
+function clientMemory(ctx: ToolContext): ClientMemory {
+  let memory = memories.get(ctx.client);
+  if (!memory) {
+    memory = { stored: new Lru(REMEMBERED_RESULTS_MAX), facts: new Lru(REMEMBERED_RESULTS_MAX) };
+    memories.set(ctx.client, memory);
+  }
+  return memory;
+}
 
 async function storedReport(ctx: ToolContext, report: string): Promise<StoredReport | null> {
-  let byName = storedReports.get(ctx.client);
-  if (!byName) storedReports.set(ctx.client, (byName = new Map()));
-  const hit = byName.get(report);
-  if (hit) return hit;
+  const { stored } = clientMemory(ctx);
+  const known = stored.get(report);
+  if (known) return known;
   const found = await ctx.client.getReport(report);
-  if (found) {
-    if (byName.size >= STORED_REPORTS_MAX) byName.delete(byName.keys().next().value!);
-    byName.set(report, found);
-  }
+  if (found) stored.set(report, found);
   return found;
+}
+
+// A result's first-page facts: those of the first page this process served,
+// or GAM's own, read again with a one-row page. A cursor's copies are never
+// used, because a cursor is not signed.
+async function resultFacts(ctx: ToolContext, result: string): Promise<ResultFacts> {
+  const { facts } = clientMemory(ctx);
+  const known = facts.get(result);
+  if (known) return known;
+  const fresh = factsOf(await ctx.client.fetchRows(result, { pageSize: 1 }));
+  facts.set(result, fresh);
+  return fresh;
 }
 
 export async function fetchReportPage(
@@ -268,12 +299,11 @@ export async function fetchReportPage(
   try {
     const stored = await storedReport(ctx, report);
     if (!stored) return gamError('REPORT_RESULT_EXPIRED', { result: cursor.result });
+    const facts = await resultFacts(ctx, cursor.result);
     const page = await ctx.client.fetchRows(cursor.result, { pageSize: pageRows(ctx), pageToken: cursor.page_token });
     const last = cursor.offset + page.rows.length;
-    // A missing count from GAM is only unknowable while more pages remain —
-    // on the page that turns out to be the last one, the total is exactly
-    // what's been seen so far.
-    const total = cursor.total_row_count ?? (page.nextPageToken ? null : last);
+    // A result whose first page gave no count has one once its last page is seen.
+    const total = facts.total_row_count ?? (page.nextPageToken ? null : last);
     return pageEnvelope({
       ctx,
       report,
@@ -284,8 +314,8 @@ export async function fetchReportPage(
       page,
       offset: cursor.offset,
       total,
-      runTime: cursor.run_time,
-      dateRange: cursor.date_range,
+      runTime: facts.run_time,
+      dateRange: facts.date_range,
       cacheHit: false,
     });
   } catch (e) {
@@ -319,7 +349,7 @@ export async function executeReportRows(
       token = page.nextPageToken;
     }
     const table = buildTable(definition.dimensions, definition.metrics, pages.flatMap((p) => p.rows));
-    const warnings = [...table.warnings];
+    const warnings = unique([...definitionWarnings(definition), ...table.warnings]);
     const reportedTotal = first.page.totalRowCount;
     if (reportedTotal !== undefined && reportedTotal !== count) {
       warnings.push(
