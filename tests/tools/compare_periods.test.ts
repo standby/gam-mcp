@@ -93,4 +93,49 @@ describe('compare_periods', () => {
       { start: '2026-04-01', end: '2026-04-07' },
     ]);
   });
+
+  it('keys on the full dimension tuple, not the concatenation of its parts', async () => {
+    // ('1','23') and ('12','3') concatenate to the same string ("123") if the
+    // join key has no separator between dimension values — this must not
+    // pair either row with the other's previous-period counterpart.
+    const query = { dimensions: ['ADVERTISER_NAME', 'ORDER_NAME'], metrics: ['IMPRESSIONS'] };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          rows: [
+            { ADVERTISER_NAME: '1', ORDER_NAME: '23', IMPRESSIONS: 100 },
+            { ADVERTISER_NAME: '12', ORDER_NAME: '3', IMPRESSIONS: 200 },
+          ],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          rows: [
+            { ADVERTISER_NAME: '1', ORDER_NAME: '23', IMPRESSIONS: 10 },
+            { ADVERTISER_NAME: '12', ORDER_NAME: '3', IMPRESSIONS: 20 },
+          ],
+        },
+      ],
+    }, { timezone: 'UTC' });
+
+    const args = comparePeriodsTool.input.parse({
+      dimensions: ['ADVERTISER_NAME', 'ORDER_NAME'],
+      metrics: ['IMPRESSIONS'],
+      base_range: { start: '2026-04-08', end: '2026-04-14' },
+      comparison: 'previous_period',
+    });
+    const r = await comparePeriodsTool.handler(args, ctx);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const byKey = Object.fromEntries(
+      r.rows!.map((row) => [`${row.ADVERTISER_NAME}|${row.ORDER_NAME}`, row]),
+    );
+
+    expect(byKey['1|23'].IMPRESSIONS).toBe('100');
+    expect(byKey['1|23'].IMPRESSIONS_prev).toBe('10');
+
+    expect(byKey['12|3'].IMPRESSIONS).toBe('200');
+    expect(byKey['12|3'].IMPRESSIONS_prev).toBe('20');
+  });
 });

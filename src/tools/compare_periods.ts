@@ -121,7 +121,7 @@ function joinAndCompare(
   dims: string[],
   metrics: string[],
 ): Record<string, string>[] {
-  const key = (r: Record<string, Cell>) => dims.map((d) => cellText(r[d])).join('');
+  const key = (r: Record<string, Cell>) => dims.map((d) => cellText(r[d])).join('\u0001');
   const prevByKey = new Map(prevRows.map((r) => [key(r), r]));
   const seenPrev = new Set<string>();
   const out: Record<string, string>[] = [];
