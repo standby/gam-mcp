@@ -161,3 +161,39 @@ describe('failureKind', () => {
     expect(failureKind(undefined)).toBe('unknown failure');
   });
 });
+
+describe('inline credential errors do not echo the value (fix round 1)', () => {
+  const SENTINEL = 'SENTINEL_KEY_MATERIAL';
+  // Unquoted value forces JSON.parse's own error to quote a slice of the raw
+  // text starting right at the sentinel (Node quotes the first ~10 characters
+  // of what it failed to parse there).
+  const MALFORMED = `{"private_key": ${SENTINEL}}`;
+
+  // Every contiguous 8-character slice of `raw` must be absent from `text` —
+  // stronger than checking the sentinel alone, since it also catches a leak
+  // of surrounding JSON syntax (quotes, key names) around the failure point.
+  function assertNoSliceLeaks(text: string, raw: string): void {
+    for (let i = 0; i + 8 <= raw.length; i++) {
+      expect(text).not.toContain(raw.slice(i, i + 8));
+    }
+  }
+
+  it('a malformed raw inline value is reported without echoing it', () => {
+    const r = resolveAuthSource({ GAM_SERVICE_ACCOUNT_KEY_JSON: MALFORMED } as NodeJS.ProcessEnv);
+    if (!('error' in r)) throw new Error('expected error');
+    const text = `${r.error.message}\n${r.error.hint}`;
+    expect(text).not.toContain(SENTINEL);
+    assertNoSliceLeaks(text, MALFORMED);
+    expect(r.error.message).toContain('GAM_SERVICE_ACCOUNT_KEY_JSON');
+  });
+
+  it('a base64-encoded malformed inline value is reported without echoing it', () => {
+    const b64 = Buffer.from(MALFORMED).toString('base64');
+    const r = resolveAuthSource({ GAM_SERVICE_ACCOUNT_KEY_JSON: b64 } as NodeJS.ProcessEnv);
+    if (!('error' in r)) throw new Error('expected error');
+    const text = `${r.error.message}\n${r.error.hint}`;
+    expect(text).not.toContain(SENTINEL);
+    assertNoSliceLeaks(text, MALFORMED);
+    expect(r.error.message).toContain('GAM_SERVICE_ACCOUNT_KEY_JSON');
+  });
+});

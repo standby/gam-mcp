@@ -95,7 +95,12 @@ export function resolveAuthSource(env: NodeJS.ProcessEnv): ResolveResult {
       return {
         error: {
           code: 'AUTH_FAILED',
-          message: `GAM_SERVICE_ACCOUNT_KEY_JSON is set but is not valid JSON: ${decoded.error}`,
+          // Fixed sentence, deliberately naming no reason: whatever went wrong
+          // (not JSON, not base64 of JSON, or JSON that isn't an object), the
+          // detail lives only in decodeInlineCredentials and never reaches
+          // here, because the parser's own message can quote the value it
+          // failed to parse.
+          message: 'GAM_SERVICE_ACCOUNT_KEY_JSON is not valid JSON (raw or base64-encoded).',
           hint: 'Pass raw service-account JSON or base64-encoded JSON. Check for shell-quoting issues (newlines in env vars often need base64).',
         },
       };
@@ -106,19 +111,23 @@ export function resolveAuthSource(env: NodeJS.ProcessEnv): ResolveResult {
   return { source: { type: 'adc' } };
 }
 
-function decodeInlineCredentials(raw: string): { credentials: Record<string, unknown> } | { error: string } {
+// Every failure mode collapses to `{ error: true }`, with no reason string:
+// JSON.parse's own message can quote the value it failed to parse (spec D1),
+// so no text derived from `raw` — parser message or otherwise — leaves this
+// function. resolveAuthSource turns any of these into one fixed sentence.
+function decodeInlineCredentials(raw: string): { credentials: Record<string, unknown> } | { error: true } {
   // Raw JSON: starts with `{`. Anything else: try base64-decode first, then parse.
   const trimmed = raw.trim();
   const jsonText = trimmed.startsWith('{')
     ? trimmed
     : tryBase64Decode(trimmed);
-  if (jsonText === null) return { error: 'value does not look like JSON or base64' };
+  if (jsonText === null) return { error: true };
   try {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-    if (typeof parsed !== 'object' || parsed === null) return { error: 'JSON value is not an object' };
+    if (typeof parsed !== 'object' || parsed === null) return { error: true };
     return { credentials: parsed };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+  } catch {
+    return { error: true };
   }
 }
 
