@@ -8,7 +8,9 @@ export type GamErrorCode =
   | 'ENTITY_NOT_FOUND'
   | 'AMBIGUOUS_NAME'
   | 'UNSUPPORTED_DIMENSION_COMBO'
-  | 'INTERNAL_ERROR';
+  | 'INTERNAL_ERROR'
+  | 'REPORT_RESULT_EXPIRED'
+  | 'RESULT_TOO_LARGE';
 
 export type GamErrorEnvelope = {
   error: {
@@ -63,6 +65,14 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
   INTERNAL_ERROR: (d) => ({
     message: `Internal error: ${d.reason ?? 'see logs'}.`,
     hint: 'Re-run; if it persists, check stderr logs for the correlation ID.',
+  }),
+  REPORT_RESULT_EXPIRED: (d) => ({
+    message: `Report result ${d.result ?? ''} is no longer available.`,
+    hint: 'Re-run the tool that produced this cursor; GAM keeps report results for a limited time.',
+  }),
+  RESULT_TOO_LARGE: (d) => ({
+    message: `The ${d.what ?? 'result'} has ${d.rows} rows, over the limit of ${d.limit}.`,
+    hint: 'Narrow the date range, add filters, or request fewer dimensions.',
   }),
 };
 
