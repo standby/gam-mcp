@@ -57,7 +57,7 @@ describe('definitionHash (B1)', () => {
     expect(sameDefinition(reordered, def)).toBe(false);
   });
 
-  it('ignores the order of filters and of the values in a filter', () => {
+  it('ignores the order of filters and of the values in an IN or NOT_IN filter', () => {
     const def = full();
     const shuffled: ReportDefinition = {
       ...def,
@@ -68,6 +68,31 @@ describe('definitionHash (B1)', () => {
     };
     expect(definitionHash(shuffled)).toBe(definitionHash(def));
     expect(sameDefinition(shuffled, def)).toBe(true);
+  });
+
+  // One filter on DATE with the given operation and values.
+  const withFilter = (operation: string, values: unknown[]): ReportDefinition => ({
+    ...full(),
+    filters: [{ fieldFilter: { field: { dimension: 'DATE' }, operation, values } }],
+  });
+  const days = [{ intValue: '20260901' }, { intValue: '20260902' }];
+
+  it('tells IN and NOT_IN apart on the same values', () => {
+    expect(definitionHash(withFilter('IN', days))).not.toBe(definitionHash(withFilter('NOT_IN', days)));
+  });
+
+  // The values of these operations form a set.
+  it.each(['IN', 'NOT_IN', 'CONTAINS', 'NOT_CONTAINS'])('ignores the order of a %s list', (operation) => {
+    const reversed = withFilter(operation, [...days].reverse());
+    expect(definitionHash(reversed)).toBe(definitionHash(withFilter(operation, days)));
+    expect(sameDefinition(reversed, withFilter(operation, days))).toBe(true);
+  });
+
+  // Other operations' values are positional: BETWEEN's are its lower and upper bound.
+  it('keeps the order of a BETWEEN pair', () => {
+    const reversed = withFilter('BETWEEN', [...days].reverse());
+    expect(definitionHash(reversed)).not.toBe(definitionHash(withFilter('BETWEEN', days)));
+    expect(sameDefinition(reversed, withFilter('BETWEEN', days))).toBe(false);
   });
 
   it('keeps customDimensionKeyIds positional', () => {

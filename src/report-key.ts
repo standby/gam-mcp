@@ -25,10 +25,15 @@ function byText(a: unknown, b: unknown): number {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
-// A filter with the values inside it in a fixed order.
+// Filter operations whose values form a set, so their order means nothing.
+const SET_OPERATIONS = new Set(['IN', 'NOT_IN', 'CONTAINS', 'NOT_CONTAINS']);
+
+// A filter with the values of a set operation in a fixed order. Any other
+// operation's values are positional (BETWEEN's lower and upper bound) and keep
+// their order.
 function normalizeFilter(f: unknown): unknown {
-  const field = (f as { fieldFilter?: { values?: unknown } } | null)?.fieldFilter;
-  if (!field || !Array.isArray(field.values)) return f;
+  const field = (f as { fieldFilter?: { operation?: unknown; values?: unknown } } | null)?.fieldFilter;
+  if (!field || !Array.isArray(field.values) || !SET_OPERATIONS.has(field.operation as string)) return f;
   return { ...(f as object), fieldFilter: { ...field, values: [...field.values].sort(byText) } };
 }
 
@@ -36,8 +41,8 @@ function normalizeFilter(f: unknown): unknown {
 // returns each row's values in the order of the report's dimensions and
 // metrics, so those keep their order: a report with its columns in another
 // order is another report, and its rows cannot be read with ours. GAM gives no
-// meaning to the order of filters or of the values inside a filter, so those
-// are sorted. customDimensionKeyIds are positional (slot N is
+// meaning to the order of filters or of the values of a set operation, so
+// those are sorted. customDimensionKeyIds are positional (slot N is
 // CUSTOM_DIMENSION_N_VALUE) and every other list keeps its order too. Absent
 // fields and empty lists are dropped: GAM's JSON omits empty lists, so a
 // definition read back from GAM has none.
