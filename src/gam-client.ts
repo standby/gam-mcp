@@ -1,4 +1,3 @@
-import { writeFileSync } from 'node:fs';
 import type { ReportType } from './schema.js';
 import { fieldType } from './schema.js';
 import type { ReportRow, ReportValue } from './values.js';
@@ -41,14 +40,11 @@ export type ReportQuery = {
   report_type?: ReportType;
 };
 
-export type ReportOperation = { operation_name: string };
-
 export type OperationStatus =
   | { state: 'pending' }
   | { state: 'running' }
-  // `result` is the report result's resource name. `download_url` is the
-  // same value under its old name, kept until every caller has moved.
-  | { state: 'done'; download_url: string; result: string }
+  // `result` is the report result's resource name.
+  | { state: 'done'; result: string }
   | { state: 'failed'; reason: string };
 
 export type DateRange = { start: string; end: string };
@@ -89,9 +85,7 @@ export type GAMClient = {
   // returns inside nested objects like a line item's targeting. Returns null
   // on 404 so callers can degrade to the raw path instead of throwing.
   getResource: (path: string) => Promise<Record<string, unknown> | null>;
-  createReport: (query: ReportQuery, dateRange: DateRange) => Promise<ReportOperation>;
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
-  downloadReport: (downloadUrl: string, destPath: string) => Promise<string>;
   // Create the report resource only. Returns its resource name.
   defineReport: (query: ReportQuery, dateRange: DateRange) => Promise<{ report: string }>;
   // Start a run of an existing report. Returns the operation name to poll.
@@ -109,12 +103,10 @@ export type FixtureCell = string | number | boolean | null | undefined | (string
 export type ReportFixture = {
   query: ReportQuery;
   dateRange?: DateRange;
-  // Legacy CSV fixture, served only through createReport/downloadReport.
-  csvGz?: Buffer;
   // Typed rows keyed by column name, served through defineReport/fetchRows.
   // Numbers become intValue when integral unless the schema types the column
   // as currency or rate; 'YYYY-MM-DD' strings in date columns become YYYYMMDD.
-  rows?: Record<string, FixtureCell>[];
+  rows: Record<string, FixtureCell>[];
   runTime?: string;
   // What GAM reports it computed; defaults to the requested range.
   computedDateRange?: { start: string; end: string };
@@ -151,9 +143,6 @@ function toFixtureValue(c: FixtureCell, column: string): ReportValue {
 }
 
 function fixtureRows(fixture: ReportFixture, query: ReportQuery): ReportRow[] {
-  if (!fixture.rows) {
-    throw new Error('mock: this fixture has only csvGz; give it typed `rows` to use defineReport/fetchRows');
-  }
   return fixture.rows.map((r) => ({
     dimensionValues: query.dimensions.map((d) => toFixtureValue(r[d], d)),
     metricValueGroups: [{ primaryValues: query.metrics.map((m) => toFixtureValue(r[m], m)) }],
@@ -162,8 +151,6 @@ function fixtureRows(fixture: ReportFixture, query: ReportQuery): ReportRow[] {
 
 export function createMockGamClient(state: MockState = {}): GAMClient {
   const reports = state.reports ?? [];
-  const operations = new Map<string, { fixture: ReportFixture; polledCount: number }>();
-  let counter = 0;
 
   const network = state.networkCode ?? '1234';
   const defined = new Map<string, { fixture: ReportFixture; query: ReportQuery; dateRange: DateRange }>();
@@ -197,42 +184,15 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     async getResource(path) {
       return state.resources?.[path] ?? null;
     },
-    async createReport(query, dateRange) {
-      const fixture = matchFixture(query, dateRange);
-      if (!fixture) {
-        throw new Error(
-          `mock: no report fixture matches query dimensions=${query.dimensions.join(',')} metrics=${query.metrics.join(',')}`,
-        );
-      }
-      const name = `operations/${++counter}`;
-      operations.set(name, { fixture, polledCount: 0 });
-      return { operation_name: name };
-    },
     async pollOperation(name) {
       const run = runs.get(name);
-      if (run) {
-        run.polls += 1;
-        const outcome = state.runOutcomes?.[run.run];
-        if (outcome === 'failed') return { state: 'failed', reason: 'mock: report failed' };
-        if (outcome === 'never' || run.polls === 1) return { state: 'running' };
-        const result = `${run.report}/results/${run.run}`;
-        return { state: 'done', download_url: result, result };
-      }
-      const op = operations.get(name);
-      if (!op) return { state: 'failed', reason: 'unknown operation' };
-      op.polledCount++;
-      if (op.polledCount === 1) {
-        return { state: 'running' };
-      }
-      return { state: 'done', download_url: `mock://${name}`, result: `mock://${name}` };
-    },
-    async downloadReport(downloadUrl, destPath) {
-      const name = downloadUrl.replace(/^mock:\/\//, '');
-      const op = operations.get(name);
-      if (!op) throw new Error(`mock: unknown download ${downloadUrl}`);
-      if (!op.fixture.csvGz) throw new Error('mock: fixture has no csvGz; this tool must use fetchRows');
-      writeFileSync(destPath, op.fixture.csvGz);
-      return destPath;
+      if (!run) return { state: 'failed', reason: 'unknown operation' };
+      run.polls += 1;
+      const outcome = state.runOutcomes?.[run.run];
+      if (outcome === 'failed') return { state: 'failed', reason: 'mock: report failed' };
+      if (outcome === 'never' || run.polls === 1) return { state: 'running' };
+      const result = `${run.report}/results/${run.run}`;
+      return { state: 'done', result };
     },
     async defineReport(query, dateRange) {
       const fixture = matchFixture(query, dateRange);

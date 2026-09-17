@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
 
 const inputSchema = z.object({});
 
@@ -21,17 +22,19 @@ export const usageStatsTool: ToolDefinition<typeof inputSchema> = {
 
     const row = {
       session_started_at: counters.started_at,
-      list_entities_calls: String(counters.list_entities_calls),
-      get_resource_calls: String(counters.get_resource_calls),
-      report_jobs_created: String(counters.report_jobs_created),
-      poll_operations: String(counters.poll_operations),
-      reports_downloaded: String(counters.reports_downloaded),
-      cumulative_report_latency_ms: String(counters.cumulative_report_latency_ms),
-      report_cache_hits: String(cache.hits),
-      report_cache_misses: String(cache.misses),
+      list_entities_calls: counters.list_entities_calls,
+      get_resource_calls: counters.get_resource_calls,
+      report_definitions_created: counters.report_definitions_created,
+      report_jobs_created: counters.report_jobs_created,
+      poll_operations: counters.poll_operations,
+      report_pages_fetched: counters.report_pages_fetched,
+      report_lookups: counters.report_lookups,
+      cumulative_report_latency_ms: counters.cumulative_report_latency_ms,
+      report_cache_hits: cache.hits,
+      report_cache_misses: cache.misses,
       report_cache_hit_rate_pct: hitRatePct,
     };
-    return ctx.output!.fromInlineRows(
+    return listEnvelope(
       [row],
       `Usage since ${counters.started_at}: ${counters.report_jobs_created} report jobs, ${cache.hits} cache hits / ${cache.misses} misses (${hitRatePct}% hit rate).`,
     );

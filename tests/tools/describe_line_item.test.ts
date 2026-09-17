@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describeLineItemTool } from '../../src/tools/describe_line_item.js';
-import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
+import { createMockGamClient, type GAMClient } from '../../src/gam-client.js';
+import { makeCtx } from '../helpers.js';
 
 // Entirely synthetic network / keys / values — nothing here mirrors a real
 // publisher's configuration.
@@ -59,22 +55,11 @@ const RESOURCES: Record<string, Record<string, unknown>> = {
   [`${NET}/adUnits/700`]: { name: `${NET}/adUnits/700`, displayName: 'Ad Unit 700' },
 };
 
-const makeCtx = (client = createMockGamClient({ resources: RESOURCES })) => {
-  const dir = mkdtempSync(join(tmpdir(), 'dli-'));
-  return {
-    dir,
-    ctx: {
-      client,
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'UTC',
-      logger: noopLogger(),
-    },
-  };
-};
+const ctxFor = (client: GAMClient = createMockGamClient({ resources: RESOURCES })) => makeCtx({}, { client });
 
 describe('describe_line_item', () => {
   it('flattens clauses, marks negation, and resolves paths to labels', async () => {
-    const { ctx, dir } = makeCtx();
+    const ctx = ctxFor();
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [1] }), ctx) as any;
     expect(r.line_items).toHaveLength(1);
     const li = r.line_items[0];
@@ -91,7 +76,6 @@ describe('describe_line_item', () => {
     // Paths outside customTargeting are resolved too.
     expect(r.resolved_paths[`${NET}/adUnits/700`]).toEqual({ id: '700', name: 'Ad Unit 700' });
     expect(r.resolved_paths[keyPath(10)]).toEqual({ id: '10', name: 'key_a', displayName: 'Key A' });
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('surfaces literal fields it does not map, so a renamed negation flag cannot hide', async () => {
@@ -109,45 +93,40 @@ describe('describe_line_item', () => {
         },
       },
     };
-    const { ctx, dir } = makeCtx(createMockGamClient({ resources }));
+    const ctx = ctxFor(createMockGamClient({ resources }));
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [4] }), ctx) as any;
     expect(r.line_items[0].custom_targeting[0].unrecognized_fields).toEqual({ excluded: true });
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('omits unrecognized_fields when every literal field is mapped', async () => {
-    const { ctx, dir } = makeCtx();
+    const ctx = ctxFor();
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [1] }), ctx) as any;
     expect(r.line_items[0].custom_targeting[0].unrecognized_fields).toBeUndefined();
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('handles a line item with no targeting', async () => {
-    const { ctx, dir } = makeCtx();
+    const ctx = ctxFor();
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [2] }), ctx) as any;
     expect(r.line_items[0].custom_targeting).toEqual([]);
     expect(r.resolved_paths).toEqual({});
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('degrades to the raw path when a referenced resource cannot be resolved', async () => {
-    const { ctx, dir } = makeCtx();
+    const ctx = ctxFor();
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [3] }), ctx) as any;
     expect(r.line_items[0].custom_targeting[0].values).toEqual(['val_1', valPath(999)]);
     expect(r.resolved_paths[valPath(999)]).toBeUndefined();
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('resolves each shared path exactly once across line items', async () => {
     const base = createMockGamClient({ resources: RESOURCES });
     const calls: string[] = [];
     const client = { ...base, getResource: async (p: string) => { calls.push(p); return base.getResource(p); } };
-    const { ctx, dir } = makeCtx(client);
+    const ctx = ctxFor(client);
     await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [1, 3] }), ctx);
     // key 10 and value 101 are referenced by both line items.
     expect(calls.filter((c) => c === keyPath(10))).toHaveLength(1);
     expect(calls.filter((c) => c === valPath(101))).toHaveLength(1);
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('separates a fetch failure from an absent resource and warns about it', async () => {
@@ -159,7 +138,7 @@ describe('describe_line_item', () => {
         return base.getResource(p);
       },
     };
-    const { ctx, dir } = makeCtx(client);
+    const ctx = ctxFor(client);
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [1] }), ctx) as any;
     // Degrades to the raw path rather than throwing...
     expect(r.line_items[0].custom_targeting[0].values).toEqual(['val_1', valPath(102)]);
@@ -167,7 +146,6 @@ describe('describe_line_item', () => {
     expect(r.resolution.failed).toBe(1);
     expect(r.resolution.missing).toBe(0);
     expect(r.warnings[0]).toContain('could not be fetched');
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('resolves in bounded batches rather than one unbounded burst', async () => {
@@ -195,15 +173,14 @@ describe('describe_line_item', () => {
         return base.getResource(p);
       },
     };
-    const { ctx, dir } = makeCtx(client);
+    const ctx = ctxFor(client);
     const r = await describeLineItemTool.handler(describeLineItemTool.input.parse({ ids: [9] }), ctx) as any;
     expect(peak).toBeLessThanOrEqual(20);
     expect(r.resolution.resolved).toBe(61);
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('reports ids that do not exist, and errors when none do', async () => {
-    const { ctx, dir } = makeCtx();
+    const ctx = ctxFor();
     const partial = await describeLineItemTool.handler(
       describeLineItemTool.input.parse({ ids: [2, 404] }), ctx,
     ) as any;
@@ -215,6 +192,5 @@ describe('describe_line_item', () => {
     );
     expect('error' in none).toBe(true);
     if ('error' in none) expect((none.error as { code: string }).code).toBe('ENTITY_NOT_FOUND');
-    rmSync(dir, { recursive: true, force: true });
   });
 });

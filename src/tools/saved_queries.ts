@@ -3,6 +3,7 @@ import { gamError } from '../errors.js';
 import { validateCombo } from '../schema.js';
 import { runReportTool } from './run_report.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -73,7 +74,7 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
       },
       input.description,
     );
-    return ctx.output!.fromInlineRows(
+    return listEnvelope(
       [{ name: entry.name, saved_at: entry.saved_at, description: entry.description ?? '' }],
       `Saved query "${entry.name}" (${existing ? 'replaced' : 'new'}).`,
     );
@@ -100,7 +101,7 @@ export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
       metrics: e.body.metrics.join(','),
       saved_at: e.saved_at,
     }));
-    return ctx.output!.fromInlineRows(rows, `${entries.length} saved query template(s).`);
+    return listEnvelope(rows, `${entries.length} saved query template(s).`);
   },
 };
 
@@ -158,7 +159,7 @@ export const deleteSavedQueryTool: ToolDefinition<typeof deleteInput> = {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
     }
     const removed = ctx.savedQueries.delete(input.name);
-    return ctx.output!.fromInlineRows(
+    return listEnvelope(
       [{ name: input.name, removed: String(removed) }],
       removed ? `Deleted saved query "${input.name}".` : `No saved query named "${input.name}".`,
     );

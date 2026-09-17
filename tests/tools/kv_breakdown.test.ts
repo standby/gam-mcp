@@ -6,14 +6,11 @@ import type { GAMClient, ReportQuery, DateRange } from '../../src/gam-client.js'
 // A full GAMClient spy over the new report path (defineReport → runReport →
 // pollOperation → fetchRows), used where the fixture matcher in the mock
 // client isn't precise enough — this captures the exact query/dateRange the
-// tool hands to GAM. The legacy members throw so the interface stays
-// satisfied without pretending they're exercised.
+// tool hands to GAM.
 function spyClient(onDefine: (query: ReportQuery, dateRange: DateRange) => void): GAMClient {
   return {
     async listEntities() { return []; },
     async getResource() { return null; },
-    async createReport() { throw new Error('legacy path must not be used'); },
-    async downloadReport() { throw new Error('legacy path must not be used'); },
     async defineReport(query, dateRange) {
       onDefine(query, dateRange);
       return { report: `networks/${NETWORK}/reports/1` };
@@ -21,7 +18,7 @@ function spyClient(onDefine: (query: ReportQuery, dateRange: DateRange) => void)
     async runReport() { return { operation: `networks/${NETWORK}/operations/reports/runs/1` }; },
     async pollOperation() {
       const result = `networks/${NETWORK}/reports/1/results/1`;
-      return { state: 'done', download_url: result, result };
+      return { state: 'done', result };
     },
     async fetchRows() {
       return {

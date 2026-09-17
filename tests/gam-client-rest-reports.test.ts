@@ -28,7 +28,7 @@ describe('REST client report methods', () => {
     const { operation } = await client.runReport(report);
     expect(await client.pollOperation(operation)).toEqual({ state: 'running' });
     const done = await client.pollOperation(operation);
-    expect(done).toEqual({ state: 'done', result: `${report}/results/1`, download_url: `${report}/results/1` });
+    expect(done).toEqual({ state: 'done', result: `${report}/results/1` });
 
     const result = `${report}/results/1`;
     const p1 = await client.fetchRows(result, { pageSize: 2 });

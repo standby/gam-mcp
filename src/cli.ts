@@ -1,10 +1,6 @@
 #!/usr/bin/env node
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { startMcpServer, buildMcpServer, installStdoutGuard } from './server.js';
 import { connectHttp } from './http-transport.js';
-import { createOutputManager } from './output.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js';
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
 import { createReportCache } from './cache.js';
@@ -30,7 +26,6 @@ async function main(): Promise<void> {
 
   const networkCode = requiredEnv('GAM_NETWORK_CODE');
   const timezone = process.env.GAM_TIMEZONE ?? 'UTC';
-  const inlineThreshold = Number(process.env.GAM_INLINE_ROW_THRESHOLD ?? 200);
   const reportTimeoutMs = Number(process.env.GAM_REPORT_TIMEOUT_MS ?? 300_000);
 
   const logger = createLogger({ level: levelFromEnv(process.env) });
@@ -41,15 +36,19 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  if (process.env.GAM_INLINE_ROW_THRESHOLD !== undefined) {
+    logger.warn('config.ignored', {
+      variable: 'GAM_INLINE_ROW_THRESHOLD',
+      reason: 'results are paged; set GAM_PAGE_ROWS instead',
+    });
+  }
+
   const resolved = resolveAuthSource(process.env);
   if ('error' in resolved) {
     process.stderr.write(`gam-mcp: ${resolved.error.message}\n  hint: ${resolved.error.hint}\n`);
     process.exit(2);
   }
   logger.info('auth.source_resolved', { source: resolved.source.type });
-
-  const tempDir = mkdtempSync(join(tmpdir(), `gam-mcp-${process.pid}-`));
-  const output = createOutputManager({ tempDir, inlineThreshold });
 
   const auth = createGoogleAuth(resolved.source, logger);
   const authFetch = createAuthFetch(auth);
@@ -60,20 +59,13 @@ async function main(): Promise<void> {
   const usageCounters = createUsageCounters();
   const client = instrumentGamClient(rawClient, usageCounters);
 
-  const cleanup = () => {
-    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    process.exit(0);
-  };
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
-
   const reportCache = createReportCache({
     logger,
     ...(process.env.GAM_REPORT_CACHE_DIR && { diskDir: process.env.GAM_REPORT_CACHE_DIR }),
     ...(process.env.GAM_REPORT_CACHE_TTL_MS && { ttlMs: Number(process.env.GAM_REPORT_CACHE_TTL_MS) }),
   });
   const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
-  const ctx = { client, output, timezone, networkCode, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters, pageRows };
+  const ctx = { client, timezone, networkCode, pageRows, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters };
   if (httpPort !== null) {
     if (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535) {
       process.stderr.write(`gam-mcp: GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}\n`);

@@ -1,44 +1,44 @@
 import { describe, it, expect } from 'vitest';
 import { createUsageCounters, instrumentGamClient } from '../src/usage.js';
 import { createMockGamClient } from '../src/gam-client.js';
-import { gzipSync } from 'node:zlib';
 
 describe('UsageCounters + instrumentGamClient', () => {
   it('counts list_entities and report-job calls separately', async () => {
     const counters = createUsageCounters();
-    const csv = gzipSync(Buffer.from('date,revenue\n2026-04-01,100\n'));
     const inner = createMockGamClient({
       entities: { ad_unit: [{ id: 1, name: 'a' }] },
-      reports: [{ query: { dimensions: ['DATE'], metrics: ['REVENUE'] }, csvGz: csv }],
+      reports: [{ query: { dimensions: ['DATE'], metrics: ['REVENUE'] }, rows: [{ DATE: '2026-04-01', REVENUE: 100 }] }],
     });
     const wrapped = instrumentGamClient(inner, counters);
 
     await wrapped.listEntities({ entity_type: 'ad_unit', limit: 10 });
-    const op = await wrapped.createReport(
+    const { report } = await wrapped.defineReport(
       { dimensions: ['DATE'], metrics: ['REVENUE'] },
       { start: '2026-04-01', end: '2026-04-01' },
     );
-    await wrapped.pollOperation(op.operation_name); // running
-    await wrapped.pollOperation(op.operation_name); // done
+    const { operation } = await wrapped.runReport(report);
+    await wrapped.pollOperation(operation); // running
+    await wrapped.pollOperation(operation); // done
 
     expect(counters.list_entities_calls).toBe(1);
     expect(counters.report_jobs_created).toBe(1);
     expect(counters.poll_operations).toBe(2);
   });
 
-  it('accumulates report latency across createReport and pollOperation', async () => {
+  it('accumulates report latency across runReport and pollOperation', async () => {
     const counters = createUsageCounters();
     const inner = createMockGamClient({
       reports: [{
         query: { dimensions: ['DATE'], metrics: ['REVENUE'] },
-        csvGz: gzipSync(Buffer.from('date,revenue\n2026-04-01,100\n')),
+        rows: [{ DATE: '2026-04-01', REVENUE: 100 }],
       }],
     });
     const wrapped = instrumentGamClient(inner, counters);
-    await wrapped.createReport(
+    const { report } = await wrapped.defineReport(
       { dimensions: ['DATE'], metrics: ['REVENUE'] },
       { start: '2026-04-01', end: '2026-04-01' },
     );
+    await wrapped.runReport(report);
     expect(counters.cumulative_report_latency_ms).toBeGreaterThanOrEqual(0);
   });
 

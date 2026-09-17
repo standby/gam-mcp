@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
 
 const ENTITY_TYPES = [
   'advertiser', 'order', 'line_item', 'ad_unit', 'placement', 'company',
@@ -86,7 +87,7 @@ export const lookupTool: ToolDefinition<typeof inputSchema> = {
       : input.ids?.length
         ? ` matching ids ${JSON.stringify(input.ids)}`
         : '';
-    return ctx.output!.fromInlineRows(
+    return listEnvelope(
       rows,
       `${trimmed.length} ${input.entity_type}(s)${filterDesc}`,
       [

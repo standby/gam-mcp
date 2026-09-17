@@ -115,20 +115,16 @@ describe('log integration', () => {
     // Spy client over the new report path; deliberately stash the sentinel in
     // the result name — the OAuth-bearing value the logger must never see —
     // to make sure we'd catch it if instrumentation accidentally started
-    // logging it. Legacy members throw so the interface stays satisfied
-    // without pretending they're exercised.
+    // logging it.
     const spyClient: GAMClient = {
       async listEntities() { return []; },
       async getResource() { return null; },
-      async createReport() { throw new Error('legacy path must not be used'); },
-      async downloadReport() { throw new Error('legacy path must not be used'); },
       async defineReport() { return { report: 'networks/1234/reports/1' }; },
       async runReport() { return { operation: `op/${SENTINEL}` }; },
       async pollOperation() {
         return {
           state: 'done',
           result: `networks/1234/reports/1/results/1?access_token=${SENTINEL}`,
-          download_url: `networks/1234/reports/1/results/1?access_token=${SENTINEL}`,
         };
       },
       async fetchRows() {

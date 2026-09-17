@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { GAM_SCHEMA, REPORT_TYPES, SUPPORTED_REPORT_TYPES } from '../schema.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
 
 // GAM declares ~1290 dimensions and metrics. Returning all of them with prose
 // would swamp the caller's context, so an unfiltered call returns names and
@@ -44,7 +45,7 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
 
     const reportType = input.report_type?.toUpperCase();
     if (reportType && !(REPORT_TYPES as readonly string[]).includes(reportType)) {
-      return ctx.output!.fromInlineRows(
+      return listEnvelope(
         [],
         `Unknown report_type '${input.report_type}'. Valid: ${REPORT_TYPES.join(', ')}`,
       );
@@ -115,6 +116,6 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
       ] : []),
     ];
 
-    return ctx.output!.fromInlineRows(rows, `GAM schema — ${bits.join('; ')}`, schema);
+    return listEnvelope(rows, `GAM schema — ${bits.join('; ')}`, schema);
   },
 };

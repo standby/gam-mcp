@@ -1,7 +1,6 @@
 import { z, type ZodTypeAny } from 'zod';
 import { executeReport } from './report-exec.js';
 import type { GAMClient, ReportQuery, DateRange } from './gam-client.js';
-import type { OutputManager, OutputEnvelope } from './output.js';
 import type { ReportCache } from './cache.js';
 import type { Logger } from './log.js';
 import type { SavedQueryStore } from './saved-queries.js';
@@ -25,8 +24,6 @@ export type ToolContext = {
   reportCache?: ReportCache;
   savedQueries?: SavedQueryStore;
   usageCounters?: UsageCounters;
-  // Legacy; removed once every tool uses envelope.ts.
-  output?: OutputManager;
 };
 
 // Tools that return a nested configuration object rather than report rows
@@ -42,7 +39,7 @@ export type ToolDefinition<I extends ZodTypeAny> = {
   handler: (
     input: z.infer<I>,
     ctx: ToolContext,
-  ) => Promise<ResultEnvelope | OutputEnvelope | JsonEnvelope | GamErrorEnvelope>;
+  ) => Promise<ResultEnvelope | JsonEnvelope | GamErrorEnvelope>;
 };
 
 export type ReportToolConfig<I extends ZodTypeAny> = {
