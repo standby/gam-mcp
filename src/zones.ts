@@ -9,10 +9,16 @@ const DAY = 24 * 60 * MINUTE;
 const STEP = 15 * MINUTE;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-// The canonical IANA name for a zone, or null if this runtime does not know it.
+// The canonical IANA name for a zone, or null if this runtime does not know
+// it, or if `name` is a raw UTC offset (e.g. "+08:00", "-0500") rather than an
+// IANA zone name — Node's Intl accepts offsets as a timeZone value, but the
+// documented rule is an IANA name only. Etc/GMT-8 and similar stay accepted:
+// they're spelled with a leading letter, so they're IANA names, not offsets.
 export function canonicalTimeZone(name: string): string | null {
   try {
-    return new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone;
+    const canonical = new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone;
+    if (canonical.startsWith('+') || canonical.startsWith('-')) return null;
+    return canonical;
   } catch {
     return null;
   }

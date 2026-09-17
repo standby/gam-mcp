@@ -49,6 +49,13 @@ describe('readSettings', () => {
     expect(r.error).toContain('Mars/Olympus');
   });
 
+  it('D4 (fix round 1): a raw UTC offset is not an IANA name, and the error names GAM_TIMEZONE', () => {
+    const r = readSettings({ ...CODE, GAM_TIMEZONE: '+08:00' });
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain('GAM_TIMEZONE');
+    expect(r.error).toContain('+08:00');
+  });
+
   it.each([
     ['GAM_REPORT_TIMEOUT_MS', '0'],
     ['GAM_REPORT_TIMEOUT_MS', 'soon'],

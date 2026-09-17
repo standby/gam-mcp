@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   const httpPort = process.env.GAM_HTTP_PORT ? Number(process.env.GAM_HTTP_PORT) : null;
   if (httpPort === null) installStdoutGuard();
   if (httpPort !== null && (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535)) {
-    stop(`GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}`);
+    stop(`GAM_HTTP_PORT must be a valid port number, got ${JSON.stringify(process.env.GAM_HTTP_PORT)}`);
   }
 
   // Everything that can be checked without the network is checked first.

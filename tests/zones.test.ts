@@ -8,6 +8,16 @@ describe('canonicalTimeZone', () => {
     expect(canonicalTimeZone('Mars/Olympus')).toBeNull();
     expect(canonicalTimeZone('')).toBeNull();
   });
+
+  it('fix round 1: refuses a raw UTC offset — Node accepts it as a timeZone, but it is not an IANA name', () => {
+    expect(canonicalTimeZone('+08:00')).toBeNull();
+    expect(canonicalTimeZone('-0500')).toBeNull();
+  });
+
+  it('fix round 1: Etc/GMT offsets stay accepted — spelled with a leading letter, so they are IANA names', () => {
+    expect(canonicalTimeZone('Etc/GMT-8')).toBe('Etc/GMT-8');
+    expect(canonicalTimeZone('asia/seoul')).toBe('Asia/Seoul');
+  });
 });
 
 describe('offsetMinutes', () => {

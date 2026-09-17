@@ -75,9 +75,28 @@ describe('startup (real process)', () => {
     expect(r.stderr).not.toContain('auth.source_resolved');
   }, 30_000);
 
-  // Ruling (added after Task 7 review): the process never even reaches HTTP
-  // serving when the identity check fails — checkNetworkIdentity runs before
-  // connectHttp, so http.listening must never appear in stderr.
+  // Fix round 1: an invalid GAM_HTTP_PORT was printed unquoted, so a value
+  // containing a newline could fake a line on stderr — including a fake
+  // http.listening log line a deployer's monitoring might match on. Quoting
+  // the value keeps it on one line inside the error message.
+  it('fix round 1: a GAM_HTTP_PORT containing a fake log line cannot inject that line into stderr', () => {
+    const injected = '8080\n{"level":"info","msg":"http.listening"}';
+    const r = start({ GAM_HTTP_PORT: injected, GAM_SERVICE_ACCOUNT_KEY_FILE: '/nonexistent/key.json' });
+    expect(r.status).toBe(2);
+    const fakedLogLine = (r.stderr ?? '').split('\n').some((line) => {
+      try {
+        const parsed = JSON.parse(line) as { msg?: unknown };
+        return parsed.msg === 'http.listening';
+      } catch {
+        return false;
+      }
+    });
+    expect(fakedLogLine).toBe(false);
+  }, 30_000);
+
+  // An unusable credential stops HTTP mode before it listens: the identity
+  // check runs before the HTTP transport is started, so http.listening must
+  // never appear in stderr.
   it('D2: GAM_HTTP_PORT set with an unusable credential stops startup with exit 2 and never logs http.listening', () => {
     const r = start({
       GAM_HTTP_PORT: '38181',
@@ -88,19 +107,18 @@ describe('startup (real process)', () => {
     expect(r.stderr).not.toContain('http.listening');
   }, 30_000);
 
-  // Ruling (added after Task 7 review): a malformed GAM_SERVICE_ACCOUNT_KEY_JSON
-  // built the way Task 7's fix round 1 built its malformed input (see
-  // task-7-report.md, "Fix round 1"): an unquoted sentinel value forces
-  // Node's JSON.parse error to quote a slice of the raw text starting right
-  // at the sentinel — not every malformed string makes Node's parser echo
-  // its input, this construction reliably does. Confirms end-to-end, through
-  // the real process, that resolveAuthSource's fixed sentence (Task 7 fix
-  // round 1) is what actually reaches stderr, never a parser-echoed slice.
+  // Node's JSON parser quotes part of its input in some of its error
+  // messages, so the input here is built to trigger that (an unquoted value
+  // makes the parser's error quote a slice of raw text starting right at the
+  // sentinel — not every malformed string does this) and the test checks
+  // none of that reaches stderr.
   it('D2: a malformed GAM_SERVICE_ACCOUNT_KEY_JSON stops startup with exit 2, quoting neither the sentinel nor the value', () => {
     const SENTINEL = 'SENTINEL_KEY_MATERIAL';
     const MALFORMED = `{"private_key": ${SENTINEL}}`;
     const r = start({ GAM_SERVICE_ACCOUNT_KEY_JSON: MALFORMED });
     expect(r.status).toBe(2);
+    // Fix round 1: pins where startup actually stopped, not just that it did.
+    expect(r.stderr).toContain('GAM_SERVICE_ACCOUNT_KEY_JSON is not valid JSON');
     expect(r.stderr).not.toContain(SENTINEL);
     for (let i = 0; i + 8 <= MALFORMED.length; i++) {
       expect(r.stderr).not.toContain(MALFORMED.slice(i, i + 8));
