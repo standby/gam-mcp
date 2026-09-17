@@ -110,6 +110,23 @@ describe('result cache (spec §2.5)', () => {
     c.delete(KEY);
     expect(c.get(KEY)).toBeUndefined();
   });
+
+  it('deletes with a result only an entry that still names it or the operation that produced it', () => {
+    const c = createReportCache();
+    c.putDone(KEY, DONE);
+    c.delete(KEY, { result: 'networks/1234/reports/1/results/9' });
+    expect(c.get(KEY)).toMatchObject({ kind: 'done', result: DONE.result });
+    c.delete(KEY, { result: DONE.result });
+    expect(c.get(KEY)).toBeUndefined();
+
+    c.putPending(KEY, PENDING);
+    // A result with no known operation says nothing about a pending run.
+    c.delete(KEY, { result: DONE.result });
+    c.delete(KEY, { result: DONE.result, operation: 'networks/1234/operations/reports/runs/9' });
+    expect(c.get(KEY)).toMatchObject({ kind: 'pending', operation: PENDING.operation });
+    c.delete(KEY, { result: DONE.result, operation: PENDING.operation });
+    expect(c.get(KEY)).toBeUndefined();
+  });
 });
 
 describe('result cache disk tier (E6)', () => {
@@ -134,6 +151,15 @@ describe('result cache disk tier (E6)', () => {
     c.putPending(KEY, PENDING);
     expect(createReportCache({ diskDir: dir }).get(KEY)?.kind).toBe('pending');
     c.delete(KEY);
+    expect(existsSync(join(dir, `${KEY}.json`))).toBe(false);
+  }));
+
+  it('checks an entry only on disk before a conditional delete', () => withDir((dir) => {
+    createReportCache({ diskDir: dir }).putDone(KEY, DONE);
+    const fresh = createReportCache({ diskDir: dir });
+    fresh.delete(KEY, { result: 'networks/1234/reports/1/results/9' });
+    expect(existsSync(join(dir, `${KEY}.json`))).toBe(true);
+    fresh.delete(KEY, { result: DONE.result });
     expect(existsSync(join(dir, `${KEY}.json`))).toBe(false);
   }));
 

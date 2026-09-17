@@ -27,6 +27,15 @@ export type PendingEntry = {
 
 export type CacheEntry = DoneEntry | PendingEntry;
 
+// A result, and the operation that produced it when that is known.
+export type ResultRef = { result: string; operation?: string };
+
+// Whether an entry is about this result: a done entry that holds it, or a
+// pending entry for the operation that produced it.
+export function names(entry: CacheEntry, ref: ResultRef): boolean {
+  return entry.kind === 'done' ? entry.result === ref.result : entry.operation === ref.operation;
+}
+
 export type ReportCache = {
   // The live entry for a key (a definition hash). A done entry counts as a
   // hit; no entry, or a pending one, counts as a miss.
@@ -34,7 +43,9 @@ export type ReportCache = {
   putDone(key: string, entry: Omit<DoneEntry, 'kind' | 'stored_at'>): void;
   // A pending run recorded again keeps its original started_at.
   putPending(key: string, entry: { report: string; operation: string; started_at?: string }): void;
-  delete(key: string): void;
+  // Removes the entry for a key. With `only`, removes it only while it still
+  // names that result, so an entry another call has since replaced survives.
+  delete(key: string, only?: ResultRef): void;
   size(): number;
   // Session hit and miss counts, for usage_stats.
   stats(): { hits: number; misses: number };
@@ -194,7 +205,13 @@ export function createReportCache(opts: {
     putPending(key, e) {
       put(key, { kind: 'pending', report: e.report, operation: e.operation, started_at: e.started_at ?? iso(now()) });
     },
-    delete: remove,
+    delete(key, only) {
+      if (only) {
+        const current = memory.get(key) ?? readDisk(key);
+        if (!current || !names(current, only)) return;
+      }
+      remove(key);
+    },
     size: () => memory.size,
     stats: () => ({ hits, misses }),
   };

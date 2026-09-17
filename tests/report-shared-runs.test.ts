@@ -5,6 +5,7 @@ import { definitionHash } from '../src/report-key.js';
 import { createLogger } from '../src/log.js';
 import { createFakeGam, int } from './fake-gam.js';
 import { counted, definitionFor, NETWORK, ok, restCtx } from './helpers.js';
+import type { ToolContext } from '../src/report-tool-builder.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
@@ -13,6 +14,28 @@ const rows = [{ AD_UNIT_ID: 1, IMPRESSIONS: 5 }];
 const KEY = definitionHash(definitionFor(query, RANGE));
 const operation = (run: number) => `networks/${NETWORK}/operations/reports/runs/${run}`;
 const result = (run: number) => `networks/${NETWORK}/reports/1/results/${run}`;
+
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => { open = resolve; });
+  return { open, opened };
+}
+
+// Holds the client's `n`th fetchRows call until the returned gate opens.
+function holdFetch(ctx: ToolContext, n: number) {
+  const held = gate();
+  const inner = ctx.client;
+  let calls = 0;
+  ctx.client = {
+    ...inner,
+    fetchRows: async (r, p) => {
+      calls += 1;
+      if (calls === n) await held.opened;
+      return inner.fetchRows(r, p);
+    },
+  };
+  return held;
+}
 
 describe('shared runs (spec §2.6)', () => {
   it('F1: two concurrent identical calls share one create, run and poll sequence', async () => {
@@ -119,6 +142,49 @@ describe('shared runs (spec §2.6)', () => {
     fail = false;
     expect(ok(await executeReport(ctx, request)).provenance.result).toBe(result(1));
     expect(counters.report_jobs_created).toBe(1);
+  });
+
+  it('a caller that finds a cached result gone after another caller ran the report again uses the fresh result', async () => {
+    const expired: string[] = [];
+    const cache = createReportCache();
+    const { ctx, counters } = counted({ reports: [{ query, rows }], expiredResults: expired }, { reportCache: cache });
+    ok(await executeReport(ctx, request));
+    expired.push(result(1));
+    // Both calls hit result 1; the second one's fetch is held until the first
+    // has run the report again and recorded result 2.
+    const second = holdFetch(ctx, 2);
+    const a = executeReport(ctx, request);
+    const b = executeReport(ctx, { ...request, tool: 'second_tool' });
+    expect(ok(await a).provenance).toMatchObject({ result: result(2), cache: { hit: false } });
+    expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: result(2) });
+    second.open();
+    expect(ok(await b).provenance).toMatchObject({ result: result(2), cache: { hit: true } });
+    expect(counters.report_jobs_created).toBe(2);
+    expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: result(2) });
+  });
+
+  it('a caller that finds a resumed result gone does not wait on that run again', async () => {
+    const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
+    const expired: string[] = [];
+    const cache = createReportCache();
+    const { ctx, counters } = counted(
+      { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
+      { reportCache: cache, reportTimeoutMs: 0 },
+    );
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
+    delete outcomes[1];
+    expired.push(result(1));
+    // Both calls wait on the resumed run 1. The leader's fetch is held, so the
+    // joiner finds result 1 gone while that run is still registered.
+    const leader = holdFetch(ctx, 1);
+    const later = { ...ctx, reportTimeoutMs: 60_000 };
+    const a = executeReport(later, request);
+    const b = executeReport(later, { ...request, tool: 'second_tool' });
+    expect(ok(await b).provenance).toMatchObject({ result: result(2), cache: { hit: false } });
+    leader.open();
+    expect(ok(await a).provenance).toMatchObject({ result: result(2), cache: { hit: true } });
+    expect(counters.report_jobs_created).toBe(2);
+    expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: result(2) });
   });
 });
 

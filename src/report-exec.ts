@@ -19,7 +19,7 @@ import { definitionWarnings } from './report-warnings.js';
 import { zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
 import { findOrCreateReport } from './report-reuse.js';
-import type { DoneEntry, PendingEntry } from './cache.js';
+import { names, type DoneEntry, type PendingEntry, type ResultRef } from './cache.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
 export const DEFAULT_PAGE_ROWS = 5_000;
@@ -112,8 +112,9 @@ function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorE
 // `resumed` is true when this came from waiting on a run a timed-out (or
 // otherwise interrupted) call left behind: like a cached result, its result
 // may already be gone by the time it's fetched, so firstPage retries once
-// rather than treating that as a hard failure.
-type Obtained = { report: string; result: string; cached: DoneEntry | null; resumed: boolean };
+// rather than treating that as a hard failure. `operation` is the run that
+// produced the result, when this process waited on it.
+type Obtained = { report: string; result: string; operation?: string; cached: DoneEntry | null; resumed: boolean };
 
 // Finds or creates the report for `key` and runs it, or resumes the run a
 // timed-out call left behind, then waits. A wait that ends because GAM says
@@ -137,7 +138,7 @@ async function runOnce(
     operation = (await ctx.client.runReport(report)).operation;
   }
   const done = await pollUntilDone(ctx, operation);
-  if (!('error' in done)) return { report, result: done.result, cached: null, resumed: pending !== undefined };
+  if (!('error' in done)) return { report, result: done.result, operation, cached: null, resumed: pending !== undefined };
   if (done.error.code === 'REPORT_FAILED') {
     ctx.reportCache?.delete(key);
   } else {
@@ -158,22 +159,31 @@ type ObtainedRun = {
   release?: () => void;
 };
 
+// A result GAM no longer serves, and the promise it came from.
+type Stale = { promise: Promise<Obtained | GamErrorEnvelope>; ref: ResultRef };
+
 // Spec §2.1 steps 3–6: join an identical run in flight, else use a live
-// cached result, else resume a timed-out run, else start one.
+// cached result, else resume a timed-out run, else start one. On the retry
+// after a gone result (`stale`), the flight that produced it is retired rather
+// than joined, and a cache entry that still names it is passed over; anything
+// another call has put in their place since is used as usual.
 function obtainResult(
   ctx: ToolContext,
   definition: ReportDefinition,
   key: string,
   tool: string,
-  useCache: boolean,
+  stale: Stale | undefined,
 ): ObtainedRun {
   const { flights } = clientMemory(ctx);
   const joined = flights.get(key);
-  if (joined) {
+  if (joined && joined === stale?.promise) {
+    flights.delete(key);
+  } else if (joined) {
     ctx.logger.info('report.shared', { tool, key: key.slice(0, 16) });
     return { promise: joined };
   }
-  const entry = useCache ? ctx.reportCache?.get(key) : undefined;
+  const found = ctx.reportCache?.get(key);
+  const entry = found && stale && names(found, stale.ref) ? undefined : found;
   if (entry?.kind === 'done') {
     ctx.logger.info('report.cache_hit', { tool, key: key.slice(0, 16), result: entry.result, run_time: entry.run_time });
     return { promise: Promise.resolve({ report: entry.report, result: entry.result, cached: entry, resumed: false }) };
@@ -240,8 +250,9 @@ async function firstPage(
 ): Promise<FirstPage | GamErrorEnvelope> {
   // One function names the report and keys the cache (spec §2.2, test E7).
   const key = definitionHash(definition);
-  for (let attempt = 0; ; attempt++) {
-    const obtained = obtainResult(ctx, definition, key, tool, attempt === 0);
+  let stale: Stale | undefined;
+  for (;;) {
+    const obtained = obtainResult(ctx, definition, key, tool, stale);
     // The flight (if this call is its leader) stays registered through this
     // whole attempt — including the fetch and the `done` record below — so a
     // call arriving before that finishes still joins instead of starting a
@@ -253,12 +264,15 @@ async function firstPage(
       try {
         page = await ctx.client.fetchRows(got.result, { pageSize });
       } catch (e) {
-        // A cached or resumed result GAM no longer serves is dropped and the
-        // report run once more. A result from a fresh run that is already
-        // gone is an error.
-        if (e instanceof ResultUnavailableError && (got.cached || got.resumed) && attempt === 0) {
+        // A cached or resumed result GAM no longer serves is dropped (unless
+        // another call has already replaced it) and the report is obtained
+        // once more. A result from a fresh run, or from that second attempt,
+        // that is already gone is an error.
+        if (e instanceof ResultUnavailableError && (got.cached || got.resumed) && !stale) {
           ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
-          ctx.reportCache?.delete(key);
+          const ref: ResultRef = { result: got.result, operation: got.operation };
+          ctx.reportCache?.delete(key, ref);
+          stale = { promise: obtained.promise, ref };
           continue;
         }
         throw e;
