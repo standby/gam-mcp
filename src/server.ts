@@ -14,7 +14,6 @@ import { GAM_SCHEMA } from './schema.js';
 import { PROMPTS, renderPrompt } from './prompts.js';
 import type { ToolContext, ToolDefinition } from './report-tool-builder.js';
 import { gamError, isGamError } from './errors.js';
-import type { ZodTypeAny } from 'zod';
 import { toJsonSchema } from './json-schema.js';
 import { describeInputError } from './tool-input.js';
 
@@ -87,7 +86,7 @@ export function installStdoutGuard(): () => void {
 // supporting alternate transports.
 export function buildMcpServer(
   ctx: ToolContext,
-  opts: { networkCode: string; tools?: ToolDefinition<ZodTypeAny>[] } = { networkCode: '' },
+  opts: { networkCode: string; tools?: ToolDefinition[] } = { networkCode: '' },
 ): Server {
   const tools = opts.tools ?? ALL_TOOLS;
   const server = new Server(

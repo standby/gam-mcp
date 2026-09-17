@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 
-const inputSchema = z.object({});
+const inputSchema = z.object({}).strict();
 
 export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
   name: 'health_check',

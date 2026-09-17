@@ -11,27 +11,31 @@ import { executeReport } from '../report-exec.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
-import { dateRangeInput } from '../tool-input.js';
-
-const filterSchema = z.object({
-  field: z.string(),
-  // GAM has no EQUALS/NOT_EQUALS — use IN/NOT_IN with a single value (the
-  // = / != aliases here translate that). CONTAINS/NOT_CONTAINS do substring
-  // match on string fields (e.g., AD_UNIT_NAME CONTAINS "sports").
-  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
-  value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
-});
+import { dateRangeInput, filterInput } from '../tool-input.js';
 
 const inputSchema = z.object({
-  dimensions: z.array(z.string()).min(1).max(10),
-  metrics: z.array(z.string()).min(1).max(20),
-  date_range: dateRangeInput('The dates to report on. Historical reports must end by yesterday; a forecast (sell-through metrics) must start today or later and be given as dates.'),
-  filters: z.array(filterSchema).optional(),
+  dimensions: z.array(z.string()).min(1).max(10)
+    .describe('1-10 dimension names from describe_schema, in the column order wanted.'),
+  metrics: z.array(z.string()).min(1).max(20)
+    .describe(
+      '1-20 metric names from describe_schema, in the column order wanted. The metrics choose the report type; ' +
+      'metrics of different report types cannot be mixed.',
+    ),
+  date_range: dateRangeInput(
+    'The dates to report on: { start, end } or { relative }. A historical report must end by yesterday; ' +
+    'a sell-through forecast must start today or later and be given as dates. Dates are judged in the date time zone (GAM_TIMEZONE).',
+  ),
+  filters: z.array(filterInput).optional()
+    .describe('Conditions every row must meet; all of them apply.'),
   // Required when querying CUSTOM_DIMENSION_<N>_VALUE dimensions. Index N in
   // the dimension name maps to index N in this array (i.e., slot 0 = key at
   // index 0). Find IDs via lookup(entity_type='custom_targeting_key').
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
-});
+  custom_dimension_key_ids: z.array(z.number().int().positive()).optional()
+    .describe(
+      'Custom targeting key IDs for CUSTOM_DIMENSION_<N>_VALUE dimensions: the ID at index N fills slot N. ' +
+      'Find them with lookup(entity_type="custom_targeting_key").',
+    ),
+}).strict();
 
 export const runReportTool: ToolDefinition<typeof inputSchema> = {
   name: 'run_report',

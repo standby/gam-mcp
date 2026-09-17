@@ -21,15 +21,21 @@ type Cause =
   | 'mixed';
 
 const inputSchema = z.object({
-  ad_unit_query: z.string().min(1).optional(),
-  ad_unit_ids: z.array(z.number().int().positive()).optional(),
-  lookback_days: z.number().int().min(1).max(90).default(7),
-  comparison: z.enum(['previous_period', 'none']).default('previous_period'),
-  top_n: z.number().int().min(1).max(200).default(25),
+  ad_unit_query: z.string().min(1).optional()
+    .describe('Only ad units whose name contains this text.'),
+  ad_unit_ids: z.array(z.number().int().positive()).optional()
+    .describe('Only these ad units.'),
+  lookback_days: z.number().int().min(1).max(90).default(7)
+    .describe('How many complete days, ending yesterday, to diagnose, 1-90.'),
+  comparison: z.enum(['previous_period', 'none']).default('previous_period')
+    .describe('"previous_period" also reads the same number of days just before, which the demand_collapse cause needs; "none" skips it.'),
+  top_n: z.number().int().min(1).max(200).default(25)
+    .describe('Most ad units to return, 1-200.'),
   // Skip ad units with fewer than this many AD_REQUESTS over the window —
   // brand-new or near-dormant inventory creates noisy "fill 0%" rows.
-  min_requests: z.number().int().min(0).default(1000),
-});
+  min_requests: z.number().int().min(0).default(1000)
+    .describe('Skip ad units with fewer ad requests than this in the window.'),
+}).strict();
 
 export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
   name: 'diagnose_fill_rate',

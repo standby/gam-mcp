@@ -3,7 +3,7 @@ import { gamError } from '../errors.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 
-const inputSchema = z.object({});
+const inputSchema = z.object({}).strict();
 
 export const usageStatsTool: ToolDefinition<typeof inputSchema> = {
   name: 'usage_stats',

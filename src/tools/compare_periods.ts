@@ -6,28 +6,27 @@ import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
-import { dateField, dateRangeInput } from '../tool-input.js';
-
-const filterSchema = z.object({
-  field: z.string(),
-  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
-  value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
-});
+import { dateField, dateRangeInput, filterInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const inputSchema = z.object({
-  dimensions: z.array(z.string()).min(1).max(10),
-  metrics: z.array(z.string()).min(1).max(10),
-  base_range: dateRangeInput('The period to compare; it must end by yesterday.'),
+  dimensions: z.array(z.string()).min(1).max(10)
+    .describe('1-10 dimension names from describe_schema; rows of the two periods are matched on all of them.'),
+  metrics: z.array(z.string()).min(1).max(10)
+    .describe('1-10 metric names from describe_schema to compare.'),
+  base_range: dateRangeInput(HISTORICAL_RANGE),
   comparison: z.union([
-    z.enum(['previous_period', 'previous_year']),
+    z.enum(['previous_period', 'previous_year'])
+      .describe('"previous_period": the same number of days just before; "previous_year": the same dates a year earlier.'),
     z.object({
       start: dateField('First day of the comparison period, inclusive, as YYYY-MM-DD.'),
-      end: dateField('Last day of the comparison period, inclusive, as YYYY-MM-DD; by yesterday.'),
-    }).strict(),
-  ]),
-  filters: z.array(filterSchema).optional(),
-  top_n: z.number().int().min(1).max(500).default(50),
-});
+      end: dateField('Last day of the comparison period, inclusive, as YYYY-MM-DD. It must be yesterday or earlier.'),
+    }).strict().describe('Explicit comparison dates.'),
+  ]).describe('The period to compare base_range with.'),
+  filters: z.array(filterInput).optional()
+    .describe('Conditions every row must meet in both periods; all of them apply.'),
+  top_n: z.number().int().min(1).max(500).default(50)
+    .describe('Most rows to return, 1-500, largest first by the first metric.'),
+}).strict();
 
 export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
   name: 'compare_periods',

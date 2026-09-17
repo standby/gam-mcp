@@ -4,7 +4,7 @@ import type { ToolDefinition } from '../report-tool-builder.js';
 
 const inputSchema = z.object({
   cursor: z.string().min(1).describe('The next_cursor value from an earlier report result, passed back unchanged.'),
-});
+}).strict();
 
 export const fetchReportPageTool: ToolDefinition<typeof inputSchema> = {
   name: 'fetch_report_page',

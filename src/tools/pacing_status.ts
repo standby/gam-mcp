@@ -5,9 +5,11 @@ import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const inputSchema = z.object({
-  line_item_ids: z.array(z.number().int().positive()).optional(),
-  order_ids: z.array(z.number().int().positive()).optional(),
-});
+  line_item_ids: z.array(z.number().int().positive()).optional()
+    .describe('Only these line items.'),
+  order_ids: z.array(z.number().int().positive()).optional()
+    .describe('Only line items of these orders.'),
+}).strict();
 
 export const pacingStatusTool: ToolDefinition<typeof inputSchema> = {
   name: 'pacing_status',

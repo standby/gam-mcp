@@ -34,9 +34,8 @@ import {
   deleteSavedQueryTool,
 } from './saved_queries.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
-import type { ZodTypeAny } from 'zod';
 
-export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
+export const ALL_TOOLS: ToolDefinition[] = [
   lookupTool,
   describeSchemaTool,
   describeLineItemTool,
@@ -70,4 +69,4 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   listSavedQueriesTool,
   runSavedQueryTool,
   deleteSavedQueryTool,
-] as unknown as ToolDefinition<ZodTypeAny>[];
+];

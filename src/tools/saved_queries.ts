@@ -4,32 +4,33 @@ import { validateCombo } from '../schema.js';
 import { runReportTool } from './run_report.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
-import { dateRangeInput } from '../tool-input.js';
-
-const filterSchema = z.object({
-  field: z.string(),
-  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
-  value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
-});
+import { dateRangeInput, filterInput } from '../tool-input.js';
 
 const savedBodySchema = z.object({
   dimensions: z.array(z.string()).min(1).max(10),
   metrics: z.array(z.string()).min(1).max(20),
-  filters: z.array(filterSchema).optional(),
+  filters: z.array(filterInput).optional(),
   custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
 });
 
 // ------------------------------- save_query -------------------------------
 
 const saveInput = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, 'name must be alphanumeric / _ / -'),
-  description: z.string().max(500).optional(),
-  dimensions: z.array(z.string()).min(1).max(10),
-  metrics: z.array(z.string()).min(1).max(20),
-  filters: z.array(filterSchema).optional(),
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
-  replace: z.boolean().default(false),
-});
+  name: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, 'name must be alphanumeric / _ / -')
+    .describe('Name to save the template under: letters, digits, _ and -, at most 64 characters.'),
+  description: z.string().max(500).optional()
+    .describe('What the template is for, at most 500 characters.'),
+  dimensions: z.array(z.string()).min(1).max(10)
+    .describe('1-10 dimension names, as run_report takes them.'),
+  metrics: z.array(z.string()).min(1).max(20)
+    .describe('1-20 metric names, as run_report takes them.'),
+  filters: z.array(filterInput).optional()
+    .describe('Filters, as run_report takes them.'),
+  custom_dimension_key_ids: z.array(z.number().int().positive()).optional()
+    .describe('Custom targeting key IDs for CUSTOM_DIMENSION_<N>_VALUE dimensions, as run_report takes them.'),
+  replace: z.boolean().default(false)
+    .describe('Overwrite a template that already has this name. Without it, saving under a taken name fails.'),
+}).strict();
 
 export const saveQueryTool: ToolDefinition<typeof saveInput> = {
   name: 'save_query',
@@ -74,7 +75,7 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
 
 // ---------------------------- list_saved_queries --------------------------
 
-const listInput = z.object({});
+const listInput = z.object({}).strict();
 
 export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
   name: 'list_saved_queries',
@@ -99,9 +100,9 @@ export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
 // ---------------------------- run_saved_query -----------------------------
 
 const runInput = z.object({
-  name: z.string().min(1),
-  date_range: dateRangeInput('The dates to replay the saved query over, with the same rules as run_report.'),
-});
+  name: z.string().min(1).describe('The saved template to run.'),
+  date_range: dateRangeInput('The dates to run the template over, with the same rules as run_report.'),
+}).strict();
 
 export const runSavedQueryTool: ToolDefinition<typeof runInput> = {
   name: 'run_saved_query',
@@ -139,7 +140,9 @@ export const runSavedQueryTool: ToolDefinition<typeof runInput> = {
 
 // ---------------------------- delete_saved_query --------------------------
 
-const deleteInput = z.object({ name: z.string().min(1) });
+const deleteInput = z.object({
+  name: z.string().min(1).describe('The saved template to delete.'),
+}).strict();
 
 export const deleteSavedQueryTool: ToolDefinition<typeof deleteInput> = {
   name: 'delete_saved_query',

@@ -27,7 +27,7 @@ const inputSchema = z.object({
     .describe('Force descriptions on or off. Defaults to on when any filter is set, off otherwise.'),
   limit: z.number().int().min(1).max(1000).default(300)
     .describe('Maximum entries to return.'),
-});
+}).strict();
 
 export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
   name: 'describe_schema',

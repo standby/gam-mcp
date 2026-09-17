@@ -6,27 +6,34 @@ import { executeReport } from '../report-exec.js';
 import { makeKvResolver, parseKvPair } from '../kv-rewrite.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
-import { dateRangeInput } from '../tool-input.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const inputSchema = z.object({
   // KV pair to slice on, in `key=value` form (e.g. `channel_id=479`). The
   // key is resolved to a custom_targeting_key ID via lookup, then plugged
   // into CUSTOM_DIMENSION_<N>_VALUE so the report is compatible with any
   // request-time or programmatic metric.
-  kv: z.string().regex(/^[^=]+=[^=]+$/, 'must be in key=value form'),
-  date_range: dateRangeInput('The dates to report on; the range must end by yesterday.'),
-  metrics: z.array(z.string()).min(1).max(20),
+  kv: z.string().regex(/^[^=]+=[^=]+$/, 'must be in key=value form')
+    .describe("The key-value pair to report on, as key=value, where key is the custom targeting key's API code."),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  metrics: z.array(z.string()).min(1).max(20)
+    .describe('1-20 metric names from describe_schema; request-time metrics such as AD_REQUESTS are allowed.'),
   // Optional narrowing. ad_unit_id is preferred; ad_unit_name does an exact
   // displayName lookup first. order_id and line_item_id apply AND filters
   // alongside the KV filter.
-  ad_unit_id: z.number().int().positive().optional(),
-  ad_unit_name: z.string().optional(),
-  order_id: z.number().int().positive().optional(),
-  line_item_id: z.number().int().positive().optional(),
+  ad_unit_id: z.number().int().positive().optional()
+    .describe('Only this ad unit.'),
+  ad_unit_name: z.string().optional()
+    .describe('Only the ad unit with exactly this name; ignored when ad_unit_id is given.'),
+  order_id: z.number().int().positive().optional()
+    .describe('Only this order.'),
+  line_item_id: z.number().int().positive().optional()
+    .describe('Only this line item.'),
   // Extra dimensions to group by, on top of the KV slot. Default: just the
   // slot itself (one row per KV value). Pass e.g. ['DATE'] for a daily trend.
-  dimensions: z.array(z.string()).max(9).default([]),
-});
+  dimensions: z.array(z.string()).max(9).default([])
+    .describe('Up to 9 more dimensions to split each value by, e.g. ["DATE"] for a daily trend.'),
+}).strict();
 
 export const kvReportTool: ToolDefinition<typeof inputSchema> = {
   name: 'kv_report',

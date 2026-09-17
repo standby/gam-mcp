@@ -1,4 +1,4 @@
-import { z, type ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import { executeReport } from './report-exec.js';
 import type { GAMClient, ReportQuery } from './gam-client.js';
 import { rangeRuleFor, resolveDateRange, type DateRangeInput, type ResolvedRange } from './dates.js';
@@ -40,18 +40,19 @@ export type ToolContext = {
 // orientation regardless of shape.
 export type JsonEnvelope = { summary: string; [k: string]: unknown };
 
-export type ToolDefinition<I extends ZodTypeAny> = {
+// Every tool input is a strict object: an unknown key is refused, not
+// dropped (spec §3.1). A tool whose input is not strict does not typecheck.
+export type ToolInput = z.ZodObject<z.ZodRawShape, 'strict'>;
+
+export type ToolDefinition<I extends ToolInput = ToolInput> = {
   name: string;
   description: string;
   input: I;
-  handler: (
-    input: z.infer<I>,
-    ctx: ToolContext,
-  ) => Promise<ResultEnvelope | JsonEnvelope | GamErrorEnvelope>;
+  handler(input: z.infer<I>, ctx: ToolContext): Promise<ResultEnvelope | JsonEnvelope | GamErrorEnvelope>;
 };
 
-// A report tool's input always carries a date_range (spec §3.2).
-export type ReportToolInput = z.ZodType<{ date_range: DateRangeInput }, z.ZodTypeDef, unknown>;
+// A report tool's input is strict and always carries a date_range (spec §3.2).
+export type ReportToolInput = z.ZodObject<z.ZodRawShape, 'strict', z.ZodTypeAny, { date_range: DateRangeInput }>;
 
 export type ReportToolConfig<I extends ReportToolInput> = {
   name: string;

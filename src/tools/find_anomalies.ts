@@ -12,10 +12,12 @@ const inputSchema = z.object({
     'fill_rate_drops',
     'ecpm_regression',
     'viewability_drops',
-  ]),
-  threshold_pct: z.number().min(0).max(100).optional(),
-  top_n: z.number().int().min(1).max(200).default(25),
-});
+  ]).describe('Which anomaly to look for. Each kind reads threshold_pct in its own unit; see the tool description.'),
+  threshold_pct: z.number().min(0).max(100).optional()
+    .describe('How far from normal a row must be to be flagged, 0-100, in the unit of the chosen kind. Omit it for the kind\'s default.'),
+  top_n: z.number().int().min(1).max(200).default(25)
+    .describe('Most rows to return, 1-200, worst first.'),
+}).strict();
 
 export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
   name: 'find_anomalies',

@@ -30,7 +30,7 @@ const inputSchema = z.object({
     .describe('Skip ad units with fewer than this many AdX requests.'),
   top_n: z.number().int().min(1).max(200).default(25)
     .describe('Maximum rows to surface, ranked by estimated opportunity.'),
-});
+}).strict();
 
 export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
   name: 'diagnose_floor_pricing',

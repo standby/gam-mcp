@@ -6,6 +6,9 @@ import type { ToolContext } from '../src/report-tool-builder.js';
 import type { Provenance, ResultEnvelope } from '../src/envelope.js';
 import { createUsageCounters, instrumentGamClient, type UsageCounters } from '../src/usage.js';
 import type { FakeGam } from './fake-gam.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
 export const NETWORK = '1234';
 
@@ -59,4 +62,17 @@ export function counted(state: MockState, over: Partial<ToolContext> = {}): { ct
   const ctx = makeCtx(state, over);
   ctx.client = instrumentGamClient(ctx.client, counters);
   return { ctx, counters };
+}
+
+// An SDK client connected in memory to a built server.
+export async function connectClient(server: Server): Promise<Client> {
+  const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test', version: '0' });
+  await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  return client;
+}
+
+// The JSON a tool call returned.
+export function payloadOf(result: { content?: unknown }): any {
+  return JSON.parse((result.content as { text: string }[])[0].text);
 }

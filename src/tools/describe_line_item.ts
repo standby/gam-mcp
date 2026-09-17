@@ -19,7 +19,7 @@ const RESOLVE_BATCH = 20;
 const inputSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(50)
     .describe('Line item IDs to describe, 1-50 per call. Resolve names to IDs with lookup(entity_type="line_item").'),
-});
+}).strict();
 
 export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
   name: 'describe_line_item',

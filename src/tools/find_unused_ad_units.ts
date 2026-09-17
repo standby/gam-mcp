@@ -7,15 +7,18 @@ import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const inputSchema = z.object({
-  lookback_days: z.number().int().min(1).max(365).default(30),
+  lookback_days: z.number().int().min(1).max(365).default(30)
+    .describe('How many complete days, ending yesterday, to count ad requests over, 1-365.'),
   // Strictly-zero is the default "codeless" definition. Raise this to surface
   // "barely used" units too (e.g. min_requests=1000 = "got fewer than 1k
   // requests in a month").
-  min_requests: z.number().int().min(0).default(0),
+  min_requests: z.number().int().min(0).default(0)
+    .describe('Flag ad units with at most this many ad requests in the window; 0 means none at all.'),
   // Max ad units enumerated from GAM. Pagination through listEntities is
   // transparent, but cap to keep responses bounded.
-  max_units: z.number().int().min(1).max(5000).default(1000),
-});
+  max_units: z.number().int().min(1).max(5000).default(1000)
+    .describe('Most ad units to read from the network, 1-5000.'),
+}).strict();
 
 export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
   name: 'find_unused_ad_units',

@@ -22,6 +22,26 @@ export function isDateField(schema: z.ZodTypeAny): boolean {
   return DATE_FIELDS.has(schema);
 }
 
+// One report filter, as run_report, compare_periods and save_query take it.
+// GAM has no EQUALS or NOT_EQUALS: `=` and `!=` are sent as IN and NOT_IN
+// with one value (report-definition.ts).
+export const filterInput = z
+  .object({
+    field: z.string().describe('The dimension to filter on, from describe_schema.'),
+    op: z
+      .enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS'])
+      .default('=')
+      .describe(
+        '"=" and "IN" keep rows whose value is one of `value`; "!=" drops them; ' +
+        'CONTAINS and NOT_CONTAINS match part of a text value.',
+      ),
+    value: z
+      .union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))])
+      .describe('The value to compare with, or a list of values. Numbers are sent as IDs.'),
+  })
+  .strict()
+  .describe('A condition on one dimension.');
+
 // The usual description of a historical report's date_range.
 export const HISTORICAL_RANGE =
   'The dates to report on: { start, end } or { relative }. The range must end by yesterday in the date time zone (GAM_TIMEZONE).';
