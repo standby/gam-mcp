@@ -25,6 +25,12 @@ const throws: ToolDefinition<z.ZodTypeAny> = {
   input: z.object({}),
   handler: async () => { throw new Error('boom'); },
 };
+const strict: ToolDefinition<z.ZodTypeAny> = {
+  name: 'strict',
+  description: 'test',
+  input: z.object({ n: z.number().describe('A number.') }).strict(),
+  handler: async () => ({ summary: 'ok' }),
+};
 const fine: ToolDefinition<z.ZodTypeAny> = {
   name: 'fine',
   description: 'test',
@@ -33,7 +39,7 @@ const fine: ToolDefinition<z.ZodTypeAny> = {
 };
 
 async function connect() {
-  const server = buildMcpServer(makeCtx(), { networkCode: NETWORK, tools: [returnsError, throws, fine] });
+  const server = buildMcpServer(makeCtx(), { networkCode: NETWORK, tools: [returnsError, throws, fine, strict] });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0' });
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -58,5 +64,29 @@ describe('every error reaches the client flagged', () => {
   it('a success does not', async () => {
     const client = await connect();
     expect((await client.callTool({ name: 'fine', arguments: { n: 1 } })).isError).toBeFalsy();
+  });
+
+  it('invalid input names the problem, and an unknown key by name', async () => {
+    const client = await connect();
+    const unknown = await client.callTool({ name: 'strict', arguments: { n: 1, m: 2 } });
+    expect(unknown.isError).toBe(true);
+    expect(JSON.parse((unknown.content as { text: string }[])[0].text).error).toMatchObject({
+      code: 'INVALID_INPUT',
+      message: 'Invalid input: unknown key "m".',
+    });
+    const wrong = await client.callTool({ name: 'fine', arguments: { n: 'x' } });
+    expect(JSON.parse((wrong.content as { text: string }[])[0].text).error.message)
+      .toBe('Invalid input: n: Expected number, received string.');
+  });
+
+  it('advertises a strict input as closed', async () => {
+    const client = await connect();
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === 'strict')?.inputSchema).toEqual({
+      type: 'object',
+      properties: { n: { description: 'A number.', type: 'number' } },
+      required: ['n'],
+      additionalProperties: false,
+    });
   });
 });

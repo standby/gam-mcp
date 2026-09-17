@@ -4,11 +4,22 @@ import { RELATIVE_RANGES } from './dates.js';
 // Input building blocks shared by tools, so every tool that takes a range
 // accepts and documents the same shape (spec §3.2).
 
+// Date fields, so the advertised schema can say `format: date` without
+// zod rejecting a bad date before resolveDateRange can name it.
+const DATE_FIELDS = new WeakSet<z.ZodTypeAny>();
+
 // A YYYY-MM-DD date. Any string parses here: the date rules belong to
 // resolveDateRange, so a bad date is INVALID_DATE_RANGE naming its field,
-// never a schema error.
+// never a schema error. Describe it here: a later .describe() makes a copy
+// that is no longer marked as a date.
 export function dateField(description: string): z.ZodString {
-  return z.string().describe(description);
+  const field = z.string().describe(description);
+  DATE_FIELDS.add(field);
+  return field;
+}
+
+export function isDateField(schema: z.ZodTypeAny): boolean {
+  return DATE_FIELDS.has(schema);
 }
 
 // Either { start, end } or { relative }.
@@ -35,4 +46,24 @@ export function dateRangeInput(description: string) {
         .describe('A relative range.'),
     ])
     .describe(description);
+}
+
+// A failed parse as one line naming where each problem is, for
+// INVALID_INPUT: `date_range: unknown key "tz"`.
+export function describeInputError(error: z.ZodError): string {
+  return error.issues.map(describeIssue).join('; ');
+}
+
+function describeIssue(issue: z.ZodIssue): string {
+  if (issue.code === 'invalid_union') {
+    // Name the problems of the choice the input came closest to.
+    const closest = [...issue.unionErrors].sort((a, b) => a.issues.length - b.issues.length)[0];
+    if (closest) return describeInputError(closest);
+  }
+  const at = issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+  if (issue.code === 'unrecognized_keys') {
+    const keys = issue.keys.map((k) => JSON.stringify(k)).join(', ');
+    return `${at}unknown ${issue.keys.length === 1 ? 'key' : 'keys'} ${keys}`;
+  }
+  return `${at}${issue.message}`;
 }

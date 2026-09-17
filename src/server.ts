@@ -14,7 +14,9 @@ import { GAM_SCHEMA } from './schema.js';
 import { PROMPTS, renderPrompt } from './prompts.js';
 import type { ToolContext, ToolDefinition } from './report-tool-builder.js';
 import { gamError, isGamError } from './errors.js';
-import { z, type ZodTypeAny } from 'zod';
+import type { ZodTypeAny } from 'zod';
+import { toJsonSchema } from './json-schema.js';
+import { describeInputError } from './tool-input.js';
 
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -102,7 +104,7 @@ export function buildMcpServer(
     tools: tools.map((t) => ({
       name: t.name,
       description: t.description,
-      inputSchema: zodToJsonSchema(t.input),
+      inputSchema: toJsonSchema(t.input),
     })),
   }));
 
@@ -169,7 +171,7 @@ export function buildMcpServer(
     }
     const parsed = tool.input.safeParse(req.params.arguments ?? {});
     if (!parsed.success) {
-      const err = gamError('INVALID_INPUT', { reason: parsed.error.message });
+      const err = gamError('INVALID_INPUT', { reason: describeInputError(parsed.error) });
       ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
       return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
     }
@@ -203,31 +205,4 @@ export async function startMcpServer(
   const server = buildMcpServer(ctx, opts);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-}
-
-// Minimal zod → JSON Schema. zod has many third-party converters; for v1 we
-// emit a permissive schema that lets the LLM at least see field names.
-function zodToJsonSchema(schema: z.ZodTypeAny): unknown {
-  if (schema instanceof z.ZodObject) {
-    const shape = (schema as z.ZodObject<any>).shape;
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-    for (const key of Object.keys(shape)) {
-      const sub = shape[key];
-      properties[key] = zodToJsonSchema(sub);
-      if (!sub.isOptional()) required.push(key);
-    }
-    return { type: 'object', properties, required };
-  }
-  if (schema instanceof z.ZodString) return { type: 'string' };
-  if (schema instanceof z.ZodNumber) return { type: 'number' };
-  if (schema instanceof z.ZodBoolean) return { type: 'boolean' };
-  if (schema instanceof z.ZodArray) return { type: 'array', items: zodToJsonSchema((schema as z.ZodArray<any>).element) };
-  if (schema instanceof z.ZodEnum) return { type: 'string', enum: (schema as z.ZodEnum<any>).options };
-  if (schema instanceof z.ZodOptional) return zodToJsonSchema((schema as z.ZodOptional<any>).unwrap());
-  if (schema instanceof z.ZodUnion) return { anyOf: (schema as z.ZodUnion<any>).options.map(zodToJsonSchema) };
-  if (schema instanceof z.ZodDefault) return zodToJsonSchema((schema as any)._def.innerType);
-  // ZodEffects wraps the schema in .refine/.transform/.preprocess; descend.
-  if (schema instanceof z.ZodEffects) return zodToJsonSchema((schema as z.ZodEffects<any>).innerType());
-  return {};
 }
