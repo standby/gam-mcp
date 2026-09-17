@@ -48,6 +48,18 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
   metrics: merge<MetricDef>(GENERATED_METRICS, CURATED_METRICS),
 };
 
+const FIELD_TYPES = new Map<string, DimensionDef['type'] | MetricDef['type']>([
+  ...GAM_SCHEMA.dimensions.map((d) => [d.name, d.type] as const),
+  ...GAM_SCHEMA.metrics.map((m) => [m.name, m.type] as const),
+]);
+
+// The schema's declared type for a dimension or metric name, or undefined for
+// a name GAM does not have. Used to decode values (dates) and to type columns
+// that came back empty.
+export function fieldType(name: string): DimensionDef['type'] | MetricDef['type'] | undefined {
+  return FIELD_TYPES.get(name);
+}
+
 export { REPORT_TYPES };
 
 // Friendly / legacy names that map onto a canonical REST name. GAM's REST v1
