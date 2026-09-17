@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
-import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
+import { dateRangeInput } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // GAM's Reach report accepts a much narrower set of slices than the historical
