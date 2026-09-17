@@ -186,8 +186,11 @@ export function buildMcpServer(ctx: ToolContext, opts: ServerOptions): Server {
     try {
       const result = await tool.handler(parsed.data, ctx);
       if (isGamError(result)) return failed(result);
+      // Serialised before the call is logged closed: a failure here is still a
+      // failed call, and must not follow an end line that already said ok.
+      const text = JSON.stringify(result);
       end(true);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      return { content: [{ type: 'text', text }] };
     } catch (e) {
       return failed(gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) }));
     }

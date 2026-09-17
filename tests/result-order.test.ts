@@ -41,9 +41,11 @@ describe('every tool writes its result in contract order, through the server (sp
       if (body.provenance) {
         expect(Object.keys(body.provenance)).toEqual('inputs' in body.provenance ? DERIVED_PROVENANCE : PROVENANCE);
       }
-    } else if ('warnings' in body) {
-      expect(keys[1]).toBe('warnings');
     }
+    // Tools that return a nested object rather than rows are not covered here:
+    // none of them produces warnings against this fixture world, so a branch
+    // for them would assert nothing. describe_line_item, the only tool that can
+    // warn without rows, has that assertion in tests/tools/describe_line_item.test.ts.
   });
 
   it('writes an error as { error: { code, message, hint, details } }', async () => {

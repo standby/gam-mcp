@@ -32,6 +32,14 @@ const strict: ToolDefinition<z.ZodTypeAny> = {
   input: z.object({ n: z.number().describe('A number.') }).strict(),
   handler: async () => ({ summary: 'ok' }),
 };
+// A result the server cannot serialise: the failure happens after the handler
+// returned, which is the one way a call could once be logged closed twice.
+const unserializable: ToolDefinition<z.ZodTypeAny> = {
+  name: 'unserializable',
+  description: 'test',
+  input: z.object({}),
+  handler: async () => ({ summary: 'ok', n: 1n } as unknown as { summary: string }),
+};
 const fine: ToolDefinition<z.ZodTypeAny> = {
   name: 'fine',
   description: 'test',
@@ -40,7 +48,7 @@ const fine: ToolDefinition<z.ZodTypeAny> = {
 };
 
 async function connect() {
-  const server = buildMcpServer(makeCtx(), { mode: 'stdio', tools: [returnsError, throws, fine, strict] });
+  const server = buildMcpServer(makeCtx(), { mode: 'stdio', tools: [returnsError, throws, fine, strict, unserializable] });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0' });
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -73,11 +81,12 @@ describe('every error reaches the client flagged', () => {
     ['fine', { n: 'x' }, false],
     ['returns_error', { code: 'REPORT_FAILED' }, false],
     ['throws', {}, false],
+    ['unserializable', {}, false],
     ['fine', { n: 1 }, true],
   ])('a call to %s with %j logs one start and one end line', async (name, args, ok) => {
     const lines: Record<string, unknown>[] = [];
     const logger = createLogger({ level: 'debug', sink: (l) => { lines.push(JSON.parse(l)); } });
-    const server = buildMcpServer(makeCtx({}, { logger }), { mode: 'stdio', tools: [returnsError, throws, fine, strict] });
+    const server = buildMcpServer(makeCtx({}, { logger }), { mode: 'stdio', tools: [returnsError, throws, fine, strict, unserializable] });
     const client = await connectClient(server);
     await client.callTool({ name, arguments: args });
     const calls = lines.filter((l) => String(l.msg).startsWith('tool.call.'));
