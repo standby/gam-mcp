@@ -71,11 +71,17 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
         (allUnits.length === input.max_units
           ? `Hit max_units cap (${input.max_units}) — raise it to scan more.`
           : '');
+      const warnings = [...report.warnings];
+      if (allUnits.length >= input.max_units) {
+        warnings.push(
+          `Only the first ${input.max_units} ad units were checked; the network may have more. Raise max_units to check more.`,
+        );
+      }
       return derivedEnvelope(ctx, {
         summary: summary.trim(),
         inputs: [report.input],
         rows: unused,
-        warnings: report.warnings,
+        warnings,
       });
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });

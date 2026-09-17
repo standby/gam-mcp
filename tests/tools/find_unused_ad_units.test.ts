@@ -56,6 +56,53 @@ describe('find_unused_ad_units', () => {
     expect(r.rows!.map((x) => x.AD_UNIT_NAME)).toEqual(['Dead', 'BarelyUsed']);
   });
 
+  it('warns when the ad-unit scan hit the max_units cap', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const ctx = makeCtx({
+      entities: {
+        ad_unit: [
+          { id: 1, name: 'Active' },
+          { id: 2, name: 'Codeless' },
+        ],
+      },
+      reports: [{
+        query: {
+          dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+          metrics: ['AD_REQUESTS'],
+        },
+        rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: 'Active', AD_REQUESTS: 50000 }],
+      }],
+    }, { timezone: 'UTC', now });
+    const r = await findUnusedAdUnitsTool.handler(
+      findUnusedAdUnitsTool.input.parse({ max_units: 2 }),
+      ctx,
+    );
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.warnings).toContain(
+      'Only the first 2 ad units were checked; the network may have more. Raise max_units to check more.',
+    );
+  });
+
+  it('does not warn when fewer ad units exist than max_units', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const ctx = makeCtx({
+      entities: { ad_unit: [{ id: 1, name: 'Active' }] },
+      reports: [{
+        query: {
+          dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+          metrics: ['AD_REQUESTS'],
+        },
+        rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: 'Active', AD_REQUESTS: 50000 }],
+      }],
+    }, { timezone: 'UTC', now });
+    const r = await findUnusedAdUnitsTool.handler(
+      findUnusedAdUnitsTool.input.parse({ max_units: 2 }),
+      ctx,
+    );
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.warnings.some((w) => w.includes('max_units'))).toBe(false);
+  });
+
   it('names the report input in provenance (listEntities is not a report)', async () => {
     const now = new Date('2026-04-15T12:00:00Z');
     const ctx = makeCtx({
