@@ -26,7 +26,8 @@ type Renderer = (details: Record<string, unknown>) => { message: string; hint: s
 const CATALOG: Record<GamErrorCode, Renderer> = {
   INVALID_DATE_RANGE: (d) => ({
     message: `Invalid date range: ${d.reason ?? 'unknown reason'}.`,
-    hint: 'Use YYYY-MM-DD strings, ensure start ≤ end, and pick an end date no later than yesterday in the network timezone.',
+    hint: 'Use real YYYY-MM-DD dates with start ≤ end. A historical report must end by yesterday, and a forecast ' +
+      '(sell_through) must start today or later; both are judged in the date time zone (GAM_TIMEZONE).',
   }),
   INVALID_INPUT: (d) => ({
     message: `Invalid input: ${d.reason ?? 'see details'}.`,

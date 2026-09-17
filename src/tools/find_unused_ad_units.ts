@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { resolveDateRange } from '../dates.js';
+import { lastDays } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
-import type { ReportQuery, DateRange } from '../gam-client.js';
+import type { ReportQuery } from '../gam-client.js';
 
 const inputSchema = z.object({
   lookback_days: z.number().int().min(1).max(365).default(30),
@@ -27,14 +27,7 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
     try {
-      const range = resolveDateRange(
-        { relative: input.lookback_days === 30 ? 'last_30_days' : 'last_7_days' },
-        ctx.timezone,
-        ctx.now,
-      );
-      // If caller picked a custom lookback that isn't a canonical relative
-      // range, build the explicit window so the report is exact.
-      const actualRange = customRange(range, input.lookback_days, ctx.timezone, ctx.now);
+      const actualRange = lastDays(input.lookback_days, ctx.timezone, ctx.now);
 
       const query: ReportQuery = {
         dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
@@ -88,21 +81,3 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
     }
   },
 };
-
-function customRange(
-  baseline: DateRange,
-  lookbackDays: number,
-  timezone: string,
-  now: Date | undefined,
-): DateRange {
-  if (lookbackDays === 7 || lookbackDays === 30) return baseline;
-  // Build [yesterday - (lookback-1) days .. yesterday] in the network tz.
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(now ?? new Date());
-  const [y, m, d] = today.split('-').map(Number);
-  const yest = new Date(Date.UTC(y, m - 1, d - 1));
-  const start = new Date(yest.getTime() - (lookbackDays - 1) * 86_400_000);
-  const iso = (dt: Date) => dt.toISOString().slice(0, 10);
-  return { start: iso(start), end: iso(yest) };
-}

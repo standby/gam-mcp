@@ -15,7 +15,9 @@ export const pacingStatusTool: ToolDefinition<typeof inputSchema> = {
     'Current-period impressions and revenue per line item (month-to-date, network timezone). Useful for delivery monitoring. Note: pacing percentage vs. goal is not available via the REST Reports API. Optional filter by line_item_ids or order_ids.',
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
-    const dateRange = resolveDateRange({ relative: 'month_to_date' }, ctx.timezone, ctx.now);
+    // ponytail: month_to_date fails on the 1st of a month; PR 4 moves this tool to an optional date_range (spec §4.3).
+    const dateRange = resolveDateRange({ relative: 'month_to_date' }, { timezone: ctx.timezone, now: ctx.now, rule: 'historical' });
+    if ('error' in dateRange) return dateRange;
     const query: ReportQuery = {
       dimensions: ['LINE_ITEM_NAME', 'LINE_ITEM_ID'],
       metrics: [

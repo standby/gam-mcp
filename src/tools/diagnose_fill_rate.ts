@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { numOr0, pct, lookbackRange, previousPeriod } from '../report-run.js';
+import { numOr0, pct } from '../report-run.js';
+import { lastDays, previousPeriod } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
@@ -47,7 +48,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
     try {
-      const baseRange = lookbackRange(input.lookback_days, ctx.timezone, ctx.now);
+      const baseRange = lastDays(input.lookback_days, ctx.timezone, ctx.now);
       const prevRange = input.comparison === 'previous_period' ? previousPeriod(baseRange) : null;
 
       const filters: ReportQuery['filters'] = [];

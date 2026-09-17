@@ -1,21 +1,12 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { resolveDateRange } from '../dates.js';
+import { previousPeriod, previousYear, resolveDateRange, type ResolvedRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
-import type { ReportQuery, DateRange } from '../gam-client.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
+import type { ReportQuery } from '../gam-client.js';
+import { dateField, dateRangeInput } from '../tool-input.js';
 
 const filterSchema = z.object({
   field: z.string(),
@@ -26,11 +17,13 @@ const filterSchema = z.object({
 const inputSchema = z.object({
   dimensions: z.array(z.string()).min(1).max(10),
   metrics: z.array(z.string()).min(1).max(10),
-  base_range: dateRangeSchema,
+  base_range: dateRangeInput('The period to compare; it must end by yesterday.'),
   comparison: z.union([
-    z.literal('previous_period'),
-    z.literal('previous_year'),
-    z.object({ start: z.string(), end: z.string() }),
+    z.enum(['previous_period', 'previous_year']),
+    z.object({
+      start: dateField('First day of the comparison period, inclusive, as YYYY-MM-DD.'),
+      end: dateField('Last day of the comparison period, inclusive, as YYYY-MM-DD; by yesterday.'),
+    }).strict(),
   ]),
   filters: z.array(filterSchema).optional(),
   top_n: z.number().int().min(1).max(500).default(50),
@@ -50,14 +43,13 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
 
-    let baseRange: DateRange;
-    try {
-      baseRange = resolveDateRange(input.base_range, ctx.timezone, ctx.now);
-    } catch (e) {
-      return gamError('INVALID_DATE_RANGE', { reason: e instanceof Error ? e.message : String(e) });
-    }
-
-    const prevRange = resolveComparison(baseRange, input.comparison);
+    const dates = { timezone: ctx.timezone, now: ctx.now, rule: 'historical' as const };
+    const baseRange = resolveDateRange(input.base_range, { ...dates, field: 'base_range' });
+    if ('error' in baseRange) return baseRange;
+    const prevRange = typeof input.comparison === 'object'
+      ? resolveDateRange(input.comparison, { ...dates, field: 'comparison' })
+      : comparisonRange(baseRange, input.comparison);
+    if ('error' in prevRange) return prevRange;
     const query: ReportQuery = {
       dimensions: input.dimensions,
       metrics: input.metrics,
@@ -91,28 +83,9 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
   },
 };
 
-function resolveComparison(
-  base: DateRange,
-  cmp: 'previous_period' | 'previous_year' | { start: string; end: string },
-): DateRange {
-  if (typeof cmp === 'object') return { start: cmp.start, end: cmp.end };
-  const start = new Date(`${base.start}T00:00:00Z`);
-  const end = new Date(`${base.end}T00:00:00Z`);
-  if (cmp === 'previous_year') {
-    start.setUTCFullYear(start.getUTCFullYear() - 1);
-    end.setUTCFullYear(end.getUTCFullYear() - 1);
-    return { start: iso(start), end: iso(end) };
-  }
-  // previous_period: end = base.start - 1 day; start = end - (base length).
-  const oneDay = 86_400_000;
-  const lengthMs = end.getTime() - start.getTime();
-  const prevEnd = new Date(start.getTime() - oneDay);
-  const prevStart = new Date(prevEnd.getTime() - lengthMs);
-  return { start: iso(prevStart), end: iso(prevEnd) };
-}
-
-function iso(d: Date): string {
-  return d.toISOString().slice(0, 10);
+// Both are computed from a checked base range, so they end before it does.
+function comparisonRange(base: ResolvedRange, comparison: 'previous_period' | 'previous_year'): ResolvedRange {
+  return comparison === 'previous_year' ? previousYear(base) : previousPeriod(base);
 }
 
 function joinAndCompare(

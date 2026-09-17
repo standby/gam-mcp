@@ -5,17 +5,8 @@ import { validateCombo } from '../schema.js';
 import { executeReport } from '../report-exec.js';
 import { makeKvResolver, parseKvPair } from '../kv-rewrite.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
-import type { ReportQuery, DateRange } from '../gam-client.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
+import type { ReportQuery } from '../gam-client.js';
+import { dateRangeInput } from '../tool-input.js';
 
 const inputSchema = z.object({
   // KV pair to slice on, in `key=value` form (e.g. `channel_id=479`). The
@@ -23,7 +14,7 @@ const inputSchema = z.object({
   // into CUSTOM_DIMENSION_<N>_VALUE so the report is compatible with any
   // request-time or programmatic metric.
   kv: z.string().regex(/^[^=]+=[^=]+$/, 'must be in key=value form'),
-  date_range: dateRangeSchema,
+  date_range: dateRangeInput('The dates to report on; the range must end by yesterday.'),
   metrics: z.array(z.string()).min(1).max(20),
   // Optional narrowing. ad_unit_id is preferred; ad_unit_name does an exact
   // displayName lookup first. order_id and line_item_id apply AND filters
@@ -59,13 +50,8 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
 
-    let dateRange: DateRange;
-    try {
-      dateRange = resolveDateRange(input.date_range, ctx.timezone, ctx.now);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return gamError('INVALID_DATE_RANGE', { reason: msg });
-    }
+    const dateRange = resolveDateRange(input.date_range, { timezone: ctx.timezone, now: ctx.now, rule: 'historical' });
+    if ('error' in dateRange) return dateRange;
 
     // Resolve the KV key → ID
     const resolve = makeKvResolver(ctx.client);

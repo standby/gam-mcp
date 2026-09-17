@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { resolveDateRange } from '../dates.js';
+import { rangeRuleFor, resolveDateRange } from '../dates.js';
 import {
   validateCombo,
   resolveDimensionAlias,
@@ -11,16 +11,7 @@ import { executeReport } from '../report-exec.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
+import { dateRangeInput } from '../tool-input.js';
 
 const filterSchema = z.object({
   field: z.string(),
@@ -34,7 +25,7 @@ const filterSchema = z.object({
 const inputSchema = z.object({
   dimensions: z.array(z.string()).min(1).max(10),
   metrics: z.array(z.string()).min(1).max(20),
-  date_range: dateRangeSchema,
+  date_range: dateRangeInput('The dates to report on. Historical reports must end by yesterday; a forecast (sell-through metrics) must start today or later and be given as dates.'),
   filters: z.array(filterSchema).optional(),
   // Required when querying CUSTOM_DIMENSION_<N>_VALUE dimensions. Index N in
   // the dimension name maps to index N in this array (i.e., slot 0 = key at
@@ -76,13 +67,12 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       });
     }
 
-    let dateRange;
-    try {
-      dateRange = resolveDateRange(input.date_range, ctx.timezone, ctx.now);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return gamError('INVALID_DATE_RANGE', { reason: msg });
-    }
+    const dateRange = resolveDateRange(input.date_range, {
+      timezone: ctx.timezone,
+      now: ctx.now,
+      rule: rangeRuleFor(reportType),
+    });
+    if ('error' in dateRange) return dateRange;
 
     let query: ReportQuery = {
       dimensions,

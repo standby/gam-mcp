@@ -4,16 +4,7 @@ import { validateCombo } from '../schema.js';
 import { runReportTool } from './run_report.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
+import { dateRangeInput } from '../tool-input.js';
 
 const filterSchema = z.object({
   field: z.string(),
@@ -109,7 +100,7 @@ export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
 
 const runInput = z.object({
   name: z.string().min(1),
-  date_range: dateRangeSchema,
+  date_range: dateRangeInput('The dates to replay the saved query over, with the same rules as run_report.'),
 });
 
 export const runSavedQueryTool: ToolDefinition<typeof runInput> = {

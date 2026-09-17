@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { numOr0, pct, lookbackRange } from '../report-run.js';
+import { numOr0, pct } from '../report-run.js';
+import { lastDays } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
@@ -47,7 +48,7 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
   input: inputSchema,
   async handler(input, ctx: ToolContext) {
     try {
-      const range = lookbackRange(input.lookback_days, ctx.timezone, ctx.now);
+      const range = lastDays(input.lookback_days, ctx.timezone, ctx.now);
 
       const filters: ReportQuery['filters'] = [];
       if (input.ad_unit_query) filters.push({ field: 'AD_UNIT_NAME', op: 'CONTAINS', value: input.ad_unit_query });

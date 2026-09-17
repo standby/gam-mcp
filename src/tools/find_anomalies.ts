@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { resolveDateRange } from '../dates.js';
+import { lastDays, previousPeriod, resolveDateRange } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
-import { previousPeriod } from '../report-run.js';
 import { cellText } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
@@ -55,7 +54,9 @@ async function pacingUnderdelivery(
   thresholdPct: number,
   topN: number,
 ) {
-  const range = resolveDateRange({ relative: 'month_to_date' }, ctx.timezone, ctx.now);
+  // ponytail: month_to_date fails on the 1st of a month; PR 4 moves pacing to last_7_days (spec §4.3).
+  const range = resolveDateRange({ relative: 'month_to_date' }, { timezone: ctx.timezone, now: ctx.now, rule: 'historical' });
+  if ('error' in range) return range;
   // Pro-rated expected delivery: today's day-of-month / total days in month.
   // Pacing % = (impressions / goal) / expected_progress.
   const { daysElapsed, daysInMonth } = monthProgress(range, ctx.timezone, ctx.now);
@@ -109,7 +110,7 @@ async function fillRateDrops(
   thresholdPct: number,
   topN: number,
 ) {
-  const baseRange = resolveDateRange({ relative: 'last_7_days' }, ctx.timezone, ctx.now);
+  const baseRange = lastDays(7, ctx.timezone, ctx.now);
   const prevRange = previousPeriod(baseRange);
   const query: ReportQuery = {
     dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
@@ -161,7 +162,7 @@ async function ecpmRegression(
   thresholdPct: number,
   topN: number,
 ) {
-  const baseRange = resolveDateRange({ relative: 'last_7_days' }, ctx.timezone, ctx.now);
+  const baseRange = lastDays(7, ctx.timezone, ctx.now);
   const prevRange = previousPeriod(baseRange);
   // AdX-only metrics so we don't dilute named bidders' eCPM with direct-sold revenue.
   // BUYER_NETWORK_NAME slices by demand source (DSP, AdSense, open-auction AdX).
@@ -219,7 +220,7 @@ async function viewabilityDrops(
   thresholdPp: number,
   topN: number,
 ) {
-  const baseRange = resolveDateRange({ relative: 'last_7_days' }, ctx.timezone, ctx.now);
+  const baseRange = lastDays(7, ctx.timezone, ctx.now);
   const prevRange = previousPeriod(baseRange);
   const query: ReportQuery = {
     dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
