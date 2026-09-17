@@ -9,6 +9,7 @@ import type { SavedQueryEntry, SavedQueryStore } from '../src/saved-queries.js';
 import { createUsageCounters } from '../src/usage.js';
 import { encodeCursor } from '../src/cursor.js';
 import { makeCtx, NETWORK } from './helpers.js';
+import { SAVED_QUERY_TOOLS as SAVED_QUERY_TOOL_DEFS } from '../src/tools/saved_queries.js';
 
 // makeCtx's clock: 2026-09-17 in Asia/Tokyo.
 const PAST = { start: '2026-09-01', end: '2026-09-07' };
@@ -118,7 +119,9 @@ export const ANNOTATIONS: Record<string, Record<string, boolean>> = {
   delete_saved_query: WRITES,
 };
 
-export const SAVED_QUERY_TOOLS = ['save_query', 'list_saved_queries', 'run_saved_query', 'delete_saved_query'];
+// Read from the source list, so a tool moved in or out of the saved-query
+// set is reflected here without anyone remembering to edit this line.
+export const SAVED_QUERY_TOOLS = SAVED_QUERY_TOOL_DEFS.map((t) => t.name);
 
 // A copy of a tool's row; throws for a tool without one.
 export function argsFor(tool: string): Record<string, unknown> {

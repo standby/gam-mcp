@@ -163,3 +163,12 @@ export const deleteSavedQueryTool: ToolDefinition<typeof deleteInput> = {
     );
   },
 };
+
+// The saved-query tools, as one list: `toolsFor` keeps them off HTTP and the
+// tests read the same list, so the set cannot be described twice and drift.
+export const SAVED_QUERY_TOOLS: ToolDefinition[] = [
+  saveQueryTool,
+  listSavedQueriesTool,
+  runSavedQueryTool,
+  deleteSavedQueryTool,
+];

@@ -25,6 +25,17 @@ describe('H2: every tool declares its annotations, in both modes (spec §3.4)', 
 });
 
 describe('H6: HTTP offers no saved queries (spec §3.5)', () => {
+  // Asserts the property, not the four names: a new tool that writes state on
+  // the server's machine fails this the moment it is put in the shared set,
+  // whether or not anyone remembers the saved-query list.
+  it('serves nothing over HTTP that writes state on the server machine', async () => {
+    const { tools } = await listed('http');
+    const local = tools
+      .filter((t) => t.annotations?.readOnlyHint === false && t.annotations?.openWorldHint === false)
+      .map((t) => t.name);
+    expect(local).toEqual([]);
+  });
+
   it('HTTP lists none of the four, and calling one is an unknown tool', async () => {
     const { client, tools } = await listed('http');
     const names = tools.map((t) => t.name);

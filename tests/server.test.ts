@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { listToolNames, installStdoutGuard } from '../src/server.js';
+import { SAVED_QUERY_TOOLS } from './tool-table.js';
 
 describe('server registry', () => {
   it('lists all expected tool names', () => {
@@ -42,8 +43,9 @@ describe('server registry', () => {
   });
 
   it('HTTP mode lists every tool but the four saved-query tools', () => {
-    const saved = ['delete_saved_query', 'list_saved_queries', 'run_saved_query', 'save_query'];
-    expect(listToolNames('http').sort()).toEqual(listToolNames().filter((n) => !saved.includes(n)).sort());
+    expect(listToolNames('http').sort()).toEqual(
+      listToolNames().filter((n) => !SAVED_QUERY_TOOLS.includes(n)).sort(),
+    );
     expect(listToolNames('stdio')).toEqual(listToolNames());
   });
 
