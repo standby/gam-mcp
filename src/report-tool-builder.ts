@@ -1,6 +1,5 @@
 import { z, type ZodTypeAny } from 'zod';
-import { join } from 'node:path';
-import { gamError } from './errors.js';
+import { executeReport } from './report-exec.js';
 import type { GAMClient, ReportQuery, DateRange } from './gam-client.js';
 import type { OutputManager, OutputEnvelope } from './output.js';
 import type { ReportCache } from './cache.js';
@@ -69,64 +68,13 @@ export function buildReportTool<I extends ZodTypeAny>(
     input: cfg.input,
     async handler(input, ctx) {
       const query = cfg.buildQuery(input);
-      const dateRange = (cfg.buildDateRange?.(input) ??
-        (input as { date_range: DateRange }).date_range);
-
-      ctx.logger.debug('report.create', {
-        tool: cfg.name,
-        dimensions: query.dimensions,
-        metrics: query.metrics,
-        date_start: dateRange.start,
-        date_end: dateRange.end,
+      const dateRange = cfg.buildDateRange?.(input) ?? (input as { date_range: DateRange }).date_range;
+      return executeReport(ctx, {
+        query,
+        dateRange,
+        summary: cfg.summary(input),
+        warnings: cfg.warnings?.(input) ?? [],
       });
-      const op = await ctx.client.createReport(query, dateRange);
-      const status = await pollUntilDone(
-        ctx.client,
-        op.operation_name,
-        ctx.reportTimeoutMs ?? 300_000,
-        ctx.logger,
-      );
-      if ('error' in status) return status;
-
-      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(status.download_url, dest);
-      const warnings = cfg.warnings?.(input);
-      return ctx.output!.fromCsvGzFile(
-        dest,
-        cfg.summary(input),
-        warnings?.length ? warnings : undefined,
-      );
     },
   };
-}
-
-async function pollUntilDone(
-  client: GAMClient,
-  name: string,
-  timeoutMs: number,
-  logger: Logger,
-): Promise<{ download_url: string } | GamErrorEnvelope> {
-  const start = Date.now();
-  let delay = 2000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await client.pollOperation(name);
-    const elapsed_ms = Date.now() - start;
-    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
-    if (s.state === 'done') {
-      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
-      return { download_url: s.download_url };
-    }
-    if (s.state === 'failed') {
-      logger.warn('report.failed', { operation: name, reason: s.reason });
-      return gamError('REPORT_FAILED', { reason: s.reason });
-    }
-    await sleep(delay);
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
-  return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

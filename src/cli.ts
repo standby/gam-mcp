@@ -9,6 +9,7 @@ import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js'
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
 import { createReportCache } from './cache.js';
 import { createLogger, levelFromEnv } from './log.js';
+import { resolvePageRows } from './report-exec.js';
 import { createSavedQueryStore, defaultSavedQueriesPath } from './saved-queries.js';
 import { createUsageCounters, instrumentGamClient } from './usage.js';
 
@@ -33,6 +34,12 @@ async function main(): Promise<void> {
   const reportTimeoutMs = Number(process.env.GAM_REPORT_TIMEOUT_MS ?? 300_000);
 
   const logger = createLogger({ level: levelFromEnv(process.env) });
+
+  const pageRows = resolvePageRows(process.env.GAM_PAGE_ROWS, logger);
+  if (typeof pageRows !== 'number') {
+    process.stderr.write(`gam-mcp: ${pageRows.error}\n`);
+    process.exit(2);
+  }
 
   const resolved = resolveAuthSource(process.env);
   if ('error' in resolved) {
@@ -66,7 +73,7 @@ async function main(): Promise<void> {
     ...(process.env.GAM_REPORT_CACHE_TTL_MS && { ttlMs: Number(process.env.GAM_REPORT_CACHE_TTL_MS) }),
   });
   const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
-  const ctx = { client, output, timezone, networkCode, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters };
+  const ctx = { client, output, timezone, networkCode, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters, pageRows };
   if (httpPort !== null) {
     if (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535) {
       process.stderr.write(`gam-mcp: GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}\n`);

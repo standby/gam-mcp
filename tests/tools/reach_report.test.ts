@@ -8,15 +8,20 @@ import { runReportTool } from '../../src/tools/run_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
 import { noopLogger } from '../../src/log.js';
+import { makeCtx, NETWORK } from '../helpers.js';
 import { resolveReportType, GAM_SCHEMA } from '../../src/schema.js';
-import type { ReportQuery } from '../../src/gam-client.js';
+import type { ReportQuery, DateRange } from '../../src/gam-client.js';
 
 const METRICS = ['UNIQUE_VISITORS', 'REACH_IMPRESSIONS', 'AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR'];
 
-const ctx = (dir: string, client: ReturnType<typeof createMockGamClient>) => ({
+// run_report has not moved onto the report-exec path yet (Task 6) — it still
+// runs createReport/downloadReport against a csv.gz fixture and an
+// OutputManager-backed context.
+const legacyCtx = (dir: string, client: ReturnType<typeof createMockGamClient>) => ({
   client,
   output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
   timezone: 'UTC',
+  networkCode: NETWORK,
   logger: noopLogger(),
 });
 
@@ -54,22 +59,25 @@ describe('resolveReportType', () => {
 
 describe('reach_report', () => {
   it('requests the reach metrics under reportType REACH and warns about dedup', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'reach-'));
-    let seen: ReportQuery | undefined;
     const mock = createMockGamClient({
+      networkCode: NETWORK,
       reports: [{
         query: { dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME'], metrics: METRICS },
-        csvGz: gzipSync(Buffer.from(
-          'line_item_id,line_item_name,unique_visitors,reach_impressions,average_impressions_per_unique_visitor\n' +
-          '111,Brand Campaign,250000,1000000,4.0\n',
-        )),
+        rows: [{
+          LINE_ITEM_ID: 111,
+          LINE_ITEM_NAME: 'Brand Campaign',
+          UNIQUE_VISITORS: 250000,
+          REACH_IMPRESSIONS: 1000000,
+          AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR: 4.0,
+        }],
       }],
     });
+    let seen: ReportQuery | undefined;
     const client = {
       ...mock,
-      createReport: (q: ReportQuery, dr: { start: string; end: string }) => {
+      defineReport: (q: ReportQuery, dr: DateRange) => {
         seen = q;
-        return mock.createReport(q, dr);
+        return mock.defineReport(q, dr);
       },
     };
 
@@ -77,33 +85,36 @@ describe('reach_report', () => {
       date_range: { start: '2026-04-01', end: '2026-04-30' },
       by: 'line_item',
     });
-    const r = await reachReportTool.handler(args, ctx(dir, client));
+    const r = await reachReportTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(seen?.report_type).toBe('REACH');
     expect(seen?.metrics).toEqual(METRICS);
-    expect(r.rows?.[0].average_impressions_per_unique_visitor).toBe('4.0');
-    expect(r.warnings?.join(' ')).toMatch(/NOT additive/i);
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.rows[0]?.AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR).toBe(4.0);
+    expect(r.warnings.join(' ')).toMatch(/NOT additive/i);
   });
 
   it('filters on the primary id dimension when ids are given', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'reach-'));
-    let seen: ReportQuery | undefined;
     const mock = createMockGamClient({
+      networkCode: NETWORK,
       reports: [{
         query: { dimensions: ['ORDER_ID', 'ORDER_NAME', 'COUNTRY_NAME'], metrics: METRICS },
-        csvGz: gzipSync(Buffer.from(
-          'order_id,order_name,country_name,unique_visitors,reach_impressions,average_impressions_per_unique_visitor\n' +
-          '7,Q2 Direct,Japan,50000,150000,3.0\n',
-        )),
+        rows: [{
+          ORDER_ID: 7,
+          ORDER_NAME: 'Q2 Direct',
+          COUNTRY_NAME: 'Japan',
+          UNIQUE_VISITORS: 50000,
+          REACH_IMPRESSIONS: 150000,
+          AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR: 3.0,
+        }],
       }],
     });
+    let seen: ReportQuery | undefined;
     const client = {
       ...mock,
-      createReport: (q: ReportQuery, dr: { start: string; end: string }) => {
+      defineReport: (q: ReportQuery, dr: DateRange) => {
         seen = q;
-        return mock.createReport(q, dr);
+        return mock.defineReport(q, dr);
       },
     };
 
@@ -113,12 +124,11 @@ describe('reach_report', () => {
       group_by: 'country',
       ids: [7],
     });
-    const r = await reachReportTool.handler(args, ctx(dir, client));
+    const r = await reachReportTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(seen?.filters).toEqual([{ field: 'ORDER_ID', op: 'IN', value: [7] }]);
     expect(seen?.dimensions).toEqual(['ORDER_ID', 'ORDER_NAME', 'COUNTRY_NAME']);
-    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -145,7 +155,7 @@ describe('run_report with reach metrics', () => {
       metrics: ['UNIQUE_VISITORS'],
       date_range: { start: '2026-04-01', end: '2026-04-30' },
     });
-    const r = await runReportTool.handler(args, ctx(dir, client));
+    const r = await runReportTool.handler(args, legacyCtx(dir, client));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(seen?.report_type).toBe('REACH');
@@ -160,7 +170,7 @@ describe('run_report with reach metrics', () => {
       metrics: ['UNIQUE_VISITORS', 'IMPRESSIONS'],
       date_range: { start: '2026-04-01', end: '2026-04-30' },
     });
-    const r = await runReportTool.handler(args, ctx(dir, createMockGamClient({})));
+    const r = await runReportTool.handler(args, legacyCtx(dir, createMockGamClient({})));
     expect('error' in r).toBe(true);
     // The message must name which side wants which type — "incompatible"
     // alone doesn't tell the caller what to drop.

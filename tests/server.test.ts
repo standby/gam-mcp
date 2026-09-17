@@ -14,6 +14,7 @@ describe('server registry', () => {
       'describe_schema',
       'diagnose_fill_rate',
       'diagnose_floor_pricing',
+      'fetch_report_page',
       'fill_rate',
       'find_anomalies',
       'find_unused_ad_units',

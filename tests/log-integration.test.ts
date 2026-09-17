@@ -1,15 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { gzipSync } from 'node:zlib';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createLogger } from '../src/log.js';
 import { withRetries } from '../src/gam-client-rest.js';
 import { createReportCache } from '../src/cache.js';
 import { createGoogleAuth } from '../src/auth.js';
 import { topAdvertisersTool } from '../src/tools/top_advertisers.js';
-import { createMockGamClient } from '../src/gam-client.js';
-import { createOutputManager } from '../src/output.js';
+import { makeCtx } from './helpers.js';
 import type { GAMClient, ReportQuery, DateRange } from '../src/gam-client.js';
 
 // Capture-everything sink and a recording logger seeded at debug level so
@@ -26,30 +21,26 @@ function recordingLogger() {
 
 describe('log integration', () => {
   it('emits report.create/poll/done across a full tool call', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'logi-'));
     const rec = recordingLogger();
-    const csv = 'advertiser_name,revenue\nAcme,1\n';
     const args = topAdvertisersTool.input.parse({
       date_range: { start: '2026-04-01', end: '2026-04-29' },
       top_n: 10,
       metric: 'revenue',
     });
-    await topAdvertisersTool.handler(args, {
-      client: createMockGamClient({
-        reports: [{
+    await topAdvertisersTool.handler(
+      args,
+      makeCtx(
+        { reports: [{
           query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
-          csvGz: gzipSync(Buffer.from(csv)),
-        }],
-      }),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'America/Los_Angeles',
-      logger: rec.logger,
-    });
+          rows: [{ ADVERTISER_NAME: 'Acme', REVENUE: 1 }],
+        }] },
+        { logger: rec.logger, timezone: 'America/Los_Angeles' },
+      ),
+    );
     const msgs = rec.events().map((e) => e.msg as string);
     expect(msgs).toContain('report.create');
     expect(msgs).toContain('report.poll');
     expect(msgs).toContain('report.done');
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('emits gam.retry on 429 and surfaces final status', async () => {
@@ -118,37 +109,47 @@ describe('log integration', () => {
     // assert no log line contains that sentinel. Token never reaches the
     // logger because nothing in the instrumented paths references it —
     // this test pins that invariant against future drift.
-    const dir = mkdtempSync(join(tmpdir(), 'logi-'));
     const rec = recordingLogger();
     const SENTINEL = '__SENTINEL_TOKEN__ya29.fake_oauth_token_value';
-    const csv = 'advertiser_name,revenue\nAcme,1\n';
-    const csvGz = gzipSync(Buffer.from(csv));
 
-    // Spy client; deliberately stash the sentinel in a *non-logged* place
-    // (the URL passed to downloadReport, which the logger doesn't see) to
-    // make sure we'd catch it if instrumentation accidentally started
-    // logging download URLs.
+    // Spy client over the new report path; deliberately stash the sentinel in
+    // the result name — the OAuth-bearing value the logger must never see —
+    // to make sure we'd catch it if instrumentation accidentally started
+    // logging it. Legacy members throw so the interface stays satisfied
+    // without pretending they're exercised.
     const spyClient: GAMClient = {
       async listEntities() { return []; },
-      async createReport() { return { operation_name: `op/${SENTINEL}` }; },
-      async pollOperation() { return { state: 'done', download_url: `https://download?access_token=${SENTINEL}` }; },
-      async downloadReport(_url, dest) { writeFileSync(dest, csvGz); return dest; },
+      async getResource() { return null; },
+      async createReport() { throw new Error('legacy path must not be used'); },
+      async downloadReport() { throw new Error('legacy path must not be used'); },
+      async defineReport() { return { report: 'networks/1234/reports/1' }; },
+      async runReport() { return { operation: `op/${SENTINEL}` }; },
+      async pollOperation() {
+        return {
+          state: 'done',
+          result: `networks/1234/reports/1/results/1?access_token=${SENTINEL}`,
+          download_url: `networks/1234/reports/1/results/1?access_token=${SENTINEL}`,
+        };
+      },
+      async fetchRows() {
+        return {
+          rows: [{ dimensionValues: [{ stringValue: 'Acme' }], metricValueGroups: [{ primaryValues: [{ doubleValue: 1 }] }] }],
+          totalRowCount: 1,
+          runTime: '2026-04-30T00:00:00Z',
+          dateRanges: [{ start: '2026-04-01', end: '2026-04-29' }],
+        };
+      },
+      async getReport() { return null; },
     };
     await topAdvertisersTool.handler(
       { date_range: { start: '2026-04-01', end: '2026-04-29' }, top_n: 10, metric: 'revenue' },
-      {
-        client: spyClient,
-        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-        timezone: 'America/Los_Angeles',
-        logger: rec.logger,
-      },
+      makeCtx({}, { client: spyClient, logger: rec.logger, timezone: 'America/Los_Angeles' }),
     );
     // The operation_name path DOES legitimately contain the sentinel
     // (because we stashed it in operation_name to exercise the spy), and
     // operation_name IS logged. So this end-to-end test specifically pins
-    // the URL (`access_token=...`) case — download_url must NOT appear in
-    // logs, since it's the OAuth-bearing one.
+    // the result-name case — the OAuth-bearing value now lives in the
+    // result name, which must never be logged.
     expect(rec.raw()).not.toContain(`access_token=${SENTINEL}`);
-    rmSync(dir, { recursive: true, force: true });
   });
 });

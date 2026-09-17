@@ -2,6 +2,7 @@ import { lookupTool } from './lookup.js';
 import { describeSchemaTool } from './describe_schema.js';
 import { describeLineItemTool } from './describe_line_item.js';
 import { runReportTool } from './run_report.js';
+import { fetchReportPageTool } from './fetch_report_page.js';
 import { revenueSummaryTool } from './revenue_summary.js';
 import { topAdvertisersTool } from './top_advertisers.js';
 import { topLineItemsTool } from './top_line_items.js';
@@ -40,6 +41,7 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   describeSchemaTool,
   describeLineItemTool,
   runReportTool,
+  fetchReportPageTool,
   revenueSummaryTool,
   topAdvertisersTool,
   topLineItemsTool,
