@@ -89,17 +89,26 @@ describe('report reuse (spec §2.2)', () => {
     expect(rejected[0]).toMatchObject({ level: 'warn', tool: 'test', status: 400 });
   });
 
-  it('B5: a listed report with the right name but another stored definition is not reused', async () => {
+  it('B5: a listed report with the right name but another stored definition is not reused, and the keys that differ are logged', async () => {
     const gam = fakeWithRows();
+    const lines: string[] = [];
+    const logger = createLogger({ level: 'debug', sink: (l) => { lines.push(l); } });
     gam.reports.set('networks/1234/reports/77', {
       name: 'networks/1234/reports/77',
       displayName: NAME,
-      reportDefinition: { ...DEFINITION, metrics: ['AD_REQUESTS'] },
+      reportDefinition: { ...DEFINITION, metrics: ['AD_REQUESTS'], reportType: 'REACH' },
     });
-    const p = provenance(await executeReport(processOn(gam), REQUEST));
+    const p = provenance(await executeReport(processOn(gam, { logger }), REQUEST));
     expect(p.report).toBe(`networks/${NETWORK}/reports/1`);
     expect(count(gam, 'POST', CREATE)).toBe(1);
     expect(gam.reports.size).toBe(2);
+    const taken = lines.filter((l) => l.includes('"msg":"report.name_taken"'));
+    expect(taken.map((l) => JSON.parse(l))).toEqual([expect.objectContaining({
+      level: 'warn', tool: 'test', display_name: NAME, listed: 1, differing_keys: ['metrics', 'reportType'],
+    })]);
+    // Key names only: none of the stored definition's values.
+    expect(taken[0]).not.toContain('AD_REQUESTS');
+    expect(taken[0]).not.toContain('REACH');
   });
 
   // GAM serves a report's values in its own column order, so a report whose
@@ -120,7 +129,7 @@ describe('report reuse (spec §2.2)', () => {
     expect(p.report).toBe(`networks/${NETWORK}/reports/1`);
     expect(count(gam, 'POST', CREATE)).toBe(1);
     expect(lines.filter((e) => e.msg === 'report.name_taken')).toEqual([
-      expect.objectContaining({ level: 'warn', tool: 'test', display_name: name, listed: 1 }),
+      expect.objectContaining({ level: 'warn', tool: 'test', display_name: name, listed: 1, differing_keys: ['dimensions'] }),
     ]);
   });
 
@@ -176,6 +185,26 @@ describe('report reuse (spec §2.2)', () => {
     expect(await executeReport(processOn(gam), REQUEST)).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
     expect(count(gam, 'POST', RUN)).toBe(2);
     expect(count(gam, 'POST', CREATE)).toBe(1);
+  });
+
+  it('a listing that GAM answers with 5xx is retried like any GET, and the listed report is reused', async () => {
+    const gam = fakeWithRows();
+    await executeReport(processOn(gam), REQUEST);
+    gam.inject('GET', LIST, { status: 503 });
+    const from = gam.requests.length;
+    const p = provenance(await executeReport(processOn(gam, {}, true), REQUEST));
+    expect(p.report).toBe(`networks/${NETWORK}/reports/1`);
+    expect(count(gam, 'GET', LIST, from)).toBe(2);
+    expect(count(gam, 'POST', CREATE, from)).toBe(0);
+  });
+
+  it('a listing that still fails after its retries is an error, and nothing is created or run', async () => {
+    const gam = fakeWithRows();
+    for (let i = 0; i < 4; i++) gam.inject('GET', LIST, { status: 503 });
+    expect(await executeReport(processOn(gam, {}, true), REQUEST)).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
+    expect(count(gam, 'GET', LIST)).toBe(4);
+    expect(count(gam, 'POST', CREATE)).toBe(0);
+    expect(count(gam, 'POST', RUN)).toBe(0);
   });
 
   it('C5: a create whose answer was lost is found by name on the next call; GAM holds one report', async () => {

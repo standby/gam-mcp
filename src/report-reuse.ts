@@ -1,7 +1,7 @@
 import { ReportFilterRejectedError, type GAMClient } from './gam-client.js';
 import type { Logger } from './log.js';
 import { definitionRange, type ReportDefinition } from './report-definition.js';
-import { reportName, sameDefinition } from './report-key.js';
+import { differingKeys, reportName, sameDefinition } from './report-key.js';
 import { Lru } from './lru.js';
 
 // Report names remembered per client; the server builds one client per process.
@@ -43,7 +43,12 @@ export async function findOrCreateReport(
     const listed = await ctx.client.listReports({ displayName });
     report = listed.find((r) => sameDefinition(r.definition, definition))?.name;
     if (!report && listed.length > 0) {
-      ctx.logger.warn('report.name_taken', { tool, display_name: displayName, listed: listed.length });
+      ctx.logger.warn('report.name_taken', {
+        tool,
+        display_name: displayName,
+        listed: listed.length,
+        differing_keys: [...new Set(listed.flatMap((r) => differingKeys(r.definition, definition)))].sort(),
+      });
     }
   } catch (e) {
     if (!(e instanceof ReportFilterRejectedError)) throw e;

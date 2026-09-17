@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canonicalDefinition, definitionHash, reportName, sameDefinition } from '../src/report-key.js';
+import { canonicalDefinition, definitionHash, differingKeys, reportName, sameDefinition } from '../src/report-key.js';
 import { reportDefinition, type ReportDefinition } from '../src/report-definition.js';
 import type { DateRange, ReportQuery } from '../src/gam-client.js';
 import { TEST_NETWORK } from './helpers.js';
@@ -119,6 +119,16 @@ describe('reportName (E7)', () => {
   it('is "gam-mcp " and the first 16 hex characters of the hash', () => {
     const hash = definitionHash(full());
     expect(reportName(hash)).toBe(`gam-mcp ${hash.slice(0, 16)}`);
+  });
+});
+
+describe('differingKeys', () => {
+  it('names the top-level keys whose canonical values differ, and only those', () => {
+    const def = full();
+    expect(differingKeys(def, { ...def, filters: [...def.filters!].reverse() })).toEqual([]);
+    const { customDimensionKeyIds: _, ...withoutIds } = def;
+    expect(differingKeys(def, { ...withoutIds, metrics: ['AD_REQUESTS'], reportType: 'REACH' }))
+      .toEqual(['customDimensionKeyIds', 'metrics', 'reportType']);
   });
 });
 

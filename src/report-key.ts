@@ -71,3 +71,13 @@ export function reportName(hash: string): string {
 export function sameDefinition(a: ReportDefinition, b: ReportDefinition): boolean {
   return JSON.stringify(canonicalDefinition(a)) === JSON.stringify(canonicalDefinition(b));
 }
+
+// The top-level keys whose canonical values differ between two definitions,
+// sorted; names only, so they can be logged.
+export function differingKeys(a: ReportDefinition, b: ReportDefinition): string[] {
+  const x = canonicalDefinition(a) as Record<string, Json>;
+  const y = canonicalDefinition(b) as Record<string, Json>;
+  return [...new Set([...Object.keys(x), ...Object.keys(y)])]
+    .filter((k) => JSON.stringify(x[k]) !== JSON.stringify(y[k]))
+    .sort();
+}
