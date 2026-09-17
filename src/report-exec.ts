@@ -101,6 +101,13 @@ function firstPageTotal(page: RowsPage): number | null {
   return page.totalRowCount ?? (page.nextPageToken ? null : page.rows.length);
 }
 
+// Definition-derived caveats (reach non-additivity, the alias/KV rewrite
+// notes, ...) are only computed once, for the first page. A later page has
+// no access to them, so rather than silently drop them it points back at
+// where they live. PR 2 rebuilds them per page instead of pointing back.
+const CAVEATS_ON_FIRST_PAGE =
+  'Caveats that apply to this whole report are listed on its first page; read them with these rows.';
+
 type PageArgs = {
   ctx: ToolContext;
   report: string;
@@ -231,7 +238,7 @@ export async function fetchReportPage(
       result: cursor.result,
       definition: stored.definition,
       summary: `Rows ${cursor.offset + 1}–${last} of ${total ?? 'an unreported number'} from ${report}`,
-      warnings: [],
+      warnings: [CAVEATS_ON_FIRST_PAGE],
       page,
       offset: cursor.offset,
       total,

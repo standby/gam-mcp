@@ -75,6 +75,16 @@ describe('executeReport', () => {
     expect(resolvePageRows('ten', logger)).toHaveProperty('error');
   });
 
+  it('later pages carry a reminder that caveats live on the first page, not the caveats themselves', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3) }] }, { pageRows: 2 });
+    const first = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S', warnings: ['caveat'] }));
+    expect(first.warnings).toEqual(['caveat']);
+    const second = ok(await fetchReportPage(ctx, first.next_cursor!));
+    expect(second.warnings).toContain(
+      'Caveats that apply to this whole report are listed on its first page; read them with these rows.',
+    );
+  });
+
   it('A6: later pages are labelled from the stored definition, not from memory', async () => {
     const ctx = makeCtx({ reports: [{ query, rows: rows(3) }] }, { pageRows: 2 });
     const first = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }));
