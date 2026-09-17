@@ -1,5 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import type { ReportType } from './schema.js';
+import { fieldType } from './schema.js';
+import type { ReportRow, ReportValue } from './values.js';
+import { reportDefinition, type ReportDefinition } from './report-definition.js';
 
 export type EntityType =
   | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'placement' | 'company'
@@ -43,10 +46,31 @@ export type ReportOperation = { operation_name: string };
 export type OperationStatus =
   | { state: 'pending' }
   | { state: 'running' }
-  | { state: 'done'; download_url: string }
+  // `result` is the report result's resource name. `download_url` is the
+  // same value under its old name, kept until every caller has moved.
+  | { state: 'done'; download_url: string; result: string }
   | { state: 'failed'; reason: string };
 
 export type DateRange = { start: string; end: string };
+
+export type RowsPage = {
+  rows: ReportRow[];
+  nextPageToken?: string;
+  // GAM sends these on the first page only.
+  totalRowCount?: number;
+  runTime?: string;
+  dateRanges?: { start: string; end: string }[];
+};
+
+export type StoredReport = { name: string; definition: ReportDefinition };
+
+// fetchRows throws this when GAM no longer serves a result.
+export class ResultUnavailableError extends Error {
+  constructor(readonly result: string, readonly status: number) {
+    super(`report result ${result} is no longer available (HTTP ${status})`);
+    this.name = 'ResultUnavailableError';
+  }
+}
 
 export type GAMClient = {
   listEntities: (q: {
@@ -68,14 +92,32 @@ export type GAMClient = {
   createReport: (query: ReportQuery, dateRange: DateRange) => Promise<ReportOperation>;
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
   downloadReport: (downloadUrl: string, destPath: string) => Promise<string>;
+  // Create the report resource only. Returns its resource name.
+  defineReport: (query: ReportQuery, dateRange: DateRange) => Promise<{ report: string }>;
+  // Start a run of an existing report. Returns the operation name to poll.
+  runReport: (report: string) => Promise<{ operation: string }>;
+  // One page of a finished result. Throws ResultUnavailableError on 404.
+  fetchRows: (result: string, page: { pageSize: number; pageToken?: string }) => Promise<RowsPage>;
+  // The stored definition of a report, or null if GAM has no such report.
+  getReport: (report: string) => Promise<StoredReport | null>;
 };
 
 // ------------------------- in-memory mock for tests ------------------------
 
+export type FixtureCell = string | number | boolean | null | undefined | (string | number)[];
+
 export type ReportFixture = {
   query: ReportQuery;
   dateRange?: DateRange;
-  csvGz: Buffer;
+  // Legacy CSV fixture, served only through createReport/downloadReport.
+  csvGz?: Buffer;
+  // Typed rows keyed by column name, served through defineReport/fetchRows.
+  // Numbers become intValue when integral unless the schema types the column
+  // as currency or rate; 'YYYY-MM-DD' strings in date columns become YYYYMMDD.
+  rows?: Record<string, FixtureCell>[];
+  runTime?: string;
+  // What GAM reports it computed; defaults to the requested range.
+  computedDateRange?: { start: string; end: string };
 };
 
 export type MockState = {
@@ -83,12 +125,51 @@ export type MockState = {
   reports?: ReportFixture[];
   // Raw resources keyed by the path getResource() is called with.
   resources?: Record<string, Record<string, unknown>>;
+  networkCode?: string;
+  // Result names fetchRows treats as gone.
+  expiredResults?: string[];
+  // Operation outcomes by run number (1-based): 'failed' or 'never' (stays running).
+  runOutcomes?: Record<number, 'failed' | 'never'>;
 };
+
+function toFixtureValue(c: FixtureCell, column: string): ReportValue {
+  if (c === null || c === undefined) return {};
+  if (Array.isArray(c)) {
+    return typeof c[0] === 'number'
+      ? { intListValue: { values: c.map(String) } }
+      : { stringListValue: { values: c.map(String) } };
+  }
+  if (typeof c === 'boolean') return { boolValue: c };
+  const type = fieldType(column);
+  if (typeof c === 'number') {
+    return Number.isInteger(c) && type !== 'currency' && type !== 'rate'
+      ? { intValue: String(c) }
+      : { doubleValue: c };
+  }
+  if (type === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(c)) return { intValue: c.replaceAll('-', '') };
+  return { stringValue: c };
+}
+
+function fixtureRows(fixture: ReportFixture, query: ReportQuery): ReportRow[] {
+  if (!fixture.rows) {
+    throw new Error('mock: this fixture has only csvGz; give it typed `rows` to use defineReport/fetchRows');
+  }
+  return fixture.rows.map((r) => ({
+    dimensionValues: query.dimensions.map((d) => toFixtureValue(r[d], d)),
+    metricValueGroups: [{ primaryValues: query.metrics.map((m) => toFixtureValue(r[m], m)) }],
+  }));
+}
 
 export function createMockGamClient(state: MockState = {}): GAMClient {
   const reports = state.reports ?? [];
   const operations = new Map<string, { fixture: ReportFixture; polledCount: number }>();
   let counter = 0;
+
+  const network = state.networkCode ?? '1234';
+  const defined = new Map<string, { fixture: ReportFixture; query: ReportQuery; dateRange: DateRange }>();
+  const runs = new Map<string, { report: string; run: number; polls: number }>();
+  let reportSeq = 0;
+  let runSeq = 0;
 
   const matchFixture = (q: ReportQuery, dr?: DateRange): ReportFixture | undefined =>
     reports.find((r) =>
@@ -128,20 +209,72 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
       return { operation_name: name };
     },
     async pollOperation(name) {
+      const run = runs.get(name);
+      if (run) {
+        run.polls += 1;
+        const outcome = state.runOutcomes?.[run.run];
+        if (outcome === 'failed') return { state: 'failed', reason: 'mock: report failed' };
+        if (outcome === 'never' || run.polls === 1) return { state: 'running' };
+        const result = `${run.report}/results/${run.run}`;
+        return { state: 'done', download_url: result, result };
+      }
       const op = operations.get(name);
       if (!op) return { state: 'failed', reason: 'unknown operation' };
       op.polledCount++;
       if (op.polledCount === 1) {
         return { state: 'running' };
       }
-      return { state: 'done', download_url: `mock://${name}` };
+      return { state: 'done', download_url: `mock://${name}`, result: `mock://${name}` };
     },
     async downloadReport(downloadUrl, destPath) {
       const name = downloadUrl.replace(/^mock:\/\//, '');
       const op = operations.get(name);
       if (!op) throw new Error(`mock: unknown download ${downloadUrl}`);
+      if (!op.fixture.csvGz) throw new Error('mock: fixture has no csvGz; this tool must use fetchRows');
       writeFileSync(destPath, op.fixture.csvGz);
       return destPath;
+    },
+    async defineReport(query, dateRange) {
+      const fixture = matchFixture(query, dateRange);
+      if (!fixture) {
+        throw new Error(
+          `mock: no report fixture matches query dimensions=${query.dimensions.join(',')} metrics=${query.metrics.join(',')}`,
+        );
+      }
+      const report = `networks/${network}/reports/${++reportSeq}`;
+      defined.set(report, { fixture, query, dateRange });
+      return { report };
+    },
+    async runReport(report) {
+      if (!defined.has(report)) throw new Error(`mock: unknown report ${report}`);
+      const run = ++runSeq;
+      const operation = `networks/${network}/operations/reports/runs/${run}`;
+      runs.set(operation, { report, run, polls: 0 });
+      return { operation };
+    },
+    async fetchRows(result, { pageSize, pageToken }) {
+      const d = defined.get(result.split('/results/')[0]);
+      if (!d || state.expiredResults?.includes(result)) throw new ResultUnavailableError(result, 404);
+      const all = fixtureRows(d.fixture, d.query);
+      if (pageToken !== undefined && !/^\d+$/.test(pageToken)) {
+        throw new Error(`fetchRows 400: invalid page token`);
+      }
+      const size = Math.min(pageSize, 10_000);
+      const offset = pageToken ? Number(pageToken) : 0;
+      const next = offset + size < all.length ? String(offset + size) : undefined;
+      return {
+        rows: all.slice(offset, offset + size),
+        ...(next && { nextPageToken: next }),
+        ...(!pageToken && {
+          ...(all.length > 0 && { totalRowCount: all.length }),
+          runTime: d.fixture.runTime ?? '2026-01-01T00:00:00Z',
+          dateRanges: [d.fixture.computedDateRange ?? d.dateRange],
+        }),
+      };
+    },
+    async getReport(report) {
+      const d = defined.get(report);
+      return d ? { name: report, definition: reportDefinition(d.query, d.dateRange) } : null;
     },
   };
 }

@@ -9,9 +9,12 @@ import type {
   Entity,
   DateRange,
 } from './gam-client.js';
+import { ResultUnavailableError } from './gam-client.js';
 import { gamError } from './errors.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
+import type { ReportRow, ReportValue } from './values.js';
+import { reportDefinition, type GamDate, type ReportDefinition } from './report-definition.js';
 
 const BASE = 'https://admanager.googleapis.com/v1';
 
@@ -24,13 +27,6 @@ const ENTITY_PATH: Record<EntityType, { collection: string; idField: string }> =
   placement:  { collection: 'placements', idField: 'placementId' },
   custom_targeting_key: { collection: 'customTargetingKeys', idField: 'customTargetingKeyId' },
 };
-
-type ReportValue = { stringValue?: string; intValue?: number; doubleValue?: number };
-
-function toDateParts(iso: string): { year: number; month: number; day: number } {
-  const [year, month, day] = iso.split('-').map(Number);
-  return { year, month, day };
-}
 
 function extractValue(rv: ReportValue | null | undefined): string {
   if (!rv) return '';
@@ -90,6 +86,11 @@ function sleepWithJitter(ms: number): Promise<void> {
   // Add 0-25% jitter so concurrent retries don't synchronize.
   const jittered = ms * (1 + Math.random() * 0.25);
   return new Promise((r) => setTimeout(r, jittered));
+}
+
+function isoDate(d: Partial<GamDate> | undefined): string {
+  if (!d?.year || !d.month || !d.day) return '';
+  return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }
 
 export function createRestGamClient(opts: {
@@ -222,25 +223,7 @@ export function createRestGamClient(opts: {
 
     async createReport(query: ReportQuery, dateRange: DateRange): Promise<ReportOperation> {
       // Step 1: create the report resource
-      const body = {
-        reportDefinition: {
-          dimensions: query.dimensions,
-          metrics: query.metrics,
-          dateRange: {
-            fixed: {
-              startDate: toDateParts(dateRange.start),
-              endDate: toDateParts(dateRange.end),
-            },
-          },
-          reportType: query.report_type ?? 'HISTORICAL',
-          ...(query.filters?.length && { filters: toReportFilters(query.filters) }),
-          // GAM expects int64 IDs as strings. Index here = slot number on
-          // CUSTOM_DIMENSION_<N>_VALUE dimensions.
-          ...(query.custom_dimension_key_ids?.length && {
-            customDimensionKeyIds: query.custom_dimension_key_ids.map(String),
-          }),
-        },
-      };
+      const body = { reportDefinition: reportDefinition(query, dateRange) };
       const createRes = await fetchImpl(`${networkPath}/reports`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -276,7 +259,7 @@ export function createRestGamClient(opts: {
       if (op.error) return { state: 'failed', reason: op.error.message };
       const resultPath = op.response?.reportResult;
       if (!resultPath) return { state: 'failed', reason: 'response missing reportResult' };
-      return { state: 'done', download_url: resultPath };
+      return { state: 'done', download_url: resultPath, result: resultPath };
     },
 
     async downloadReport(downloadUrl: string, destPath: string): Promise<string> {
@@ -322,40 +305,59 @@ export function createRestGamClient(opts: {
       writeFileSync(destPath, gzipSync(Buffer.from(csvLines.join('\n') + '\n')));
       return destPath;
     },
+
+    async defineReport(query: ReportQuery, dateRange: DateRange) {
+      const res = await fetchImpl(`${networkPath}/reports`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reportDefinition: reportDefinition(query, dateRange) }),
+      });
+      if (!res.ok) throw new Error(`defineReport ${res.status}: ${await res.text()}`);
+      const report = await res.json() as { name: string };
+      return { report: report.name };
+    },
+
+    async runReport(report: string) {
+      const res = await fetchImpl(`${BASE}/${report}:run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(`runReport ${res.status}: ${await res.text()}`);
+      const op = await res.json() as { name: string };
+      return { operation: op.name };
+    },
+
+    async fetchRows(result: string, page: { pageSize: number; pageToken?: string }) {
+      const params = new URLSearchParams({ pageSize: String(page.pageSize) });
+      if (page.pageToken) params.set('pageToken', page.pageToken);
+      const res = await fetchImpl(`${BASE}/${result}:fetchRows?${params}`);
+      if (res.status === 404) throw new ResultUnavailableError(result, 404);
+      if (!res.ok) throw new Error(`fetchRows ${res.status}: ${await res.text()}`);
+      const body = await res.json() as {
+        rows?: ReportRow[];
+        nextPageToken?: string;
+        totalRowCount?: number | string;
+        runTime?: string;
+        dateRanges?: { startDate?: GamDate; endDate?: GamDate }[];
+      };
+      return {
+        rows: body.rows ?? [],
+        ...(body.nextPageToken && { nextPageToken: body.nextPageToken }),
+        ...(body.totalRowCount !== undefined && { totalRowCount: Number(body.totalRowCount) }),
+        ...(body.runTime && { runTime: body.runTime }),
+        ...(body.dateRanges && {
+          dateRanges: body.dateRanges.map((r) => ({ start: isoDate(r.startDate), end: isoDate(r.endDate) })),
+        }),
+      };
+    },
+
+    async getReport(report: string) {
+      const res = await fetchImpl(`${BASE}/${report}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`getReport ${res.status}: ${await res.text()}`);
+      const r = await res.json() as { name: string; reportDefinition: ReportDefinition };
+      return { name: r.name, definition: r.reportDefinition };
+    },
   };
-}
-
-// GAM REST Reports API expects structured filters wrapped in
-// { fieldFilter: { field: {dimension}, operation, values: ReportValue[] } }.
-// Notable quirks captured here once so callers don't have to know them:
-//   - GAM has no EQUALS / NOT_EQUALS operators; `=` and `!=` are expressed as
-//     IN / NOT_IN with a single-element values array.
-//   - `values` is always an array, even for single-value comparisons.
-//   - `intValue` is a JSON string (Google's int64 → JSON convention).
-//   - The dimension is on `field.dimension`, not `field.name`.
-const OP_TO_OPERATION: Record<'=' | 'IN' | '!=' | 'CONTAINS' | 'NOT_CONTAINS',
-  'IN' | 'NOT_IN' | 'CONTAINS' | 'NOT_CONTAINS'> = {
-  '=': 'IN',
-  'IN': 'IN',
-  '!=': 'NOT_IN',
-  'CONTAINS': 'CONTAINS',
-  'NOT_CONTAINS': 'NOT_CONTAINS',
-};
-
-function toReportFilters(filters: NonNullable<ReportQuery['filters']>): unknown[] {
-  return filters.map((f) => {
-    const list = Array.isArray(f.value) ? f.value : [f.value];
-    if (list.length === 0) throw new Error('filter value list is empty');
-    return {
-      fieldFilter: {
-        field: { dimension: f.field },
-        operation: OP_TO_OPERATION[f.op],
-        values: list.map(toReportValue),
-      },
-    };
-  });
-}
-
-function toReportValue(v: number | string): unknown {
-  return typeof v === 'number' ? { intValue: String(v) } : { stringValue: v };
 }
