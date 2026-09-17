@@ -22,10 +22,11 @@ const ENTITY_PATH: Record<EntityType, { collection: string; idField: string }> =
   custom_targeting_key: { collection: 'customTargetingKeys', idField: 'customTargetingKeyId' },
 };
 
-// Wrap a fetch impl with exponential-backoff retries on transient failures.
-// 4xx (other than 429) are application errors — surface immediately. 429
-// (quota) and 5xx (server) are retried with jitter. Network errors (thrown
-// from fetch itself) are also retried.
+// Retries transient failures with exponential backoff (spec §2.3). A GET is
+// retried on a thrown fetch, 429 and 5xx. A POST is retried only on 429, the
+// one answer that means GAM did not act on it: after a 5xx or a lost
+// connection the report may already exist, and the next identical call finds
+// it by name instead of creating a second one. Other 4xx answers return at once.
 export function withRetries(
   fetchImpl: typeof fetch,
   opts: { maxAttempts?: number; baseDelayMs?: number; logger?: Logger } = {},
@@ -33,29 +34,31 @@ export function withRetries(
   const maxAttempts = opts.maxAttempts ?? 4; // 1 initial + 3 retries
   const baseDelay = opts.baseDelayMs ?? 250;
   const logger = opts.logger ?? noopLogger();
-  return (async (input: any, init?: any) => {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    const post = method === 'POST';
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let res: Response;
       try {
-        const res = await fetchImpl(input, init);
-        if (res.status === 429 || res.status >= 500) {
-          if (attempt === maxAttempts - 1) return res;
-          const delay_ms = baseDelay * 2 ** attempt;
-          logger.warn('gam.retry', { status: res.status, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
-          await sleepWithJitter(delay_ms);
-          continue;
-        }
-        return res;
+        res = await fetchImpl(input, init);
       } catch (e) {
         lastErr = e;
-        if (attempt === maxAttempts - 1) {
-          logger.error('gam.fetch_failed', { message: e instanceof Error ? e.message : String(e), attempt: attempt + 1, max_attempts: maxAttempts });
+        const message = e instanceof Error ? e.message : String(e);
+        if (post || attempt === maxAttempts - 1) {
+          logger.error('gam.fetch_failed', { method, message, attempt: attempt + 1, max_attempts: maxAttempts });
           throw e;
         }
         const delay_ms = baseDelay * 2 ** attempt;
-        logger.warn('gam.retry', { message: e instanceof Error ? e.message : String(e), attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
+        logger.warn('gam.retry', { method, message, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
         await sleepWithJitter(delay_ms);
+        continue;
       }
+      const retryable = res.status === 429 || (!post && res.status >= 500);
+      if (!retryable || attempt === maxAttempts - 1) return res;
+      const delay_ms = baseDelay * 2 ** attempt;
+      logger.warn('gam.retry', { method, status: res.status, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
+      await sleepWithJitter(delay_ms);
     }
     throw lastErr ?? new Error('unreachable: retry loop exhausted');
   }) as typeof fetch;

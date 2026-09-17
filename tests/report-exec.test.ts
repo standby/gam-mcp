@@ -9,7 +9,7 @@ import { createLogger } from '../src/log.js';
 import { definitionFor, makeCtx, NETWORK } from './helpers.js';
 import type { Provenance, ResultEnvelope } from '../src/envelope.js';
 import type { ReportDefinition } from '../src/report-definition.js';
-import { createRestGamClient } from '../src/gam-client-rest.js';
+import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { GamHttpError } from '../src/gam-client.js';
 import type { GamErrorEnvelope } from '../src/errors.js';
 import { createFakeGam, int } from './fake-gam.js';
@@ -409,6 +409,31 @@ describe('GAM errors through the REST client', () => {
     const client = createRestGamClient({ networkCode: NETWORK, fetchImpl: gam.fetch });
     expect(await executeReport(makeCtx({}, { client }), { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
       error: { code: 'AUTH_FAILED', details: { call: 'runReport', status: 403, gam_status: 'PERMISSION_DENIED' } },
+    });
+  });
+});
+
+describe('quota after retries', () => {
+  const restCtx = () => {
+    const gam = createFakeGam();
+    gam.setRows([{ dimensionValues: [int(1)], metricValueGroups: [{ primaryValues: [int(10)] }] }]);
+    const client = createRestGamClient({ networkCode: NETWORK, fetchImpl: withRetries(gam.fetch, { baseDelayMs: 1 }) });
+    return { gam, ctx: makeCtx({}, { client }) };
+  };
+
+  it('F6: a 429 while polling, after retries, is QUOTA_EXCEEDED naming the operation', async () => {
+    const { gam, ctx } = restCtx();
+    for (let i = 0; i < 4; i++) gam.inject('GET', /^networks\/1234\/operations\//, { status: 429 });
+    expect(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
+      error: { code: 'QUOTA_EXCEEDED', details: { operation: `networks/${NETWORK}/operations/reports/runs/1` } },
+    });
+  });
+
+  it('a create still answered 429 after retries is QUOTA_EXCEEDED', async () => {
+    const { gam, ctx } = restCtx();
+    for (let i = 0; i < 4; i++) gam.inject('POST', /^networks\/1234\/reports$/, { status: 429 });
+    expect(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
+      error: { code: 'QUOTA_EXCEEDED', details: { call: 'defineReport' } },
     });
   });
 });
