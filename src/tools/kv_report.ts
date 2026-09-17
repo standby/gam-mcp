@@ -128,6 +128,6 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       `Resolved '${parsed.key}' to custom_targeting_key_id=${keyId}; filtering on CUSTOM_DIMENSION_0_VALUE='${parsed.value}'.`,
     ];
 
-    return executeReport(ctx, { query, dateRange, summary, warnings });
+    return executeReport(ctx, { tool: 'kv_report', query, dateRange, summary, warnings });
   },
 };

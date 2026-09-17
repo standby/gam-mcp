@@ -41,6 +41,7 @@ describe('log integration', () => {
     expect(msgs).toContain('report.create');
     expect(msgs).toContain('report.poll');
     expect(msgs).toContain('report.done');
+    expect(rec.events().find((e) => e.msg === 'report.create')).toMatchObject({ tool: 'top_advertisers' });
   });
 
   it('emits gam.retry on 429 and surfaces final status', async () => {

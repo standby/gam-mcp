@@ -71,7 +71,7 @@ async function pacingUnderdelivery(
       value: ['STANDARD', 'SPONSORSHIP', 'NETWORK', 'BULK', 'PRICE_PRIORITY'],
     }],
   };
-  const result = await executeReportRows(ctx, query, range);
+  const result = await executeReportRows(ctx, query, range, 'find_anomalies');
   if ('error' in result) return result;
 
   const annotated: Record<string, string>[] = [];
@@ -116,8 +116,8 @@ async function fillRateDrops(
     metrics: ['AD_REQUESTS', 'IMPRESSIONS'],
   };
   const [base, prev] = await Promise.all([
-    executeReportRows(ctx, query, baseRange),
-    executeReportRows(ctx, query, prevRange),
+    executeReportRows(ctx, query, baseRange, 'find_anomalies'),
+    executeReportRows(ctx, query, prevRange, 'find_anomalies'),
   ]);
   if ('error' in base) return base;
   if ('error' in prev) return prev;
@@ -170,8 +170,8 @@ async function ecpmRegression(
     metrics: ['AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM'],
   };
   const [base, prev] = await Promise.all([
-    executeReportRows(ctx, query, baseRange),
-    executeReportRows(ctx, query, prevRange),
+    executeReportRows(ctx, query, baseRange, 'find_anomalies'),
+    executeReportRows(ctx, query, prevRange, 'find_anomalies'),
   ]);
   if ('error' in base) return base;
   if ('error' in prev) return prev;
@@ -226,8 +226,8 @@ async function viewabilityDrops(
     metrics: ['IMPRESSIONS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE'],
   };
   const [base, prev] = await Promise.all([
-    executeReportRows(ctx, query, baseRange),
-    executeReportRows(ctx, query, prevRange),
+    executeReportRows(ctx, query, baseRange, 'find_anomalies'),
+    executeReportRows(ctx, query, prevRange, 'find_anomalies'),
   ]);
   if ('error' in base) return base;
   if ('error' in prev) return prev;

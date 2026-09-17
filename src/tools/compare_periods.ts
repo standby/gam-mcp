@@ -67,8 +67,8 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
     try {
       // Run both reports in parallel — they're independent createReport calls.
       const [base, prev] = await Promise.all([
-        executeReportRows(ctx, query, baseRange),
-        executeReportRows(ctx, query, prevRange),
+        executeReportRows(ctx, query, baseRange, 'compare_periods'),
+        executeReportRows(ctx, query, prevRange, 'compare_periods'),
       ]);
       if ('error' in base) return base;
       if ('error' in prev) return prev;

@@ -42,7 +42,7 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
       };
       const [allUnits, report] = await Promise.all([
         ctx.client.listEntities({ entity_type: 'ad_unit', limit: input.max_units }),
-        executeReportRows(ctx, query, actualRange),
+        executeReportRows(ctx, query, actualRange, 'find_unused_ad_units'),
       ]);
       if ('error' in report) return report;
 

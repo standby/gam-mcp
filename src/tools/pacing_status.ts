@@ -33,6 +33,7 @@ export const pacingStatusTool: ToolDefinition<typeof inputSchema> = {
     };
 
     return executeReport(ctx, {
+      tool: 'pacing_status',
       query,
       dateRange,
       summary: `Pacing status (month to date, ${dateRange.start}..${dateRange.end})`,

@@ -327,3 +327,14 @@ describe('later pages take their facts from the server (PR 1 review)', () => {
     expect(REMEMBERED_RESULTS_MAX).toBe(1000);
   });
 });
+
+describe('logs name the calling tool', () => {
+  it('report.create carries the tool that asked', async () => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'debug', sink: (l: string) => { lines.push(JSON.parse(l)); } });
+    const ctx = makeCtx({ reports: [{ query, rows: rows(1) }] }, { logger });
+    await executeReport(ctx, { tool: 'tool_a', query, dateRange: RANGE, summary: 'S' });
+    await executeReportRows(ctx, query, { start: '2026-09-03', end: '2026-09-03' }, 'tool_b');
+    expect(lines.filter((e) => e.msg === 'report.create').map((e) => e.tool)).toEqual(['tool_a', 'tool_b']);
+  });
+});

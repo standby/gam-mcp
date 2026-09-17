@@ -66,6 +66,7 @@ export function buildReportTool<I extends ZodTypeAny>(
       const query = cfg.buildQuery(input);
       const dateRange = cfg.buildDateRange?.(input) ?? (input as { date_range: DateRange }).date_range;
       return executeReport(ctx, {
+        tool: cfg.name,
         query,
         dateRange,
         summary: cfg.summary(input),

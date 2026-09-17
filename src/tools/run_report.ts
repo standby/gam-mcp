@@ -126,6 +126,6 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       `Report: dims=[${query.dimensions.join(',')}] metrics=[${query.metrics.join(',')}] ` +
       `${dateRange.start}..${dateRange.end}`;
 
-    return executeReport(ctx, { query, dateRange, summary, warnings });
+    return executeReport(ctx, { tool: 'run_report', query, dateRange, summary, warnings });
   },
 };

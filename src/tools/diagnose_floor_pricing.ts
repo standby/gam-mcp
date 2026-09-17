@@ -65,7 +65,7 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         ...(filters.length && { filters }),
       };
 
-      const result = await executeReportRows(ctx, query, range);
+      const result = await executeReportRows(ctx, query, range, 'diagnose_floor_pricing');
       if ('error' in result) return result;
 
       // Qualifying rows: enough AdX volume for a stable signal.

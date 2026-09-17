@@ -70,8 +70,8 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
       };
 
       const [base, prev] = await Promise.all([
-        executeReportRows(ctx, query, baseRange),
-        prevRange ? executeReportRows(ctx, query, prevRange) : Promise.resolve(null),
+        executeReportRows(ctx, query, baseRange, 'diagnose_fill_rate'),
+        prevRange ? executeReportRows(ctx, query, prevRange, 'diagnose_fill_rate') : Promise.resolve(null),
       ]);
       if ('error' in base) return base;
       if (prev && 'error' in prev) return prev;

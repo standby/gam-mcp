@@ -17,6 +17,8 @@ export const MAX_INPUT_ROWS = 50_000;
 export const REMEMBERED_RESULTS_MAX = 1000;
 
 export type ReportRequest = {
+  // The tool asking, named in the report path's logs.
+  tool: string;
   query: ReportQuery;
   dateRange: DateRange;
   summary: string;
@@ -81,9 +83,11 @@ export async function pollUntilDone(
 async function runToResult(
   ctx: ToolContext,
   definition: ReportDefinition,
+  tool: string,
 ): Promise<{ report: string; result: string } | GamErrorEnvelope> {
   const range = definitionRange(definition);
   ctx.logger.debug('report.create', {
+    tool,
     dimensions: definition.dimensions,
     metrics: definition.metrics,
     date_start: range?.start ?? null,
@@ -138,8 +142,9 @@ async function firstPage(
   ctx: ToolContext,
   definition: ReportDefinition,
   pageSize: number,
+  tool: string,
 ): Promise<FirstPage | GamErrorEnvelope> {
-  const ran = await runToResult(ctx, definition);
+  const ran = await runToResult(ctx, definition, tool);
   if ('error' in ran) return ran;
   const page = await ctx.client.fetchRows(ran.result, { pageSize });
   const facts = factsOf(page);
@@ -222,7 +227,7 @@ export async function executeReport(
 ): Promise<ResultEnvelope | GamErrorEnvelope> {
   try {
     const definition = reportDefinition(req.query, req.dateRange);
-    const first = await firstPage(ctx, definition, pageRows(ctx));
+    const first = await firstPage(ctx, definition, pageRows(ctx), req.tool);
     if ('error' in first) return first;
     return pageEnvelope({
       ctx,
@@ -331,10 +336,11 @@ export async function executeReportRows(
   ctx: ToolContext,
   query: ReportQuery,
   dateRange: DateRange,
+  tool: string,
 ): Promise<ReportRows | GamErrorEnvelope> {
   try {
     const definition = reportDefinition(query, dateRange);
-    const first = await firstPage(ctx, definition, GAM_MAX_PAGE_ROWS);
+    const first = await firstPage(ctx, definition, GAM_MAX_PAGE_ROWS, tool);
     if ('error' in first) return first;
     const reported = first.facts.total_row_count;
     if (reported !== null && reported > MAX_INPUT_ROWS) return tooLarge(reported, MAX_INPUT_ROWS, 'input report');
