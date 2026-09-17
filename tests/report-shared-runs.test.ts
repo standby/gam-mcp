@@ -263,9 +263,11 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const expired: string[] = [];
     const cache = createReportCache({ networkCode: NETWORK });
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'info', sink: (l) => { lines.push(JSON.parse(l)); } });
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
-      { reportCache: cache, reportTimeoutMs: 0 },
+      { reportCache: cache, reportTimeoutMs: 0, logger },
     );
     expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
     delete outcomes[1]; // GAM finishes the run
@@ -274,6 +276,9 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     expect(later.provenance.result).toBe(result(2));
     expect(counters.report_jobs_created).toBe(2);
     expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: result(2) });
+    expect(lines.filter((e) => e.msg === 'report.cached_result_gone')).toEqual([
+      expect.objectContaining({ tool: 'test', result: result(1), source: 'resume' }),
+    ]);
   });
 
   it('a resumed run whose re-run result is also gone fails once, and the next call after that starts fresh', async () => {

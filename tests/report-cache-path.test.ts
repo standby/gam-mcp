@@ -107,8 +107,11 @@ describe('the report path uses the result cache (spec §2.5)', () => {
 
   it('E5: a cached result GAM no longer serves is run again once, silently', async () => {
     const expired: string[] = [];
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'info', sink: (l) => { lines.push(JSON.parse(l)); } });
     const { ctx, counters } = counted({ reports: [{ query, rows: rows(2) }], expiredResults: expired }, {
       reportCache: createReportCache({ networkCode: NETWORK }),
+      logger,
     });
     const first = ok(await executeReport(ctx, request));
     expired.push(result(1));
@@ -117,6 +120,9 @@ describe('the report path uses the result cache (spec §2.5)', () => {
     expect(second.warnings).toEqual(first.warnings);
     expect(second.rows).toEqual(first.rows);
     expect(counters.report_jobs_created).toBe(2);
+    expect(lines.filter((e) => e.msg === 'report.cached_result_gone')).toEqual([
+      expect.objectContaining({ tool: 'test', result: result(1), source: 'cache' }),
+    ]);
   });
 
   it('E5: if the new result is gone too, the call is REPORT_RESULT_EXPIRED, once, with no loop', async () => {

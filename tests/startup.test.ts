@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { cacheDirFor, chooseDateTimeZone, checkNetworkIdentity, readSettings } from '../src/startup.js';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { cacheDirFor, chooseDateTimeZone, checkNetworkIdentity, openReportCache, readSettings } from '../src/startup.js';
 import { createRestGamClient } from '../src/gam-client-rest.js';
 import { CredentialError, gamError } from '../src/errors.js';
 import { createLogger } from '../src/log.js';
@@ -7,6 +10,8 @@ import { createFakeGam } from './fake-gam.js';
 
 const NETWORK_INFO = { networkCode: '1234', timeZone: 'Asia/Tokyo', currencyCode: 'USD' };
 const CODE = { GAM_NETWORK_CODE: '1234' };
+const AUTH_HINT = gamError('AUTH_FAILED').error.hint;
+const RETRY_HINT = 'Google Ad Manager could not be reached or is rate-limiting; retry later.';
 
 describe('readSettings', () => {
   it('uses the defaults when only the network code is set', () => {
@@ -49,7 +54,7 @@ describe('readSettings', () => {
     expect(r.error).toContain('Mars/Olympus');
   });
 
-  it('D4 (fix round 1): a raw UTC offset is not an IANA name, and the error names GAM_TIMEZONE', () => {
+  it('D4: a raw UTC offset is not an IANA name, and the error names GAM_TIMEZONE', () => {
     const r = readSettings({ ...CODE, GAM_TIMEZONE: '+08:00' });
     if (!('error' in r)) throw new Error('expected an error');
     expect(r.error).toContain('GAM_TIMEZONE');
@@ -86,15 +91,65 @@ describe('checkNetworkIdentity', () => {
     if (!('error' in r)) throw new Error('expected an error');
     expect(r.error).toContain('cannot read network 1234 with the adc credential');
     expect(r.error).toContain('GAM answered HTTP 403 PERMISSION_DENIED');
-    expect(r.error).toContain(gamError('AUTH_FAILED').error.hint);
+    expect(r.error).toContain(`hint: ${AUTH_HINT}`);
   });
 
-  it('names a credential failure without quoting the credential', async () => {
+  it('D3: a 401 gives the credential hint too', async () => {
+    const gam = createFakeGam();
+    gam.inject('GET', /^networks\/1234$/, { status: 401, body: { error: { code: 401, status: 'UNAUTHENTICATED' } } });
+    const r = await checkNetworkIdentity(restClient(gam), '1234', 'file');
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain('GAM answered HTTP 401 UNAUTHENTICATED');
+    expect(r.error).toContain(`hint: ${AUTH_HINT}`);
+  });
+
+  it('names a credential failure without quoting the credential, with the credential hint', async () => {
     const client = { getNetwork: async () => { throw new CredentialError('json', 'SyntaxError'); } };
     const r = await checkNetworkIdentity(client, '1234', 'json');
     if (!('error' in r)) throw new Error('expected an error');
     expect(r.error).toContain('with the json credential');
     expect(r.error).toContain('GAM was not reached: the json credential could not produce an access token (SyntaxError)');
+    expect(r.error).toContain(`hint: ${AUTH_HINT}`);
+  });
+
+  it('a 404 says to check GAM_NETWORK_CODE', async () => {
+    const gam = createFakeGam();
+    gam.inject('GET', /^networks\/1234$/, { status: 404, body: { error: { code: 404, status: 'NOT_FOUND' } } });
+    const r = await checkNetworkIdentity(restClient(gam), '1234', 'file');
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain('GAM answered HTTP 404 NOT_FOUND');
+    expect(r.error).toMatch(/hint: Check GAM_NETWORK_CODE/);
+    expect(r.error).not.toContain(AUTH_HINT);
+  });
+
+  it.each([429, 500, 503])('a %i says GAM could not be reached or is rate-limiting', async (status) => {
+    const gam = createFakeGam();
+    gam.inject('GET', /^networks\/1234$/, { status });
+    const r = await checkNetworkIdentity(restClient(gam), '1234', 'adc');
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain(`GAM answered HTTP ${status}`);
+    expect(r.error).toContain(`hint: ${RETRY_HINT}`);
+    expect(r.error).not.toContain(AUTH_HINT);
+  });
+
+  it('a request that never reaches GAM says to retry later', async () => {
+    const gam = createFakeGam();
+    gam.inject('GET', /^networks\/1234$/, 'network-error');
+    const r = await checkNetworkIdentity(restClient(gam), '1234', 'adc');
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain('GAM could not be read: fetch failed');
+    expect(r.error).toContain(`hint: ${RETRY_HINT}`);
+    expect(r.error).not.toContain(AUTH_HINT);
+  });
+
+  it.each(['timeZone', 'currencyCode'])('an answer without %s names the missing field', async (field) => {
+    const gam = createFakeGam();
+    delete gam.network[field];
+    const r = await checkNetworkIdentity(restClient(gam), '1234', 'file');
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain(`GAM's answer has no ${field}`);
+    expect(r.error).toMatch(new RegExp(`hint: .*\\b${field}\\b`));
+    expect(r.error).not.toContain(AUTH_HINT);
   });
 
   it('refuses a network zone this runtime does not know', async () => {
@@ -129,6 +184,44 @@ describe('chooseDateTimeZone', () => {
       report_time_zone: 'Asia/Tokyo', date_time_zone: 'Asia/Seoul', zones_differ: true,
     })]);
   });
+});
+
+describe('openReportCache', () => {
+  function withDir(run: (dir: string) => void): void {
+    const dir = mkdtempSync(join(tmpdir(), 'gam-startup-'));
+    try {
+      run(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const settingsFor = (env: NodeJS.ProcessEnv) => {
+    const s = readSettings({ ...CODE, ...env });
+    if ('error' in s) throw new Error(s.error);
+    return s;
+  };
+
+  it('keeps entries in memory only when no directory is set', () => {
+    const cache = openReportCache(settingsFor({}), createLogger({ level: 'error' }));
+    expect(cache).not.toHaveProperty('error');
+  });
+
+  it("creates the network's directory under GAM_REPORT_CACHE_DIR", () => withDir((dir) => {
+    const cache = openReportCache(settingsFor({ GAM_REPORT_CACHE_DIR: dir }), createLogger({ level: 'error' }));
+    expect(cache).not.toHaveProperty('error');
+    expect(statSync(join(dir, '1234')).isDirectory()).toBe(true);
+  }));
+
+  it('a GAM_REPORT_CACHE_DIR that cannot be created is an error naming it', () => withDir((dir) => {
+    const file = join(dir, 'not-a-directory');
+    writeFileSync(file, '');
+    const r = openReportCache(settingsFor({ GAM_REPORT_CACHE_DIR: join(file, 'cache') }), createLogger({ level: 'error' }));
+    if (!('error' in r)) throw new Error('expected an error');
+    expect(r.error).toContain(`GAM_REPORT_CACHE_DIR=${JSON.stringify(join(file, 'cache'))}`);
+    expect(r.error).toContain('ENOTDIR');
+    expect(existsSync(join(file, 'cache'))).toBe(false);
+  }));
 });
 
 describe('cacheDirFor', () => {

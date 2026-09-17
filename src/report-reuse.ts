@@ -19,6 +19,11 @@ function stateFor(client: GAMClient): ReuseState {
   return state;
 }
 
+// Forgets the report remembered for `key`, which GAM no longer has.
+export function forgetReport(client: GAMClient, key: string): void {
+  stateFor(client).byKey.delete(key);
+}
+
 // The report that runs `definition` (spec §2.2): one this process already
 // used, else one GAM lists under the definition's name whose stored
 // definition is the same after normalisation, else a new one. `key` is

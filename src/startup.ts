@@ -1,6 +1,7 @@
 import { join } from 'node:path';
+import { createReportCache, type ReportCache } from './cache.js';
 import { CredentialError, gamError } from './errors.js';
-import { GamHttpError, type GAMClient, type NetworkInfo } from './gam-client.js';
+import { GamHttpError, NetworkFieldMissingError, type GAMClient, type NetworkInfo } from './gam-client.js';
 import type { Logger } from './log.js';
 import { canonicalTimeZone } from './zones.js';
 
@@ -58,8 +59,8 @@ export function readSettings(env: NodeJS.ProcessEnv): Settings | { error: string
 }
 
 // networks.get with the configured credential, before anything is served
-// (spec §2.4). The error names the credential source and what GAM answered,
-// never anything the credential contains.
+// (spec §2.4). The error names the credential source, what GAM answered and a
+// hint for that cause, never anything the credential contains.
 export async function checkNetworkIdentity(
   client: Pick<GAMClient, 'getNetwork'>,
   networkCode: string,
@@ -71,7 +72,7 @@ export async function checkNetworkIdentity(
   } catch (e) {
     return {
       error: `cannot read network ${networkCode} with the ${source} credential (${describeFailure(e)}).\n` +
-        `  hint: ${gamError('AUTH_FAILED').error.hint}`,
+        `  hint: ${hintFor(e)}`,
     };
   }
   const timeZone = canonicalTimeZone(network.timeZone);
@@ -86,13 +87,51 @@ export async function checkNetworkIdentity(
 function describeFailure(e: unknown): string {
   if (e instanceof GamHttpError) return `GAM answered HTTP ${e.status}${e.gamStatus ? ` ${e.gamStatus}` : ''}`;
   if (e instanceof CredentialError) return `GAM was not reached: ${e.message}`;
+  if (e instanceof NetworkFieldMissingError) return `GAM's answer has no ${e.field}`;
   return `GAM could not be read: ${e instanceof Error ? e.message : String(e)}`;
+}
+
+const RETRY_LATER = 'Google Ad Manager could not be reached or is rate-limiting; retry later.';
+
+// What to do about a failed identity check, by its cause. A failure that is
+// not an answer from GAM is a request that never got one.
+function hintFor(e: unknown): string {
+  if (e instanceof NetworkFieldMissingError) {
+    return `networks.get answered without the network's ${e.field}, which every report needs; retry later, and report it if it persists.`;
+  }
+  if (e instanceof GamHttpError) {
+    if (e.status === 404) return 'Check GAM_NETWORK_CODE: GAM has no network with that code that this credential can read.';
+    if (e.status === 429 || e.status >= 500) return RETRY_LATER;
+    return gamError('AUTH_FAILED').error.hint;
+  }
+  if (e instanceof CredentialError) return gamError('AUTH_FAILED').error.hint;
+  return RETRY_LATER;
 }
 
 // The disk tier for one network: the cache key does not name the network, so
 // two networks sharing GAM_REPORT_CACHE_DIR must not share entries.
 export function cacheDirFor(settings: Settings): string | undefined {
   return settings.cacheDir ? join(settings.cacheDir, settings.networkCode) : undefined;
+}
+
+// The report cache these settings describe. A GAM_REPORT_CACHE_DIR whose
+// directory cannot be created is an error naming the variable.
+export function openReportCache(settings: Settings, logger: Logger): ReportCache | { error: string } {
+  const diskDir = cacheDirFor(settings);
+  try {
+    return createReportCache({
+      networkCode: settings.networkCode,
+      ttlMs: settings.cacheTtlMs,
+      logger,
+      ...(diskDir && { diskDir }),
+    });
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code ?? 'unknown error';
+    return {
+      error: `GAM_REPORT_CACHE_DIR=${JSON.stringify(settings.cacheDir)} cannot be used: ` +
+        `the directory ${JSON.stringify(diskDir)} could not be created (${code})`,
+    };
+  }
 }
 
 // GAM_TIMEZONE chooses calendar dates; unset, it is the network's zone, and a

@@ -134,12 +134,25 @@ describe('executeReport', () => {
     const first = ok(await executeReport(fresh, { query, dateRange: RANGE, summary: 'S' }));
     // A second mock whose report 1 / run 1 result is already gone.
     const expiring = makeCtx({ reports: [{ query, rows: rows(3) }], expiredResults: [result] }, { pageRows: 2 });
-    expect(await executeReport(expiring, { query, dateRange: RANGE, summary: 'S' })).toMatchObject({
-      error: { code: 'REPORT_RESULT_EXPIRED', details: { result } },
+    const onFirstPage = await executeReport(expiring, { query, dateRange: RANGE, summary: 'S' });
+    expect(onFirstPage).toMatchObject({ error: { code: 'REPORT_RESULT_EXPIRED', details: { result } } });
+    expect((onFirstPage as GamErrorEnvelope).error.hint).toMatch(/^Run the tool again/);
+    expect((onFirstPage as GamErrorEnvelope).error.hint).not.toContain('cursor');
+    const onLaterPage = await fetchReportPage(expiring, first.next_cursor!);
+    expect(onLaterPage).toMatchObject({ error: { code: 'REPORT_RESULT_EXPIRED', details: { result, from_cursor: true } } });
+    expect((onLaterPage as GamErrorEnvelope).error.hint).toContain('produced this cursor');
+  });
+
+  it('a later page of a report GAM no longer has is REPORT_RESULT_EXPIRED with the cursor hint', async () => {
+    const fresh = makeCtx({ reports: [{ query, rows: rows(3) }] }, { pageRows: 2 });
+    const first = ok(await executeReport(fresh, { query, dateRange: RANGE, summary: 'S' }));
+    // A fresh process whose client knows no report 1.
+    const other = makeCtx({}, { pageRows: 2 });
+    const r = await fetchReportPage(other, first.next_cursor!);
+    expect(r).toMatchObject({
+      error: { code: 'REPORT_RESULT_EXPIRED', details: { result: `networks/${NETWORK}/reports/1/results/1`, from_cursor: true } },
     });
-    expect(await fetchReportPage(expiring, first.next_cursor!)).toMatchObject({
-      error: { code: 'REPORT_RESULT_EXPIRED', details: { result } },
-    });
+    expect((r as GamErrorEnvelope).error.hint).toContain('produced this cursor');
   });
 
   it('warns when GAM reports no row count and more pages exist', async () => {

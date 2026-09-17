@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GoogleAuth } from 'google-auth-library';
 import {
   authOptionsFor, createAuthFetch, createGoogleAuth, failureKind, resolveAuthSource, SCOPES,
   type AuthSource, type GoogleAuthLike,
@@ -123,6 +124,20 @@ describe('credential failures', () => {
       expect(lines.some((l) => l.includes('"msg":"auth.token_failure"') && l.includes('"reason":"SyntaxError"'))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a credential that yields no access token fails as a CredentialError saying so', async () => {
+    const getClient = vi.spyOn(GoogleAuth.prototype, 'getClient')
+      .mockResolvedValue({ getAccessToken: async () => ({ token: null }) } as never);
+    try {
+      const { err, lines } = await failure({ type: 'adc' });
+      expect(err).toBeInstanceOf(CredentialError);
+      expect(err).toMatchObject({ source: 'adc', reason: 'no access token' });
+      expect((err as Error).message).toBe('the adc credential could not produce an access token (no access token)');
+      expect(lines.some((l) => l.includes('"msg":"auth.token_failure"') && l.includes('"reason":"no access token"'))).toBe(true);
+    } finally {
+      getClient.mockRestore();
     }
   });
 

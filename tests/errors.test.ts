@@ -37,6 +37,14 @@ describe('gamError', () => {
     expect(big.error.hint).toMatch(/Narrow/);
   });
 
+  it('REPORT_RESULT_EXPIRED says to run the tool again, or to re-run the tool behind a cursor', () => {
+    const direct = gamError('REPORT_RESULT_EXPIRED', { result: 'networks/1/reports/2/results/3' }).error.hint;
+    expect(direct).toMatch(/^Run the tool again/);
+    expect(direct).not.toContain('cursor');
+    const paged = gamError('REPORT_RESULT_EXPIRED', { result: 'networks/1/reports/2/results/3', from_cursor: true }).error.hint;
+    expect(paged).toBe('Re-run the tool that produced this cursor; GAM keeps report results for a limited time.');
+  });
+
   it('REPORT_TIMEOUT names the operation and says the next call waits for it', () => {
     const e = gamError('REPORT_TIMEOUT', { timeout_ms: 90000, operation: 'networks/1/operations/reports/runs/2' });
     expect(e.error.message).toBe('Report did not finish within 90000ms (operation networks/1/operations/reports/runs/2).');

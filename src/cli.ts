@@ -3,11 +3,10 @@ import { startMcpServer, buildMcpServer, installStdoutGuard } from './server.js'
 import { connectHttp } from './http-transport.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js';
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
-import { createReportCache } from './cache.js';
 import { createLogger, levelFromEnv } from './log.js';
 import { resolvePageRows } from './report-exec.js';
 import { createSavedQueryStore, defaultSavedQueriesPath } from './saved-queries.js';
-import { cacheDirFor, checkNetworkIdentity, chooseDateTimeZone, readSettings } from './startup.js';
+import { checkNetworkIdentity, chooseDateTimeZone, openReportCache, readSettings } from './startup.js';
 import { createUsageCounters, instrumentGamClient } from './usage.js';
 
 function stop(message: string): never {
@@ -37,6 +36,8 @@ async function main(): Promise<void> {
       reason: 'results are paged; set GAM_PAGE_ROWS instead',
     });
   }
+  const reportCache = openReportCache(settings, logger);
+  if ('error' in reportCache) stop(reportCache.error);
 
   const resolved = resolveAuthSource(process.env);
   if ('error' in resolved) stop(`${resolved.error.message}\n  hint: ${resolved.error.hint}`);
@@ -54,13 +55,6 @@ async function main(): Promise<void> {
 
   const usageCounters = createUsageCounters();
   const client = instrumentGamClient(rawClient, usageCounters);
-  const cacheDir = cacheDirFor(settings);
-  const reportCache = createReportCache({
-    networkCode,
-    logger,
-    ttlMs: settings.cacheTtlMs,
-    ...(cacheDir ? { diskDir: cacheDir } : {}),
-  });
   const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
   const ctx = {
     client,

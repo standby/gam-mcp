@@ -75,6 +75,22 @@ describe('startup (real process)', () => {
     expect(r.stderr).not.toContain('auth.source_resolved');
   }, 30_000);
 
+  it('a GAM_REPORT_CACHE_DIR that cannot be created stops startup with exit 2, naming it, before the credential is used', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gam-cli-cache-'));
+    const file = join(dir, 'not-a-directory');
+    writeFileSync(file, '');
+    try {
+      const r = start({ GAM_REPORT_CACHE_DIR: join(file, 'cache'), GAM_SERVICE_ACCOUNT_KEY_FILE: '/nonexistent/key.json' });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain(`gam-mcp: GAM_REPORT_CACHE_DIR=${JSON.stringify(join(file, 'cache'))}`);
+      expect(r.stderr).not.toContain('fatal');
+      expect(r.stderr).not.toMatch(/^\s+at /m);
+      expect(r.stderr).not.toContain('auth.source_resolved');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   // Fix round 1: an invalid GAM_HTTP_PORT was printed unquoted, so a value
   // containing a newline could fake a line on stderr — including a fake
   // http.listening log line a deployer's monitoring might match on. Quoting

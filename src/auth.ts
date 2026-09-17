@@ -24,22 +24,28 @@ export type AuthSource =
 // (test H7), not by the scope.
 export const SCOPES = ['https://www.googleapis.com/auth/admanager'];
 
+// The failure kind for a credential the library accepted but that yielded no token.
+const NO_ACCESS_TOKEN = 'no access token';
+
 export function createGoogleAuth(source: AuthSource, logger: Logger = noopLogger()): GoogleAuthLike {
   const auth = new GoogleAuth(authOptionsFor(source));
   return {
     async getAccessToken() {
       logger.debug('auth.token_refresh', { source: source.type });
-      try {
-        const client = await auth.getClient();
-        const t = await client.getAccessToken();
-        return t.token ?? null;
-      } catch (e) {
-        // The library's messages can quote the key it failed to parse, so only
-        // the failure's kind is logged or passed on.
-        const reason = failureKind(e);
+      // The library's messages can quote the key it failed to parse, so only
+      // the failure's kind is logged or passed on.
+      const fail = (reason: string): never => {
         logger.error('auth.token_failure', { source: source.type, reason });
         throw new CredentialError(source.type, reason);
+      };
+      let token: string | null | undefined;
+      try {
+        const client = await auth.getClient();
+        token = (await client.getAccessToken()).token;
+      } catch (e) {
+        return fail(failureKind(e));
       }
+      return token || fail(NO_ACCESS_TOKEN);
     },
   };
 }

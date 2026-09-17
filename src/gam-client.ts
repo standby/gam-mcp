@@ -87,6 +87,14 @@ export class GamHttpError extends Error {
   }
 }
 
+// networks.get answered without a field every report needs.
+export class NetworkFieldMissingError extends Error {
+  constructor(readonly field: 'timeZone' | 'currencyCode') {
+    super(`getNetwork: GAM returned no ${field}`);
+    this.name = 'NetworkFieldMissingError';
+  }
+}
+
 // reports.list refused the displayName filter.
 export class ReportFilterRejectedError extends Error {
   constructor(readonly status: number) {

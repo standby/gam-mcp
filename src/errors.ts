@@ -67,9 +67,12 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
     message: `Internal error: ${d.reason ?? 'see logs'}.`,
     hint: 'Re-run; if it persists, check stderr logs for the correlation ID.',
   }),
+  // `from_cursor`: the result was reached through fetch_report_page.
   REPORT_RESULT_EXPIRED: (d) => ({
     message: `Report result ${d.result ?? ''} is no longer available.`,
-    hint: 'Re-run the tool that produced this cursor; GAM keeps report results for a limited time.',
+    hint: d.from_cursor
+      ? 'Re-run the tool that produced this cursor; GAM keeps report results for a limited time.'
+      : 'Run the tool again: GAM no longer serves this result, and the next call runs the report afresh.',
   }),
   RESULT_TOO_LARGE: (d) => ({
     message: `The ${d.what ?? 'result'} has ${d.rows} rows, over the limit of ${d.limit}.`,

@@ -18,7 +18,7 @@ import { Lru } from './lru.js';
 import { definitionWarnings } from './report-warnings.js';
 import { zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
-import { findOrCreateReport } from './report-reuse.js';
+import { findOrCreateReport, forgetReport } from './report-reuse.js';
 import { names, type DoneEntry, type PendingEntry, type ResultRef } from './cache.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
@@ -136,14 +136,35 @@ async function runOnce(
     operation = pending.operation;
     ctx.logger.info('report.resume', { tool, report, operation, started_at: pending.started_at });
   } else {
-    report = await findOrCreateReport(ctx, definition, key, tool);
-    operation = (await ctx.client.runReport(report)).operation;
+    ({ report, operation } = await startRun(ctx, definition, key, tool));
     ctx.reportCache?.putPending(key, { report, operation });
   }
   const done = await pollUntilDone(ctx, operation);
   if (!('error' in done)) return { report, result: done.result, operation, cached: null, resumed: pending !== undefined };
   if (done.error.code === 'REPORT_FAILED') ctx.reportCache?.delete(key, { operation });
   return done;
+}
+
+// Runs the report for `key`. A report this process remembers (or found) may
+// have gone from GAM since: a run GAM refuses with 404 forgets it, and the
+// report is found or created once more.
+async function startRun(
+  ctx: ToolContext,
+  definition: ReportDefinition,
+  key: string,
+  tool: string,
+): Promise<{ report: string; operation: string }> {
+  for (let attempt = 0; ; attempt++) {
+    const report = await findOrCreateReport(ctx, definition, key, tool);
+    try {
+      return { report, operation: (await ctx.client.runReport(report)).operation };
+    } catch (e) {
+      if (!(e instanceof GamHttpError && e.status === 404) || attempt > 0) throw e;
+      ctx.logger.warn('report.missing', { tool, report });
+      forgetReport(ctx.client, key);
+      clientMemory(ctx).stored.delete(report);
+    }
+  }
 }
 
 // A run in flight, and — only for the caller that started or resumed it —
@@ -271,7 +292,7 @@ async function firstPage(
         const ref: ResultRef = { result: got.result, operation: got.operation };
         ctx.reportCache?.delete(key, ref);
         if (!(got.cached || got.resumed) || stale) throw e;
-        ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
+        ctx.logger.info('report.cached_result_gone', { tool, result: got.result, source: got.cached ? 'cache' : 'resume' });
         stale = { promise: obtained.promise, ref };
         continue;
       }
@@ -447,9 +468,10 @@ export async function fetchReportPage(
     });
   }
   const report = cursor.result.slice(0, cursor.result.indexOf('/results/'));
+  const expired = gamError('REPORT_RESULT_EXPIRED', { result: cursor.result, from_cursor: true });
   try {
     const stored = await storedReport(ctx, report);
-    if (!stored) return gamError('REPORT_RESULT_EXPIRED', { result: cursor.result });
+    if (!stored) return expired;
     const facts = await resultFacts(ctx, cursor.result);
     const page = await ctx.client.fetchRows(cursor.result, { pageSize: pageRows(ctx), pageToken: cursor.page_token });
     const last = cursor.offset + page.rows.length;
@@ -470,7 +492,7 @@ export async function fetchReportPage(
       cacheHit: false,
     });
   } catch (e) {
-    return toGamError(e);
+    return e instanceof ResultUnavailableError ? expired : toGamError(e);
   }
 }
 

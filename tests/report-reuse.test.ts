@@ -144,6 +144,40 @@ describe('report reuse (spec §2.2)', () => {
     expect(count(gam, 'POST', CREATE)).toBe(0);
   });
 
+  it('a remembered report GAM no longer has is forgotten and created again', async () => {
+    const gam = fakeWithRows();
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'debug', sink: (l) => { lines.push(JSON.parse(l)); } });
+    const ctx = processOn(gam, { logger });
+    provenance(await executeReport(ctx, REQUEST));
+    gam.reports.delete(`networks/${NETWORK}/reports/1`);
+    const from = gam.requests.length;
+    const p = provenance(await executeReport(ctx, REQUEST));
+    expect(p.report).toBe(`networks/${NETWORK}/reports/2`);
+    // The refused run of report 1, then the list, create and run of report 2.
+    expect(gam.requests.slice(from).map((r) => `${r.method} ${r.path.split('?')[0]}`)).toEqual([
+      `POST networks/${NETWORK}/reports/1:run`,
+      `GET networks/${NETWORK}/reports`,
+      `POST networks/${NETWORK}/reports`,
+      `POST networks/${NETWORK}/reports/2:run`,
+      `GET networks/${NETWORK}/operations/reports/runs/2`,
+      `GET networks/${NETWORK}/operations/reports/runs/2`,
+      `GET networks/${NETWORK}/reports/2/results/2:fetchRows`,
+    ]);
+    expect(lines.filter((e) => e.msg === 'report.missing')).toEqual([
+      expect.objectContaining({ level: 'warn', tool: 'test', report: `networks/${NETWORK}/reports/1` }),
+    ]);
+  });
+
+  it('a report GAM says is missing on the second try too is an error, after one more attempt', async () => {
+    const gam = fakeWithRows();
+    gam.inject('POST', RUN, { status: 404, body: { error: { code: 404, status: 'NOT_FOUND' } } });
+    gam.inject('POST', RUN, { status: 404, body: { error: { code: 404, status: 'NOT_FOUND' } } });
+    expect(await executeReport(processOn(gam), REQUEST)).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
+    expect(count(gam, 'POST', RUN)).toBe(2);
+    expect(count(gam, 'POST', CREATE)).toBe(1);
+  });
+
   it('C5: a create whose answer was lost is found by name on the next call; GAM holds one report', async () => {
     const gam = fakeWithRows();
     gam.inject('POST', CREATE, { succeedThenStatus: 503 });

@@ -5,7 +5,7 @@ import type {
   Entity,
   StoredReport,
 } from './gam-client.js';
-import { GamHttpError, ReportFilterRejectedError, ResultUnavailableError } from './gam-client.js';
+import { GamHttpError, NetworkFieldMissingError, ReportFilterRejectedError, ResultUnavailableError } from './gam-client.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 import type { ReportRow } from './values.js';
@@ -236,8 +236,8 @@ export function createRestGamClient(opts: {
       const res = await fetchImpl(networkPath);
       if (!res.ok) throw await httpError('getNetwork', res);
       const n = await res.json() as { networkCode?: string; timeZone?: string; currencyCode?: string };
-      if (!n.timeZone) throw new Error('getNetwork: GAM returned no timeZone');
-      if (!n.currencyCode) throw new Error('getNetwork: GAM returned no currencyCode');
+      if (!n.timeZone) throw new NetworkFieldMissingError('timeZone');
+      if (!n.currencyCode) throw new NetworkFieldMissingError('currencyCode');
       return { networkCode: n.networkCode ?? opts.networkCode, timeZone: n.timeZone, currencyCode: n.currencyCode };
     },
 
