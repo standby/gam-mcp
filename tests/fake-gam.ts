@@ -9,6 +9,29 @@ export const int = (n: number | string): ReportValue => ({ intValue: String(n) }
 export const dbl = (n: number): ReportValue => ({ doubleValue: n });
 export const str = (s: string): ReportValue => ({ stringValue: s });
 
+// H7 (spec §7.2): the only writes the client may send are creating a report
+// and running one. The guard below scans a request log for anything else —
+// whichever fake received it — and tests/setup.ts fails the test that sent
+// it. `findViolations` is the guard itself, exported so a permanent test can
+// exercise its logic directly against a fabricated log, without a fake GAM.
+const ALLOWED_POSTS = [/^networks\/\d+\/reports$/, /^networks\/\d+\/reports\/\d+:run$/];
+const violations: string[] = [];
+
+export function findViolations(log: { method: string; path: string }[]): string[] {
+  return log.reduce<string[]>((found, { method, path }) => {
+    const pathname = path.split('?')[0];
+    if (method !== 'GET' && !(method === 'POST' && ALLOWED_POSTS.some((re) => re.test(pathname)))) {
+      found.push(`${method} ${pathname}`);
+    }
+    return found;
+  }, []);
+}
+
+// Returns and clears everything recorded so far.
+export function takeViolations(): string[] {
+  return violations.splice(0);
+}
+
 type Json = Record<string, any>;
 export type LoggedRequest = { method: string; path: string; body?: Json };
 export type Outcome =
@@ -132,6 +155,7 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
     const path = url.startsWith(BASE) ? url.slice(BASE.length) : url;
     const body = typeof init?.body === 'string' && init.body.length ? JSON.parse(init.body) : undefined;
     requests.push({ method, path, ...(body !== undefined && { body }) });
+    violations.push(...findViolations([{ method, path }]));
 
     const i = injections.findIndex((x) => x.method === method && x.path.test(path));
     if (i >= 0) {
