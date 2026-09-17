@@ -69,8 +69,8 @@ function sleepWithJitter(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, jittered));
 }
 
-function isoDate(d: Partial<GamDate> | undefined): string {
-  if (!d?.year || !d.month || !d.day) return '';
+function isoDate(d: Partial<GamDate> | undefined): string | undefined {
+  if (!d?.year || !d.month || !d.day) return undefined;
   return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }
 
@@ -250,14 +250,19 @@ export function createRestGamClient(opts: {
         runTime?: string;
         dateRanges?: { startDate?: GamDate; endDate?: GamDate }[];
       };
+      // A range with either end missing isn't a date range GAM reported — it's
+      // absence, and absence must not be dressed up as '' so the "no date
+      // range" warning gets skipped downstream. Drop such entries; only keep
+      // dateRanges at all if something usable survives.
+      const dateRanges = (body.dateRanges ?? [])
+        .map((r) => ({ start: isoDate(r.startDate), end: isoDate(r.endDate) }))
+        .filter((r): r is { start: string; end: string } => r.start !== undefined && r.end !== undefined);
       return {
         rows: body.rows ?? [],
         ...(body.nextPageToken && { nextPageToken: body.nextPageToken }),
         ...(body.totalRowCount !== undefined && { totalRowCount: Number(body.totalRowCount) }),
         ...(body.runTime && { runTime: body.runTime }),
-        ...(body.dateRanges && {
-          dateRanges: body.dateRanges.map((r) => ({ start: isoDate(r.startDate), end: isoDate(r.endDate) })),
-        }),
+        ...(dateRanges.length > 0 && { dateRanges }),
       };
     },
 

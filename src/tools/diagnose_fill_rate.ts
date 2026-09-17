@@ -56,7 +56,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
 
       const query: ReportQuery = {
         dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
-        // Order chosen so the funnel reads top-to-bottom in the CSV header:
+        // Order chosen so the funnel reads top-to-bottom:
         // requests → routed to AdX → AdX match → ad-server response → unfilled → final fill.
         metrics: [
           'AD_REQUESTS',

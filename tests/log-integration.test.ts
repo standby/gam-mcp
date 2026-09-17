@@ -104,18 +104,19 @@ describe('log integration', () => {
   });
 
   it('end-to-end: a full tool call never emits an OAuth-shaped token in any log line', async () => {
-    // The strongest guarantee we can give: run a real handler against a spy
-    // client whose auth header would have contained a sentinel token, and
-    // assert no log line contains that sentinel. Token never reaches the
-    // logger because nothing in the instrumented paths references it —
-    // this test pins that invariant against future drift.
+    // Result names carry no credential in real GAM traffic — the actual
+    // token-never-logged guarantee is pinned by the auth test above, which
+    // exercises auth.token_refresh/auth.token_failure directly. What this
+    // test pins is narrower but still real: a value planted in a
+    // client-returned name (here, the result name) must not appear in any
+    // log line, so an instrumented path that started logging raw client
+    // output — not just known token fields — would still be caught.
     const rec = recordingLogger();
     const SENTINEL = '__SENTINEL_TOKEN__ya29.fake_oauth_token_value';
 
     // Spy client over the new report path; deliberately stash the sentinel in
-    // the result name — the OAuth-bearing value the logger must never see —
-    // to make sure we'd catch it if instrumentation accidentally started
-    // logging it.
+    // the result name so we'd catch it if instrumentation accidentally
+    // started logging that value.
     const spyClient: GAMClient = {
       async listEntities() { return []; },
       async getResource() { return null; },
@@ -144,8 +145,8 @@ describe('log integration', () => {
     // The operation_name path DOES legitimately contain the sentinel
     // (because we stashed it in operation_name to exercise the spy), and
     // operation_name IS logged. So this end-to-end test specifically pins
-    // the result-name case — the OAuth-bearing value now lives in the
-    // result name, which must never be logged.
+    // the result-name case: the planted value now lives in the result name,
+    // which must never be logged.
     expect(rec.raw()).not.toContain(`access_token=${SENTINEL}`);
   });
 });

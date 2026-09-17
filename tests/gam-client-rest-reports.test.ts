@@ -68,6 +68,22 @@ describe('REST client report methods', () => {
     expect(await client.getReport('networks/1234/reports/999')).toBeNull();
   });
 
+  it('omits dateRanges entirely when GAM reports dates with missing parts, rather than empty strings', async () => {
+    const gam = createFakeGam({ completeAfterPolls: 1 });
+    gam.setRows(
+      [{ dimensionValues: [str('A')], metricValueGroups: [{ primaryValues: [int(1)] }] }],
+      { dateRanges: [{ startDate: {}, endDate: {} }] },
+    );
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    const { report } = await client.defineReport({ dimensions: ['AD_UNIT_NAME'], metrics: ['IMPRESSIONS'] }, RANGE);
+    const { operation } = await client.runReport(report);
+    await client.pollOperation(operation);
+    const done = await client.pollOperation(operation);
+    if (done.state !== 'done') throw new Error('expected done');
+    const page = await client.fetchRows(done.result, { pageSize: 5 });
+    expect(page.dateRanges).toBeUndefined();
+  });
+
   it('omits totalRowCount for an empty first page, as proto3 JSON does', async () => {
     const gam = createFakeGam({ completeAfterPolls: 0 });
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });

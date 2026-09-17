@@ -1,6 +1,6 @@
-// Shared report helpers for diagnostic tools that need raw rows (rather than
-// the inline-or-file envelope buildReportTool produces) so they can
-// post-process — funnel attribution, floor-pricing classification, etc.
+// Shared numeric/date helpers for diagnostic tools that need raw rows (rather
+// than the envelope buildReportTool produces) so they can post-process —
+// funnel attribution, floor-pricing classification, etc.
 import type { Cell } from './values.js';
 import type { DateRange } from './gam-client.js';
 

@@ -26,8 +26,7 @@ export type ToolContext = {
   usageCounters?: UsageCounters;
 };
 
-// Tools that return a nested configuration object rather than report rows
-// return this instead of an OutputEnvelope (whose rows are flat strings).
+// The shape for tools that return a nested object rather than report rows.
 // `summary` stays required so every tool result opens with one line of
 // orientation regardless of shape.
 export type JsonEnvelope = { summary: string; [k: string]: unknown };
