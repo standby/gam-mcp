@@ -4,7 +4,7 @@ import type {
   OperationStatus,
   Entity,
 } from './gam-client.js';
-import { ResultUnavailableError } from './gam-client.js';
+import { GamHttpError, ResultUnavailableError } from './gam-client.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 import type { ReportRow } from './values.js';
@@ -65,6 +65,28 @@ function sleepWithJitter(ms: number): Promise<void> {
   // Add 0-25% jitter so concurrent retries don't synchronize.
   const jittered = ms * (1 + Math.random() * 0.25);
   return new Promise((r) => setTimeout(r, jittered));
+}
+
+// The error for a non-2xx answer, with GAM's canonical status when the body has one.
+async function httpError(call: string, res: Response): Promise<GamHttpError> {
+  const text = await res.text();
+  let gamStatus: string | undefined;
+  try {
+    const status = (JSON.parse(text) as { error?: { status?: unknown } } | null)?.error?.status;
+    if (typeof status === 'string') gamStatus = status;
+  } catch {
+    // Not JSON: the text itself is the detail.
+  }
+  return new GamHttpError(call, res.status, gamStatus, text.slice(0, 500));
+}
+
+// GAM reports a result it no longer serves as NOT_FOUND or FAILED_PRECONDITION
+// naming that result (spec §1.3). The status alone could be about something else.
+function namesResult(err: GamHttpError, result: string): boolean {
+  if (err.gamStatus !== 'NOT_FOUND' && err.gamStatus !== 'FAILED_PRECONDITION') return false;
+  if (err.detail.includes(result)) return true;
+  const id = result.slice(result.lastIndexOf('/') + 1);
+  return /^\d+$/.test(id) && new RegExp(`results/${id}(?!\\d)`).test(err.detail);
 }
 
 export function createRestGamClient(opts: {
@@ -194,8 +216,7 @@ export function createRestGamClient(opts: {
 
     async pollOperation(operation_name: string): Promise<OperationStatus> {
       const res = await fetchImpl(`${BASE}/${operation_name}`);
-      if (res.status === 429) return { state: 'failed', reason: 'QUOTA_EXCEEDED' };
-      if (!res.ok) throw new Error(`pollOperation ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('pollOperation', res);
       const op = await res.json() as {
         done?: boolean;
         error?: { message: string };
@@ -216,7 +237,7 @@ export function createRestGamClient(opts: {
         // out of the Ad Manager UI.
         body: JSON.stringify({ reportDefinition: definition }),
       });
-      if (!res.ok) throw new Error(`defineReport ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('defineReport', res);
       const report = await res.json() as { name: string };
       return { report: report.name };
     },
@@ -227,7 +248,7 @@ export function createRestGamClient(opts: {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
       });
-      if (!res.ok) throw new Error(`runReport ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('runReport', res);
       const op = await res.json() as { name: string };
       return { operation: op.name };
     },
@@ -237,7 +258,10 @@ export function createRestGamClient(opts: {
       if (page.pageToken) params.set('pageToken', page.pageToken);
       const res = await fetchImpl(`${BASE}/${result}:fetchRows?${params}`);
       if (res.status === 404) throw new ResultUnavailableError(result, 404);
-      if (!res.ok) throw new Error(`fetchRows ${res.status}: ${await res.text()}`);
+      if (!res.ok) {
+        const err = await httpError('fetchRows', res);
+        throw namesResult(err, result) ? new ResultUnavailableError(result, res.status) : err;
+      }
       const body = await res.json() as {
         rows?: ReportRow[];
         nextPageToken?: string;
@@ -264,7 +288,7 @@ export function createRestGamClient(opts: {
     async getReport(report: string) {
       const res = await fetchImpl(`${BASE}/${report}`);
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`getReport ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('getReport', res);
       const r = await res.json() as { name: string; reportDefinition: ReportDefinition };
       return { name: r.name, definition: r.reportDefinition };
     },

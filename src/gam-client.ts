@@ -68,6 +68,21 @@ export class ResultUnavailableError extends Error {
   }
 }
 
+// A non-2xx answer from GAM. `call` names the client method; `gamStatus` is
+// GAM's canonical status (PERMISSION_DENIED, INVALID_ARGUMENT, ...) when the
+// body carries one; `detail` is the start of the body.
+export class GamHttpError extends Error {
+  constructor(
+    readonly call: string,
+    readonly status: number,
+    readonly gamStatus: string | undefined,
+    readonly detail: string,
+  ) {
+    super(`${call} ${status}${gamStatus ? ` ${gamStatus}` : ''}: ${detail}`);
+    this.name = 'GamHttpError';
+  }
+}
+
 export type GAMClient = {
   listEntities: (q: {
     entity_type: EntityType;
@@ -85,6 +100,7 @@ export type GAMClient = {
   // returns inside nested objects like a line item's targeting. Returns null
   // on 404 so callers can degrade to the raw path instead of throwing.
   getResource: (path: string) => Promise<Record<string, unknown> | null>;
+  // Throws GamHttpError for any non-2xx answer, 429 included.
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
   // Create a report that runs exactly this definition. Returns its resource name.
   defineReport: (definition: ReportDefinition) => Promise<{ report: string }>;

@@ -1,5 +1,13 @@
 import { gamError, type GamErrorEnvelope } from './errors.js';
-import { ResultUnavailableError, type DateRange, type ReportQuery, type RowsPage, type StoredReport } from './gam-client.js';
+import {
+  GamHttpError,
+  ResultUnavailableError,
+  type DateRange,
+  type OperationStatus,
+  type ReportQuery,
+  type RowsPage,
+  type StoredReport,
+} from './gam-client.js';
 import type { Logger } from './log.js';
 import type { ToolContext } from './report-tool-builder.js';
 import { definitionRange, reportDefinition, type ReportDefinition } from './report-definition.js';
@@ -59,7 +67,12 @@ export async function pollUntilDone(
   const start = Date.now();
   let delay = 2000;
   for (;;) {
-    const s = await ctx.client.pollOperation(operation);
+    let s: OperationStatus;
+    try {
+      s = await ctx.client.pollOperation(operation);
+    } catch (e) {
+      return pollFailure(ctx, operation, e);
+    }
     const elapsed_ms = Date.now() - start;
     ctx.logger.debug('report.poll', { operation, state: s.state, elapsed_ms });
     if (s.state === 'done') {
@@ -77,6 +90,18 @@ export async function pollUntilDone(
     await sleep(delay);
     delay = Math.min(delay * 1.5, 15_000);
   }
+}
+
+// A poll that threw. The error names the operation, which GAM may still be
+// running, so the run can be resumed rather than repeated (spec §2.6).
+function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorEnvelope {
+  if (e instanceof GamHttpError && e.status === 404) {
+    ctx.logger.warn('report.operation_gone', { operation });
+    return gamError('REPORT_FAILED', { reason: `GAM no longer knows operation ${operation}`, operation });
+  }
+  const err = toGamError(e, { operation });
+  ctx.logger.warn('report.poll_failed', { operation, error_code: err.error.code });
+  return err;
 }
 
 // Creates the report for a definition, runs it and waits for the result.
@@ -99,9 +124,13 @@ async function runToResult(
   return 'error' in done ? done : { report, result: done.result };
 }
 
-function toGamError(e: unknown): GamErrorEnvelope {
-  if (e instanceof ResultUnavailableError) return gamError('REPORT_RESULT_EXPIRED', { result: e.result });
-  return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
+function toGamError(e: unknown, extra: Record<string, unknown> = {}): GamErrorEnvelope {
+  if (e instanceof ResultUnavailableError) return gamError('REPORT_RESULT_EXPIRED', { result: e.result, ...extra });
+  if (e instanceof GamHttpError && e.status === 429) return gamError('QUOTA_EXCEEDED', { call: e.call, ...extra });
+  if (e instanceof GamHttpError && (e.status === 401 || e.status === 403)) {
+    return gamError('AUTH_FAILED', { call: e.call, status: e.status, gam_status: e.gamStatus ?? null, ...extra });
+  }
+  return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e), ...extra });
 }
 
 // What a result's first page says about the whole result. GAM sends these on

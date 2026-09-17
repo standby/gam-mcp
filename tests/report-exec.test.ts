@@ -9,6 +9,10 @@ import { createLogger } from '../src/log.js';
 import { definitionFor, makeCtx, NETWORK } from './helpers.js';
 import type { Provenance, ResultEnvelope } from '../src/envelope.js';
 import type { ReportDefinition } from '../src/report-definition.js';
+import { createRestGamClient } from '../src/gam-client-rest.js';
+import { GamHttpError } from '../src/gam-client.js';
+import type { GamErrorEnvelope } from '../src/errors.js';
+import { createFakeGam, int } from './fake-gam.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
@@ -336,5 +340,75 @@ describe('logs name the calling tool', () => {
     await executeReport(ctx, { tool: 'tool_a', query, dateRange: RANGE, summary: 'S' });
     await executeReportRows(ctx, query, { start: '2026-09-03', end: '2026-09-03' }, 'tool_b');
     expect(lines.filter((e) => e.msg === 'report.create').map((e) => e.tool)).toEqual(['tool_a', 'tool_b']);
+  });
+});
+
+describe('poll failures keep their operation (spec §2.6)', () => {
+  async function started(throwing: unknown) {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(1) }] });
+    const { report } = await ctx.client.defineReport(definitionFor(query, RANGE));
+    const { operation } = await ctx.client.runReport(report);
+    const inner = ctx.client;
+    ctx.client = { ...inner, pollOperation: async () => { throw throwing; } };
+    return { ctx, operation };
+  }
+
+  it('a poll whose connection fails is INTERNAL_ERROR naming the operation', async () => {
+    const { ctx, operation } = await started(new TypeError('fetch failed'));
+    expect(await pollUntilDone(ctx, operation)).toMatchObject({
+      error: { code: 'INTERNAL_ERROR', details: { operation, reason: 'fetch failed' } },
+    });
+  });
+
+  it('a poll answered 429 is QUOTA_EXCEEDED naming the operation', async () => {
+    const { ctx, operation } = await started(new GamHttpError('pollOperation', 429, 'RESOURCE_EXHAUSTED', ''));
+    expect(await pollUntilDone(ctx, operation)).toMatchObject({
+      error: { code: 'QUOTA_EXCEEDED', details: { operation, call: 'pollOperation' } },
+    });
+  });
+
+  it('a poll answered 404 means GAM forgot the operation', async () => {
+    const { ctx, operation } = await started(new GamHttpError('pollOperation', 404, 'NOT_FOUND', ''));
+    expect(await pollUntilDone(ctx, operation)).toMatchObject({
+      error: { code: 'REPORT_FAILED', details: { operation, reason: `GAM no longer knows operation ${operation}` } },
+    });
+  });
+
+  it('a poll answered 403 is AUTH_FAILED naming the operation', async () => {
+    const { ctx, operation } = await started(new GamHttpError('pollOperation', 403, 'PERMISSION_DENIED', ''));
+    expect(await pollUntilDone(ctx, operation)).toMatchObject({
+      error: { code: 'AUTH_FAILED', details: { operation, status: 403, gam_status: 'PERMISSION_DENIED' } },
+    });
+  });
+
+  it('executeReport returns the poll failure with its operation', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(1) }] });
+    ctx.client = { ...ctx.client, pollOperation: async () => { throw new TypeError('fetch failed'); } };
+    expect(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
+      error: { code: 'INTERNAL_ERROR', details: { operation: `networks/${NETWORK}/operations/reports/runs/1` } },
+    });
+  });
+});
+
+describe('GAM errors through the REST client', () => {
+  it('A8: a page token GAM rejects is an error, not an expired result', async () => {
+    const gam = createFakeGam();
+    gam.setRows([1, 2, 3].map((n) => ({ dimensionValues: [int(n)], metricValueGroups: [{ primaryValues: [int(n * 10)] }] })));
+    const client = createRestGamClient({ networkCode: NETWORK, fetchImpl: gam.fetch });
+    const ctx = makeCtx({}, { client, pageRows: 2 });
+    const first = ok(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' }));
+    const cursor = decodeCursor(first.next_cursor!, NETWORK) as Cursor;
+    const r = await fetchReportPage(ctx, encodeCursor({ ...cursor, page_token: 'garbage' }));
+    expect(r).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
+    expect((r as GamErrorEnvelope).error.message).toContain('fetchRows 400 INVALID_ARGUMENT');
+  });
+
+  it('a request GAM refuses for permission is AUTH_FAILED', async () => {
+    const gam = createFakeGam();
+    gam.inject('POST', /:run$/, { status: 403, body: { error: { code: 403, status: 'PERMISSION_DENIED' } } });
+    const client = createRestGamClient({ networkCode: NETWORK, fetchImpl: gam.fetch });
+    expect(await executeReport(makeCtx({}, { client }), { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
+      error: { code: 'AUTH_FAILED', details: { call: 'runReport', status: 403, gam_status: 'PERMISSION_DENIED' } },
+    });
   });
 });

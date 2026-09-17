@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRestGamClient } from '../src/gam-client-rest.js';
-import { ResultUnavailableError } from '../src/gam-client.js';
+import { GamHttpError, ResultUnavailableError } from '../src/gam-client.js';
 import { createFakeGam, int, dbl, str } from './fake-gam.js';
 import { definitionFor } from './helpers.js';
 
@@ -95,5 +95,34 @@ describe('REST client report methods', () => {
     const page = await client.fetchRows(done.result, { pageSize: 5 });
     expect(page.rows).toEqual([]);
     expect(page.totalRowCount).toBeUndefined();
+  });
+
+  it('treats NOT_FOUND or FAILED_PRECONDITION naming the result as an unavailable result', async () => {
+    const gam = createFakeGam();
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    const result = 'networks/1234/reports/1/results/1';
+    const answer = (status: string, message: string) =>
+      gam.inject('GET', /:fetchRows/, { status: 400, body: { error: { code: 400, status, message } } });
+
+    answer('FAILED_PRECONDITION', `Report result ${result} has expired.`);
+    await expect(client.fetchRows(result, { pageSize: 5 })).rejects.toBeInstanceOf(ResultUnavailableError);
+    answer('NOT_FOUND', 'Requested entity reports/1/results/1 was not found.');
+    await expect(client.fetchRows(result, { pageSize: 5 })).rejects.toBeInstanceOf(ResultUnavailableError);
+
+    answer('FAILED_PRECONDITION', 'The report results/12 is still running.');
+    await expect(client.fetchRows(result, { pageSize: 5 })).rejects.toBeInstanceOf(GamHttpError);
+    answer('INVALID_ARGUMENT', `Invalid page token for ${result}.`);
+    await expect(client.fetchRows(result, { pageSize: 5 })).rejects.toMatchObject({
+      name: 'GamHttpError', call: 'fetchRows', status: 400, gamStatus: 'INVALID_ARGUMENT',
+    });
+  });
+
+  it('answers a failed poll with GamHttpError, 429 included', async () => {
+    const gam = createFakeGam();
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    gam.inject('GET', /\/operations\//, { status: 429, body: { error: { code: 429, status: 'RESOURCE_EXHAUSTED' } } });
+    await expect(client.pollOperation('networks/1234/operations/reports/runs/1')).rejects.toMatchObject({
+      name: 'GamHttpError', call: 'pollOperation', status: 429, gamStatus: 'RESOURCE_EXHAUSTED',
+    });
   });
 });
