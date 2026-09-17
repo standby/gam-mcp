@@ -1,5 +1,5 @@
 import { GoogleAuth } from 'google-auth-library';
-import { gamError } from './errors.js';
+import { CredentialError, gamError } from './errors.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 
@@ -19,7 +19,10 @@ export type AuthSource =
   | { type: 'json'; credentials: Record<string, unknown> }
   | { type: 'adc' };
 
-const SCOPES = ['https://www.googleapis.com/auth/admanager'];
+// The only scope any credential asks for (spec D-6): admanager.readonly cannot
+// create reports. Read-only behaviour is held by what the client can send
+// (test H7), not by the scope.
+export const SCOPES = ['https://www.googleapis.com/auth/admanager'];
 
 export function createGoogleAuth(source: AuthSource, logger: Logger = noopLogger()): GoogleAuthLike {
   const auth = new GoogleAuth(authOptionsFor(source));
@@ -31,21 +34,41 @@ export function createGoogleAuth(source: AuthSource, logger: Logger = noopLogger
         const t = await client.getAccessToken();
         return t.token ?? null;
       } catch (e) {
-        // Only the error MESSAGE — never the underlying error object or stack,
-        // which may include request URLs with credentials in headers.
-        logger.error('auth.token_failure', { message: e instanceof Error ? e.message : String(e), source: source.type });
-        throw e;
+        // The library's messages can quote the key it failed to parse, so only
+        // the failure's kind is logged or passed on.
+        const reason = failureKind(e);
+        logger.error('auth.token_failure', { source: source.type, reason });
+        throw new CredentialError(source.type, reason);
       }
     },
   };
 }
 
-function authOptionsFor(source: AuthSource): ConstructorParameters<typeof GoogleAuth>[0] {
+export function authOptionsFor(source: AuthSource): ConstructorParameters<typeof GoogleAuth>[0] {
   switch (source.type) {
     case 'file': return { keyFile: source.path, scopes: SCOPES };
     case 'json': return { credentials: source.credentials as never, scopes: SCOPES };
     case 'adc':  return { scopes: SCOPES };
   }
+}
+
+const SAFE_WORD = /^[A-Za-z0-9_.-]{1,64}$/;
+
+// What kind of failure the auth library reported (error class, system or
+// OpenSSL code, HTTP status, OAuth error code), without any of its text.
+export function failureKind(e: unknown): string {
+  const x = (typeof e === 'object' && e !== null ? e : {}) as {
+    name?: unknown;
+    code?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown } };
+  };
+  const parts: string[] = [];
+  if (typeof x.name === 'string' && SAFE_WORD.test(x.name)) parts.push(x.name);
+  if (typeof x.code === 'string' && SAFE_WORD.test(x.code)) parts.push(x.code);
+  if (typeof x.response?.status === 'number') parts.push(`HTTP ${x.response.status}`);
+  const oauth = x.response?.data?.error;
+  if (typeof oauth === 'string' && SAFE_WORD.test(oauth)) parts.push(oauth);
+  return parts.length > 0 ? parts.join(' ') : 'unknown failure';
 }
 
 // Inspect env and pick the right credential source. Precedence:

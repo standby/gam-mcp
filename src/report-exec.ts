@@ -1,4 +1,4 @@
-import { gamError, type GamErrorEnvelope } from './errors.js';
+import { CredentialError, gamError, type GamErrorEnvelope } from './errors.js';
 import {
   GamHttpError,
   ResultUnavailableError,
@@ -126,6 +126,7 @@ async function runToResult(
 
 function toGamError(e: unknown, extra: Record<string, unknown> = {}): GamErrorEnvelope {
   if (e instanceof ResultUnavailableError) return gamError('REPORT_RESULT_EXPIRED', { result: e.result, ...extra });
+  if (e instanceof CredentialError) return gamError('AUTH_FAILED', { reason: e.message, ...extra });
   if (e instanceof GamHttpError && e.status === 429) return gamError('QUOTA_EXCEEDED', { call: e.call, ...extra });
   if (e instanceof GamHttpError && (e.status === 401 || e.status === 403)) {
     return gamError('AUTH_FAILED', { call: e.call, status: e.status, gam_status: e.gamStatus ?? null, ...extra });

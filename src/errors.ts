@@ -92,3 +92,13 @@ export function isGamError(x: unknown): x is GamErrorEnvelope {
     typeof (x as GamErrorEnvelope).error?.code === 'string'
   );
 }
+
+// A credential that could not produce an access token. The message names the
+// failure's kind only: the auth library's own messages can quote the key file
+// they failed to parse, so they never leave src/auth.ts.
+export class CredentialError extends Error {
+  constructor(readonly source: 'file' | 'json' | 'adc', readonly reason: string) {
+    super(`the ${source} credential could not produce an access token (${reason})`);
+    this.name = 'CredentialError';
+  }
+}

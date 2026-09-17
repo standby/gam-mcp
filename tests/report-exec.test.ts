@@ -12,6 +12,7 @@ import type { ReportDefinition } from '../src/report-definition.js';
 import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { GamHttpError } from '../src/gam-client.js';
 import type { GamErrorEnvelope } from '../src/errors.js';
+import { CredentialError } from '../src/errors.js';
 import { createFakeGam, int } from './fake-gam.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
@@ -434,6 +435,16 @@ describe('quota after retries', () => {
     for (let i = 0; i < 4; i++) gam.inject('POST', /^networks\/1234\/reports$/, { status: 429 });
     expect(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
       error: { code: 'QUOTA_EXCEEDED', details: { call: 'defineReport' } },
+    });
+  });
+});
+
+describe('credential', () => {
+  it('a credential that cannot produce a token is AUTH_FAILED', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(1) }] });
+    ctx.client = { ...ctx.client, runReport: async () => { throw new CredentialError('adc', 'Error'); } };
+    expect(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' })).toMatchObject({
+      error: { code: 'AUTH_FAILED', details: { reason: 'the adc credential could not produce an access token (Error)' } },
     });
   });
 });
