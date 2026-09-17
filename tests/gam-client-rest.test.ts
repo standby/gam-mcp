@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { createFakeGam } from './fake-gam.js';
 import { definitionFor } from './helpers.js';
+import { definitionHash, reportName } from '../src/report-key.js';
 
 describe('REST GAM client', () => {
   it('listEntities GETs the right path and maps fields', async () => {
@@ -36,7 +37,7 @@ describe('REST GAM client', () => {
     expect(gam.requests.at(-1)).toEqual({
       method: 'POST',
       path: 'networks/1234/reports',
-      body: { reportDefinition: definition },
+      body: { displayName: reportName(definitionHash(definition)), reportDefinition: definition },
     });
     const { operation } = await client.runReport(report);
     expect(operation).toBe('networks/1234/operations/reports/runs/1');

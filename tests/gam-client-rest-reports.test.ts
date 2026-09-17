@@ -3,6 +3,7 @@ import { createRestGamClient } from '../src/gam-client-rest.js';
 import { GamHttpError, ResultUnavailableError } from '../src/gam-client.js';
 import { createFakeGam, int, dbl, str } from './fake-gam.js';
 import { definitionFor } from './helpers.js';
+import { definitionHash, reportName } from '../src/report-key.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 
@@ -22,7 +23,7 @@ describe('REST client report methods', () => {
     expect(gam.requests.at(-1)).toEqual({
       method: 'POST',
       path: 'networks/1234/reports',
-      body: { reportDefinition: definition },
+      body: { displayName: reportName(definitionHash(definition)), reportDefinition: definition },
     });
 
     const { operation } = await client.runReport(report);
@@ -63,6 +64,7 @@ describe('REST client report methods', () => {
     const { report } = await client.defineReport(definition);
     const stored = await client.getReport(report);
     expect(stored?.name).toBe(report);
+    expect(stored?.displayName).toBe(reportName(definitionHash(definition)));
     expect(stored?.definition.filters).toEqual([
       { fieldFilter: { field: { dimension: 'AD_UNIT_ID' }, operation: 'IN', values: [{ intValue: '5' }] } },
     ]);

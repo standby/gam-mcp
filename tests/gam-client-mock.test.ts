@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createMockGamClient } from '../src/gam-client.js';
 import { definitionFor } from './helpers.js';
+import { definitionHash, reportName } from '../src/report-key.js';
 
 describe('mock GAM client', () => {
   it('returns canned entities for listEntities', async () => {
@@ -54,7 +55,9 @@ describe('mock client typed report path', () => {
     expect(p2.rows[0].metricValueGroups?.[0].primaryValues?.[0]).toEqual({});
     expect(p2.nextPageToken).toBeUndefined();
     expect(p2.totalRowCount).toBeUndefined();
-    expect(await client.getReport(report)).toEqual({ name: report, definition });
+    expect(await client.getReport(report)).toEqual({
+      name: report, displayName: reportName(definitionHash(definition)), definition,
+    });
   });
 
   it("matches a fixture on the definition's dimensions, metrics and fixed range", async () => {

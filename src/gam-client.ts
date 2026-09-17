@@ -2,6 +2,7 @@ import type { ReportType } from './schema.js';
 import { fieldType } from './schema.js';
 import type { ReportRow, ReportValue } from './values.js';
 import { definitionRange, type ReportDefinition } from './report-definition.js';
+import { definitionHash, reportName } from './report-key.js';
 
 export type EntityType =
   | 'advertiser' | 'order' | 'line_item' | 'ad_unit' | 'placement' | 'company'
@@ -58,7 +59,7 @@ export type RowsPage = {
   dateRanges?: { start: string; end: string }[];
 };
 
-export type StoredReport = { name: string; definition: ReportDefinition };
+export type StoredReport = { name: string; displayName?: string; definition: ReportDefinition };
 
 // What networks.get says about the network every report runs in.
 export type NetworkInfo = { networkCode: string; timeZone: string; currencyCode: string };
@@ -107,7 +108,9 @@ export type GAMClient = {
   getNetwork: () => Promise<NetworkInfo>;
   // Throws GamHttpError for any non-2xx answer, 429 included.
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
-  // Create a report that runs exactly this definition. Returns its resource name.
+  // Create a report that runs exactly this definition, named
+  // reportName(definitionHash(definition)) so any process can find it again
+  // (spec §2.2). Returns its resource name.
   defineReport: (definition: ReportDefinition) => Promise<{ report: string }>;
   // Start a run of an existing report. Returns the operation name to poll.
   runReport: (report: string) => Promise<{ operation: string }>;
@@ -176,7 +179,7 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
   const reports = state.reports ?? [];
 
   const network = state.networkCode ?? '1234';
-  const defined = new Map<string, { fixture: ReportFixture; definition: ReportDefinition; range: DateRange }>();
+  const defined = new Map<string, { fixture: ReportFixture; definition: ReportDefinition; range: DateRange; displayName: string }>();
   const runs = new Map<string, { report: string; run: number; polls: number }>();
   let reportSeq = 0;
   let runSeq = 0;
@@ -234,7 +237,7 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
         );
       }
       const report = `networks/${network}/reports/${++reportSeq}`;
-      defined.set(report, { fixture, definition, range });
+      defined.set(report, { fixture, definition, range, displayName: reportName(definitionHash(definition)) });
       return { report };
     },
     async runReport(report) {
@@ -266,7 +269,7 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     },
     async getReport(report) {
       const d = defined.get(report);
-      return d ? { name: report, definition: d.definition } : null;
+      return d ? { name: report, displayName: d.displayName, definition: d.definition } : null;
     },
   };
 }

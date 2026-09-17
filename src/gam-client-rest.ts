@@ -9,6 +9,7 @@ import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 import type { ReportRow } from './values.js';
 import { isoDate, type GamDate, type ReportDefinition } from './report-definition.js';
+import { definitionHash, reportName } from './report-key.js';
 
 const BASE = 'https://admanager.googleapis.com/v1';
 
@@ -245,9 +246,10 @@ export function createRestGamClient(opts: {
       const res = await fetchImpl(`${networkPath}/reports`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        // visibility stays unset: GAM's default, HIDDEN, keeps these reports
-        // out of the Ad Manager UI.
-        body: JSON.stringify({ reportDefinition: definition }),
+        // Named from the definition's hash so any process can find it again
+        // (spec §2.2). visibility stays unset: GAM's default, HIDDEN, keeps
+        // these reports out of the Ad Manager UI.
+        body: JSON.stringify({ displayName: reportName(definitionHash(definition)), reportDefinition: definition }),
       });
       if (!res.ok) throw await httpError('defineReport', res);
       const report = await res.json() as { name: string };
@@ -301,8 +303,8 @@ export function createRestGamClient(opts: {
       const res = await fetchImpl(`${BASE}/${report}`);
       if (res.status === 404) return null;
       if (!res.ok) throw await httpError('getReport', res);
-      const r = await res.json() as { name: string; reportDefinition: ReportDefinition };
-      return { name: r.name, definition: r.reportDefinition };
+      const r = await res.json() as { name: string; displayName?: string; reportDefinition: ReportDefinition };
+      return { name: r.name, ...(r.displayName !== undefined && { displayName: r.displayName }), definition: r.reportDefinition };
     },
   };
 }
