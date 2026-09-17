@@ -101,6 +101,44 @@ describe('result cache (spec §2.5)', () => {
     expect(c.get(KEY)).toMatchObject({ started_at: '2026-09-17T04:00:00.000Z' });
   });
 
+  it('putPending returns the start time it recorded', () => {
+    const c = cache({ now: clock().now });
+    expect(c.putPending(KEY, PENDING)).toBe('2026-09-17T04:00:00.000Z');
+    expect(c.putPending(KEY, { ...PENDING, started_at: '2026-09-17T03:00:00.000Z' })).toBe('2026-09-17T03:00:00.000Z');
+    expect(c.putPending(KEY, { ...PENDING, operation: 'networks/9/operations/reports/runs/1' })).toBeUndefined();
+  });
+
+  it('restorePending writes only while the key has no live entry', () => {
+    const t = clock();
+    const started = '2026-09-17T03:30:00.000Z';
+    const c = cache({ ttlMs: 60_000, now: t.now });
+    c.restorePending(KEY, { ...PENDING, started_at: started });
+    expect(c.get(KEY)).toEqual({ kind: 'pending', ...PENDING, started_at: started });
+
+    c.putDone(KEY, DONE);
+    c.restorePending(KEY, PENDING);
+    expect(c.get(KEY)?.kind).toBe('done');
+
+    t.advance(60_000); // the done entry has expired
+    c.restorePending(KEY, { ...PENDING, started_at: started });
+    expect(c.get(KEY)).toMatchObject({ kind: 'pending', started_at: started });
+
+    const newer = { ...PENDING, operation: 'networks/1234/operations/reports/runs/2' };
+    c.putPending(KEY, newer);
+    c.restorePending(KEY, PENDING);
+    expect(c.get(KEY)).toMatchObject({ operation: newer.operation });
+  });
+
+  it('restorePending keeps an entry that memory dropped but the disk tier still has', () => {
+    withDir((dir) => {
+      const c = cache({ diskDir: dir, maxEntries: 1, now: clock().now });
+      c.putDone(KEY, DONE);
+      c.putDone(OTHER, DONE); // pushes KEY out of memory
+      c.restorePending(KEY, PENDING);
+      expect(c.get(KEY)?.kind).toBe('done');
+    });
+  });
+
   it('E4: holds 1,000 entries and drops the least recently used', () => {
     const key = (i: number) => i.toString(16).padStart(64, '0');
     expect(CACHE_MAX_ENTRIES).toBe(1000);

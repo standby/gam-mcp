@@ -235,6 +235,66 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     expect(cache.get(KEY)).toMatchObject({ kind: 'pending', started_at: '2026-09-17T04:00:00.000Z' });
   });
 
+  // A result for another definition: with room for one entry, recording it
+  // pushes this call's pending entry out of memory.
+  const OTHER_KEY = 'f'.repeat(64);
+  const otherDone = {
+    report: `networks/${NETWORK}/reports/9`,
+    result: `networks/${NETWORK}/reports/9/results/9`,
+    run_time: null,
+    date_range: null,
+    total_row_count: 0,
+  };
+
+  it('F4: a pending entry dropped from memory while polling is recorded again, with its start time', async () => {
+    let t = Date.parse('2026-09-17T04:00:00Z');
+    const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
+    const cache = createReportCache({ networkCode: NETWORK, maxEntries: 1, now: () => t });
+    const { ctx, counters } = counted(
+      { reports: [{ query, rows }], runOutcomes: outcomes },
+      { reportCache: cache, reportTimeoutMs: 0 },
+    );
+    const client = ctx.client;
+    ctx.client = {
+      ...client,
+      pollOperation: async (name) => {
+        cache.putDone(OTHER_KEY, otherDone);
+        t += 60_000;
+        return client.pollOperation(name);
+      },
+    };
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
+    expect(cache.get(KEY)).toEqual({
+      kind: 'pending',
+      report: `networks/${NETWORK}/reports/1`,
+      operation: operation(1),
+      started_at: '2026-09-17T04:00:00.000Z',
+    });
+
+    delete outcomes[1]; // GAM finishes the run
+    const later = ok(await executeReport({ ...ctx, client, reportTimeoutMs: 60_000 }, request));
+    expect(later.provenance.result).toBe(result(1));
+    expect(counters.report_jobs_created).toBe(1);
+  });
+
+  it('F4: a timed-out call does not put its run back over a result another call recorded', async () => {
+    const cache = createReportCache({ networkCode: NETWORK, maxEntries: 1 });
+    const { ctx } = counted(
+      { reports: [{ query, rows }], runOutcomes: { 1: 'never' } },
+      { reportCache: cache, reportTimeoutMs: 0 },
+    );
+    const client = ctx.client;
+    ctx.client = {
+      ...client,
+      pollOperation: async (name) => {
+        cache.putDone(KEY, otherDone);
+        return client.pollOperation(name);
+      },
+    };
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
+    expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: otherDone.result });
+  });
+
   it('F4: a pending run older than an hour is abandoned for a new one', async () => {
     let t = Date.parse('2026-09-17T04:00:00Z');
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };

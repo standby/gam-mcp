@@ -131,17 +131,25 @@ async function runOnce(
 ): Promise<Obtained | GamErrorEnvelope> {
   let report: string;
   let operation: string;
+  let startedAt: string | undefined;
   if (pending) {
     report = pending.report;
     operation = pending.operation;
+    startedAt = pending.started_at;
     ctx.logger.info('report.resume', { tool, report, operation, started_at: pending.started_at });
   } else {
     ({ report, operation } = await startRun(ctx, definition, key, tool));
-    ctx.reportCache?.putPending(key, { report, operation });
+    startedAt = ctx.reportCache?.putPending(key, { report, operation });
   }
   const done = await pollUntilDone(ctx, operation);
   if (!('error' in done)) return { report, result: done.result, operation, cached: null, resumed: pending !== undefined };
-  if (done.error.code === 'REPORT_FAILED') ctx.reportCache?.delete(key, { operation });
+  if (done.error.code === 'REPORT_FAILED') {
+    ctx.reportCache?.delete(key, { operation });
+  } else {
+    // GAM may still be running it. The entry recorded when it started can
+    // have been dropped from memory while this call polled.
+    ctx.reportCache?.restorePending(key, { report, operation, ...(startedAt !== undefined && { started_at: startedAt }) });
+  }
   return done;
 }
 

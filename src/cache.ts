@@ -42,8 +42,13 @@ export type ReportCache = {
   // hit; no entry, or a pending one, counts as a miss.
   get(key: string): CacheEntry | undefined;
   putDone(key: string, entry: Omit<DoneEntry, 'kind' | 'stored_at'>): void;
-  // A run GAM has accepted; started_at defaults to now.
-  putPending(key: string, entry: { report: string; operation: string; started_at?: string }): void;
+  // A run GAM has accepted; started_at defaults to now. Returns the start
+  // time recorded, or undefined if the entry was refused.
+  putPending(key: string, entry: { report: string; operation: string; started_at?: string }): string | undefined;
+  // Records a run that is still going only while the key has no live entry:
+  // it may have been dropped from memory while the run was polled, and an
+  // entry another call has written since (a result, or another run) wins.
+  restorePending(key: string, entry: { report: string; operation: string; started_at?: string }): void;
   // Removes the entry for a key. With `only`, removes it only while it still
   // names that result or operation, so an entry another call has since
   // replaced survives.
@@ -103,6 +108,8 @@ export function createReportCache(opts: {
   ttlMs?: number;
   // GAM_REPORT_CACHE_DIR, already specific to one network (cacheDirFor).
   diskDir?: string;
+  // How many entries memory holds; CACHE_MAX_ENTRIES unless a test says otherwise.
+  maxEntries?: number;
   logger?: Logger;
   now?: () => number;
 }): ReportCache {
@@ -111,7 +118,7 @@ export function createReportCache(opts: {
   const now = opts.now ?? Date.now;
   const logger = opts.logger ?? noopLogger();
   const dir = opts.diskDir;
-  const memory = new Lru<string, CacheEntry>(CACHE_MAX_ENTRIES);
+  const memory = new Lru<string, CacheEntry>(opts.maxEntries ?? CACHE_MAX_ENTRIES);
   if (dir) mkdirSync(dir, { recursive: true, mode: 0o700 });
   let hits = 0;
   let misses = 0;
@@ -200,13 +207,19 @@ export function createReportCache(opts: {
     }
   }
 
-  function put(key: string, entry: CacheEntry): void {
+  function put(key: string, entry: CacheEntry): boolean {
     if (!valid(entry)) {
       logger.warn('cache.entry_rejected', { key: short(key), kind: entry.kind });
-      return;
+      return false;
     }
     memory.set(key, entry);
     writeDisk(key, entry);
+    return true;
+  }
+
+  function putPending(key: string, e: { report: string; operation: string; started_at?: string }): string | undefined {
+    const entry: PendingEntry = { kind: 'pending', report: e.report, operation: e.operation, started_at: e.started_at ?? iso(now()) };
+    return put(key, entry) ? entry.started_at : undefined;
   }
 
   function remove(key: string): void {
@@ -253,7 +266,13 @@ export function createReportCache(opts: {
     },
     putPending(key, e) {
       checkKey(key);
-      put(key, { kind: 'pending', report: e.report, operation: e.operation, started_at: e.started_at ?? iso(now()) });
+      return putPending(key, e);
+    },
+    restorePending(key, e) {
+      checkKey(key);
+      const current = memory.get(key) ?? readDisk(key);
+      if (current && live(current)) return;
+      putPending(key, e);
     },
     delete(key, only) {
       checkKey(key);
