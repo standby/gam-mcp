@@ -60,8 +60,15 @@ describe('executeReport', () => {
 
   it('A3: never asks GAM for more than 10,000 rows a page', async () => {
     const ctx = makeCtx({ reports: [{ query, rows: rows(10_500) }] }, { pageRows: 20_000 });
+    const pageSizes: number[] = [];
+    const realFetch = ctx.client.fetchRows;
+    ctx.client = { ...ctx.client, fetchRows: async (r, p) => { pageSizes.push(p.pageSize); return realFetch(r, p); } };
     const r = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }));
     expect(r.returned_row_count).toBe(10_000);
+    // The mock and fake-gam both clamp pageSize themselves, so this is the
+    // assertion that actually exercises report-exec's own clamp: it records
+    // what pageRows() asked for, not what the fixture served.
+    expect(pageSizes).toEqual([10_000]);
   });
 
   it('A3: resolvePageRows validates and clamps GAM_PAGE_ROWS, logging the clamp', () => {
