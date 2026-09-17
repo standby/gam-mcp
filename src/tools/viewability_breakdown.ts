@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension for viewability.
@@ -17,7 +18,7 @@ const SECONDARY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   by: z
     .enum(['ad_unit', 'size', 'device'])
     .default('ad_unit')
@@ -28,7 +29,7 @@ const inputSchema = z.object({
     .describe('Optional secondary slice.'),
   top_n: z.number().int().min(1).max(500).default(50)
     .describe('Maximum rows to surface.'),
-});
+}).strict();
 
 export const viewabilityBreakdownTool = buildReportTool({
   name: 'viewability_breakdown',
@@ -55,8 +56,8 @@ export const viewabilityBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Viewability by ${input.by}${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Viewability by ${input.by}${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
   },
 });

@@ -55,7 +55,7 @@ describe('sell_through', () => {
     );
 
     const args = sellThroughTool.input.parse({
-      date_range: { start: '2026-09-01', end: '2026-09-30' },
+      date_range: { start: '2026-09-17', end: '2026-09-30' },
       by: 'ad_unit',
     });
     const r = await sellThroughTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
@@ -65,7 +65,7 @@ describe('sell_through', () => {
     expect(seen.definition?.metrics).toEqual(METRICS);
     expect(seen.definition?.dimensions).toEqual(['AD_UNIT_ID', 'AD_UNIT_NAME']);
     // The future window is passed through untouched.
-    expect(definitionRange(seen.definition!)).toEqual({ start: '2026-09-01', end: '2026-09-30' });
+    expect(definitionRange(seen.definition!)).toEqual({ start: '2026-09-17', end: '2026-09-30' });
 
     // Rows come back from the fixture, and available = forecasted - reserved.
     expect(r.total_row_count).toBe(2);
@@ -121,7 +121,7 @@ describe('sell_through', () => {
     );
 
     const args = sellThroughTool.input.parse({
-      date_range: { start: '2026-08-01', end: '2026-08-07' },
+      date_range: { start: '2026-10-01', end: '2026-10-07' },
       by: 'placement',
     });
     const r = await sellThroughTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
@@ -154,5 +154,22 @@ describe('sell_through', () => {
     expect(warned).toMatch(/forecasts, not measurements/i);
     expect(warned).toMatch(/accuracy degrades/i);
     expect(warned).toMatch(/booked as of right now/i);
+  });
+
+  // makeCtx's clock with timezone UTC: today is 2026-09-17.
+  it('I14: refuses a window that starts yesterday, and a relative range; accepts one that starts today', async () => {
+    const { seen, client } = spyClient(['AD_UNIT_ID', 'AD_UNIT_NAME'], []);
+    const ctx = makeCtx({}, { client, timezone: 'UTC' });
+    const run = (date_range: unknown) => sellThroughTool.handler(sellThroughTool.input.parse({ date_range }), ctx);
+
+    expect(await run({ start: '2026-09-16', end: '2026-09-30' })).toMatchObject({
+      error: { code: 'INVALID_DATE_RANGE', details: { field: 'date_range' } },
+    });
+    expect(await run({ relative: 'last_7_days' })).toMatchObject({ error: { code: 'INVALID_DATE_RANGE' } });
+    expect(seen.definition).toBeUndefined();
+
+    const r = await run({ start: '2026-09-17', end: '2026-09-17' });
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.summary).toContain('2026-09-17..2026-09-17');
   });
 });

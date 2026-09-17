@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const GROUP_BY = {
   ad_unit:         'AD_UNIT_NAME',
@@ -9,9 +10,10 @@ const GROUP_BY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
-  group_by: z.enum(Object.keys(GROUP_BY) as [keyof typeof GROUP_BY, ...(keyof typeof GROUP_BY)[]]),
-});
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  group_by: z.enum(Object.keys(GROUP_BY) as [keyof typeof GROUP_BY, ...(keyof typeof GROUP_BY)[]])
+    .describe('One row per ad unit, device category, country, or day.'),
+}).strict();
 
 export const fillRateTool = buildReportTool({
   name: 'fill_rate',
@@ -25,6 +27,6 @@ export const fillRateTool = buildReportTool({
       'FILL_RATE',
     ],
   }),
-  summary: (input) =>
-    `Fill rate by ${input.group_by}, ${input.date_range.start}..${input.date_range.end}`,
+  summary: (input, range) =>
+    `Fill rate by ${input.group_by}, ${range.start}..${range.end}`,
 });

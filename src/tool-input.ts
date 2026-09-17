@@ -22,6 +22,10 @@ export function isDateField(schema: z.ZodTypeAny): boolean {
   return DATE_FIELDS.has(schema);
 }
 
+// The usual description of a historical report's date_range.
+export const HISTORICAL_RANGE =
+  'The dates to report on: { start, end } or { relative }. The range must end by yesterday in the date time zone (GAM_TIMEZONE).';
+
 // Either { start, end } or { relative }.
 export function dateRangeInput(description: string) {
   return z

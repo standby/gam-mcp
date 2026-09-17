@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const METRIC_MAP = {
   revenue: 'REVENUE',
@@ -7,10 +8,12 @@ const METRIC_MAP = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
-  top_n: z.number().int().min(1).max(1000).default(20),
-  metric: z.enum(['revenue', 'impressions']).default('revenue'),
-});
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  top_n: z.number().int().min(1).max(1000).default(20)
+    .describe('How many advertisers to return, 1-1000.'),
+  metric: z.enum(['revenue', 'impressions']).default('revenue')
+    .describe('What to rank by: revenue (in the network currency) or impressions.'),
+}).strict();
 
 export const topAdvertisersTool = buildReportTool({
   name: 'top_advertisers',
@@ -20,6 +23,6 @@ export const topAdvertisersTool = buildReportTool({
     dimensions: ['ADVERTISER_NAME'],
     metrics: [METRIC_MAP[input.metric]],
   }),
-  summary: (input) =>
-    `Top ${input.top_n} advertisers by ${input.metric}, ${input.date_range.start}..${input.date_range.end}`,
+  summary: (input, range) =>
+    `Top ${input.top_n} advertisers by ${input.metric}, ${range.start}..${range.end}`,
 });

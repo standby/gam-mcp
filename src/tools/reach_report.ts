@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // GAM's Reach report accepts a much narrower set of slices than the historical
@@ -19,8 +20,10 @@ const SECONDARY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() })
-    .describe('Absolute date range. Reach data lags ~3 days, so end dates inside that window return nothing.'),
+  date_range: dateRangeInput(
+    'The dates to measure reach over: { start, end } or { relative }. The range must end by yesterday; ' +
+    'reach data lags about 3 days, so the last days before today may return nothing.',
+  ),
   by: z
     .enum(['line_item', 'order', 'advertiser', 'ad_unit'])
     .default('line_item')
@@ -34,7 +37,7 @@ const inputSchema = z.object({
     ),
   ids: z.array(z.number().int().positive()).optional()
     .describe('Restrict to specific IDs of the `by` entity (e.g. the line item IDs of one campaign). Find them via lookup.'),
-});
+}).strict();
 
 export const reachReportTool = buildReportTool({
   name: 'reach_report',
@@ -60,9 +63,9 @@ export const reachReportTool = buildReportTool({
       report_type: 'REACH',
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
     const scope = input.ids?.length ? ` (${input.ids.length} id(s))` : '';
-    return `Reach & frequency by ${input.by}${slice}${scope}, ${input.date_range.start}..${input.date_range.end}`;
+    return `Reach & frequency by ${input.by}${slice}${scope}, ${range.start}..${range.end}`;
   },
 });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const SECONDARY = {
@@ -12,12 +13,14 @@ const SECONDARY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   group_by: z
     .enum(['none', 'day', 'ad_unit', 'country', 'device', 'line_item_type'])
-    .default('none'),
-  top_n: z.number().int().min(1).max(500).default(50),
-});
+    .default('none')
+    .describe("Optional secondary slice beside the bidder; 'none' gives one row per bidder."),
+  top_n: z.number().int().min(1).max(500).default(50)
+    .describe('How many rows to return, 1-500.'),
+}).strict();
 
 export const bidderBreakdownTool = buildReportTool({
   name: 'bidder_breakdown',
@@ -39,8 +42,8 @@ export const bidderBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Open Bidding breakdown by bidder${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Open Bidding breakdown by bidder${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
   },
 });

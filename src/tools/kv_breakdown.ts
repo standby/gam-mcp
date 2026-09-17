@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const METRIC_MAP = {
@@ -8,19 +9,22 @@ const METRIC_MAP = {
 } as const;
 
 const inputSchema = z.object({
-  // Discover IDs via lookup(entity_type='custom_targeting_key', query=…).
   // The MCP pins this to slot 0 internally; a single call breaks down one key.
-  custom_targeting_key_id: z.number().int().positive(),
-  date_range: z.object({ start: z.string(), end: z.string() }),
-  metric: z.enum(['revenue', 'impressions']).default('revenue'),
-  top_n: z.number().int().min(1).max(1000).default(20),
-  // Entity narrowing — typical pattern is "content categories for one ad unit"
-  // (e.g., site section × KV). Pick at most one; combining is allowed but the
-  // resulting filter is an AND of all three.
-  ad_unit_id: z.number().int().positive().optional(),
-  order_id: z.number().int().positive().optional(),
-  line_item_id: z.number().int().positive().optional(),
-});
+  custom_targeting_key_id: z.number().int().positive()
+    .describe('The custom targeting key to break down. Find its ID with lookup(entity_type="custom_targeting_key").'),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  metric: z.enum(['revenue', 'impressions']).default('revenue')
+    .describe('What to rank values by: revenue (in the network currency) or impressions.'),
+  top_n: z.number().int().min(1).max(1000).default(20)
+    .describe('How many values to return, 1-1000.'),
+  // Entity narrowing. Combining them is allowed; the filters are ANDed.
+  ad_unit_id: z.number().int().positive().optional()
+    .describe('Only this ad unit. Combined with the other narrowing fields by AND.'),
+  order_id: z.number().int().positive().optional()
+    .describe('Only this order. Combined with the other narrowing fields by AND.'),
+  line_item_id: z.number().int().positive().optional()
+    .describe('Only this line item. Combined with the other narrowing fields by AND.'),
+}).strict();
 
 type Input = z.infer<typeof inputSchema>;
 
@@ -57,7 +61,7 @@ export const kvBreakdownTool = buildReportTool({
     filters: buildFilters(input),
     custom_dimension_key_ids: [input.custom_targeting_key_id],
   }),
-  summary: (input) =>
+  summary: (input, range) =>
     `Top ${input.top_n} values of custom_targeting_key=${input.custom_targeting_key_id} by ${input.metric}, ` +
-    `${input.date_range.start}..${input.date_range.end}${scopeLabel(input)}`,
+    `${range.start}..${range.end}${scopeLabel(input)}`,
 });

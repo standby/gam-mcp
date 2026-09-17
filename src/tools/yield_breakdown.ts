@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension: the Open Bidding partner (buyer) vs the
@@ -20,7 +21,7 @@ const SECONDARY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   by: z
     .enum(['buyer', 'yield_group'])
     .default('buyer')
@@ -31,7 +32,7 @@ const inputSchema = z.object({
     .describe('Optional secondary slice to see where yield comes from.'),
   top_n: z.number().int().min(1).max(500).default(50)
     .describe('Maximum rows to surface.'),
-});
+}).strict();
 
 export const yieldBreakdownTool = buildReportTool({
   name: 'yield_breakdown',
@@ -59,8 +60,8 @@ export const yieldBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Yield group breakdown by ${input.by}${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Yield group breakdown by ${input.by}${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
   },
 });

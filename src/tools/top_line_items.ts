@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const METRIC_MAP = {
   revenue: 'REVENUE',
@@ -7,11 +8,14 @@ const METRIC_MAP = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
-  top_n: z.number().int().min(1).max(1000).default(20),
-  metric: z.enum(['revenue', 'impressions']).default('revenue'),
-  line_item_type: z.string().optional(),
-});
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  top_n: z.number().int().min(1).max(1000).default(20)
+    .describe('How many line items to return, 1-1000.'),
+  metric: z.enum(['revenue', 'impressions']).default('revenue')
+    .describe('What to rank by: revenue (in the network currency) or impressions.'),
+  line_item_type: z.string().optional()
+    .describe('Only line items of this GAM line item type, e.g. STANDARD or SPONSORSHIP.'),
+}).strict();
 
 export const topLineItemsTool = buildReportTool({
   name: 'top_line_items',
@@ -24,7 +28,7 @@ export const topLineItemsTool = buildReportTool({
       ? [{ field: 'LINE_ITEM_TYPE', op: '=', value: input.line_item_type }]
       : undefined,
   }),
-  summary: (input) =>
-    `Top ${input.top_n} line items by ${input.metric}, ${input.date_range.start}..${input.date_range.end}` +
+  summary: (input, range) =>
+    `Top ${input.top_n} line items by ${input.metric}, ${range.start}..${range.end}` +
     (input.line_item_type ? ` (type=${input.line_item_type})` : ''),
 });

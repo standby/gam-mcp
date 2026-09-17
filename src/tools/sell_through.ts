@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // FUTURE_SELL_THROUGH accepts a narrower dimension set than the historical
@@ -35,16 +36,11 @@ const SCOPE_WARNING =
   'with delivery or revenue metrics, which come from a different GAM report type.';
 
 const inputSchema = z.object({
-  date_range: z
-    .object({
-      start: z.string().describe('First day of the FUTURE window, YYYY-MM-DD.'),
-      end: z.string().describe('Last day of the FUTURE window, YYYY-MM-DD, inclusive.'),
-    })
-    .describe(
-      'The forward-looking window to forecast, as absolute dates. This is a FUTURE range, not a ' +
-      'historical one: dates in the past return nothing. Start from today or later, and keep the ' +
-      'window as near-term as the question allows — forecasts get less reliable further out.',
-    ),
+  date_range: dateRangeInput(
+    'The forward-looking window to forecast, as { start, end } dates: it must start today or later in the ' +
+    'date time zone (GAM_TIMEZONE), because a past window returns nothing. Relative ranges are refused. ' +
+    'Keep the window as near-term as the question allows; forecasts get less reliable further out.',
+  ),
   by: z
     .enum(['ad_unit', 'placement', 'line_item', 'order'])
     .default('ad_unit')
@@ -57,7 +53,7 @@ const inputSchema = z.object({
     .array(z.number().int().positive())
     .optional()
     .describe('Restrict to specific IDs of the `by` entity. Find them via lookup.'),
-});
+}).strict();
 
 export const sellThroughTool = buildReportTool({
   name: 'sell_through',
@@ -85,9 +81,9 @@ export const sellThroughTool = buildReportTool({
       report_type: 'FUTURE_SELL_THROUGH',
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const scope = input.ids?.length ? ` (${input.ids.length} id(s))` : '';
-    return `Forecast sell-through by ${input.by}${scope}, ${input.date_range.start}..${input.date_range.end}`;
+    return `Forecast sell-through by ${input.by}${scope}, ${range.start}..${range.end}`;
   },
   warnings: () => [SELL_THROUGH_FORECAST_WARNING, SCOPE_WARNING],
 });

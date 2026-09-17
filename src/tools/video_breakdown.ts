@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension for the video completion funnel.
@@ -18,7 +19,7 @@ const SECONDARY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   by: z
     .enum(['ad_unit', 'placement', 'size', 'duration'])
     .default('ad_unit')
@@ -29,7 +30,7 @@ const inputSchema = z.object({
     .describe('Optional secondary slice.'),
   top_n: z.number().int().min(1).max(500).default(50)
     .describe('Maximum rows to surface.'),
-});
+}).strict();
 
 export const videoBreakdownTool = buildReportTool({
   name: 'video_breakdown',
@@ -55,8 +56,8 @@ export const videoBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Video funnel by ${input.by}${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Video funnel by ${input.by}${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
   },
 });

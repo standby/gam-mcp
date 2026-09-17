@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension. Only a handful of the AD_SPEED-compatible
@@ -54,12 +55,7 @@ const PAGE_TIMING_WARNING =
   'inventory without it may be blank.';
 
 const inputSchema = z.object({
-  date_range: z
-    .object({
-      start: z.string().describe('Inclusive start date, YYYY-MM-DD.'),
-      end: z.string().describe('Inclusive end date, YYYY-MM-DD.'),
-    })
-    .describe('Absolute date range to measure latency over.'),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   by: z
     .enum(['ad_unit', 'device', 'country', 'creative_size'])
     .default('ad_unit')
@@ -77,7 +73,7 @@ const inputSchema = z.object({
       "'unviewed_reason' = why impressions were never viewed (user scrolled past before the ad " +
       'filled/loaded, before 1 second on screen, slot never entered the viewport, or other).',
     ),
-});
+}).strict();
 
 export const adSpeedTool = buildReportTool({
   name: 'ad_speed',
@@ -97,8 +93,8 @@ export const adSpeedTool = buildReportTool({
     metrics: FOCUS_METRICS[input.focus],
     report_type: 'AD_SPEED',
   }),
-  summary: (input) =>
-    `Ad speed (${input.focus}) by ${input.by}, ${input.date_range.start}..${input.date_range.end}`,
+  summary: (input, range) =>
+    `Ad speed (${input.focus}) by ${input.by}, ${range.start}..${range.end}`,
   warnings: (input) =>
     input.focus === 'page_timing'
       ? [AD_SPEED_DISTRIBUTION_WARNING, PAGE_TIMING_WARNING]

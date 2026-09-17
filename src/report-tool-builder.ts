@@ -1,6 +1,7 @@
 import { z, type ZodTypeAny } from 'zod';
 import { executeReport } from './report-exec.js';
-import type { GAMClient, ReportQuery, DateRange } from './gam-client.js';
+import type { GAMClient, ReportQuery } from './gam-client.js';
+import { rangeRuleFor, resolveDateRange, type DateRangeInput, type ResolvedRange } from './dates.js';
 import type { ReportCache } from './cache.js';
 import type { Logger } from './log.js';
 import type { SavedQueryStore } from './saved-queries.js';
@@ -49,21 +50,25 @@ export type ToolDefinition<I extends ZodTypeAny> = {
   ) => Promise<ResultEnvelope | JsonEnvelope | GamErrorEnvelope>;
 };
 
-export type ReportToolConfig<I extends ZodTypeAny> = {
+// A report tool's input always carries a date_range (spec §3.2).
+export type ReportToolInput = z.ZodType<{ date_range: DateRangeInput }, z.ZodTypeDef, unknown>;
+
+export type ReportToolConfig<I extends ReportToolInput> = {
   name: string;
   description: string;
   input: I;
   /** Convert validated input to the GAM ReportQuery (dimensions/metrics/filters). */
   buildQuery: (input: z.infer<I>) => ReportQuery;
-  /** Convert validated input to a date range. Defaults to using `input.date_range`. */
-  buildDateRange?: (input: z.infer<I>) => DateRange;
-  /** Build the human-readable summary string returned in the envelope. */
-  summary: (input: z.infer<I>) => string;
+  /** One line naming what ran, over the resolved and checked range. */
+  summary: (input: z.infer<I>, range: ResolvedRange) => string;
   /** Optional caveats about how the returned rows may (not) be read. */
   warnings?: (input: z.infer<I>) => string[] | undefined;
 };
 
-export function buildReportTool<I extends ZodTypeAny>(
+// A tool that runs one report over its date_range. The range is resolved
+// and checked here, by the rules of the report type the query runs as, so
+// no tool built this way can send GAM an unchecked date.
+export function buildReportTool<I extends ReportToolInput>(
   cfg: ReportToolConfig<I>,
 ): ToolDefinition<I> {
   return {
@@ -72,12 +77,17 @@ export function buildReportTool<I extends ZodTypeAny>(
     input: cfg.input,
     async handler(input, ctx) {
       const query = cfg.buildQuery(input);
-      const dateRange = cfg.buildDateRange?.(input) ?? (input as { date_range: DateRange }).date_range;
+      const range = resolveDateRange(input.date_range, {
+        timezone: ctx.timezone,
+        now: ctx.now,
+        rule: rangeRuleFor(query.report_type),
+      });
+      if ('error' in range) return range;
       return executeReport(ctx, {
         tool: cfg.name,
         query,
-        dateRange,
-        summary: cfg.summary(input),
+        dateRange: range,
+        summary: cfg.summary(input, range),
         warnings: cfg.warnings?.(input) ?? [],
       });
     },

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const GROUP_BY = {
   day: 'DATE',
@@ -15,9 +16,10 @@ const GROUP_BY = {
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
-  group_by: z.enum(Object.keys(GROUP_BY) as [keyof typeof GROUP_BY, ...(keyof typeof GROUP_BY)[]]).optional(),
-});
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  group_by: z.enum(Object.keys(GROUP_BY) as [keyof typeof GROUP_BY, ...(keyof typeof GROUP_BY)[]]).optional()
+    .describe('Split the totals into one row per value of this dimension. Omit it for a single total row.'),
+}).strict();
 
 export const revenueSummaryTool = buildReportTool({
   name: 'revenue_summary',
@@ -28,7 +30,7 @@ export const revenueSummaryTool = buildReportTool({
     dimensions: input.group_by ? [GROUP_BY[input.group_by]] : [],
     metrics: ['REVENUE', 'IMPRESSIONS'],
   }),
-  summary: (input) =>
-    `Revenue summary ${input.date_range.start}..${input.date_range.end}` +
+  summary: (input, range) =>
+    `Revenue summary ${range.start}..${range.end}` +
     (input.group_by ? ` grouped by ${input.group_by}` : ''),
 });
