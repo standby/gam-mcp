@@ -28,11 +28,11 @@ export type PendingEntry = {
 
 export type CacheEntry = DoneEntry | PendingEntry;
 
-// A result, and the operation that produced it when that is known.
-export type ResultRef = { result: string; operation?: string };
+// A result, the operation that produces it, or both, as far as they are known.
+export type ResultRef = { result?: string; operation?: string };
 
 // Whether an entry is about this result: a done entry that holds it, or a
-// pending entry for the operation that produced it.
+// pending entry for the operation that produces it.
 export function names(entry: CacheEntry, ref: ResultRef): boolean {
   return entry.kind === 'done' ? entry.result === ref.result : entry.operation === ref.operation;
 }
@@ -42,10 +42,11 @@ export type ReportCache = {
   // hit; no entry, or a pending one, counts as a miss.
   get(key: string): CacheEntry | undefined;
   putDone(key: string, entry: Omit<DoneEntry, 'kind' | 'stored_at'>): void;
-  // A pending run recorded again keeps its original started_at.
+  // A run GAM has accepted; started_at defaults to now.
   putPending(key: string, entry: { report: string; operation: string; started_at?: string }): void;
   // Removes the entry for a key. With `only`, removes it only while it still
-  // names that result, so an entry another call has since replaced survives.
+  // names that result or operation, so an entry another call has since
+  // replaced survives.
   delete(key: string, only?: ResultRef): void;
   size(): number;
   // Session hit and miss counts, for usage_stats.

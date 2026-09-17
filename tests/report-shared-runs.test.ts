@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { executeReport } from '../src/report-exec.js';
 import { createReportCache, PENDING_TTL_MS } from '../src/cache.js';
 import { definitionHash } from '../src/report-key.js';
@@ -323,5 +326,60 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     });
     expect(ok(await executeReport(ctx, request)).provenance.result).toBe(result(1));
     expect(gam.requests.filter((q) => q.method === 'POST' && q.path.endsWith(':run'))).toHaveLength(1);
+  });
+
+  it('records a run as pending as soon as it starts, with the time it started', async () => {
+    let t = Date.parse('2026-09-17T04:00:00Z');
+    const cache = createReportCache({ networkCode: NETWORK, now: () => t });
+    const seen: unknown[] = [];
+    const { ctx } = counted({ reports: [{ query, rows }], runOutcomes: { 1: 'never' } }, { reportCache: cache, reportTimeoutMs: 0 });
+    const inner = ctx.client;
+    ctx.client = {
+      ...inner,
+      // Each poll takes a minute; the first one sees what the cache holds.
+      pollOperation: async (op) => {
+        if (seen.length === 0) seen.push(cache.get(KEY));
+        t += 60_000;
+        return inner.pollOperation(op);
+      },
+    };
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'REPORT_TIMEOUT' } });
+    const started = { kind: 'pending', operation: operation(1), started_at: '2026-09-17T04:00:00.000Z' };
+    expect(seen).toEqual([expect.objectContaining(started)]);
+    expect(cache.get(KEY)).toMatchObject(started);
+  });
+
+  it('after the first page could not be read, the next call waits for the same operation', async () => {
+    const gam = createFakeGam();
+    gam.setRows([{ dimensionValues: [int(1)], metricValueGroups: [{ primaryValues: [int(5)] }] }]);
+    for (let i = 0; i < 4; i++) gam.inject('GET', /:fetchRows\?/, { status: 503 });
+    const cache = createReportCache({ networkCode: NETWORK });
+    const ctx = restCtx(gam, { reportCache: cache }, true);
+    expect(await executeReport(ctx, request)).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
+    expect(cache.get(KEY)).toMatchObject({ kind: 'pending', operation: operation(1) });
+    expect(ok(await executeReport(ctx, request)).provenance).toMatchObject({ result: result(1), cache: { hit: false } });
+    expect(gam.requests.filter((q) => q.method === 'POST' && q.path.endsWith(':run'))).toHaveLength(1);
+    expect(cache.get(KEY)).toMatchObject({ kind: 'done', result: result(1) });
+  });
+
+  it('a second process sharing the cache directory waits for a run the first one is still polling', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gam-shared-cache-'));
+    const gam = createFakeGam();
+    gam.setRows([{ dimensionValues: [int(1)], metricValueGroups: [{ primaryValues: [int(5)] }] }]);
+    const processOn = (sleep?: () => Promise<void>) => restCtx(gam, {
+      reportCache: createReportCache({ networkCode: NETWORK, diskDir: dir }),
+      ...(sleep && { sleep }),
+    });
+    const polling = gate();
+    const release = gate();
+    const first = executeReport(processOn(async () => { polling.open(); await release.opened; }), request);
+    return (async () => {
+      await polling.opened; // the first process has run the report and is between two polls
+      const second = ok(await executeReport(processOn(), request));
+      release.open();
+      expect(second.provenance.result).toBe(result(1));
+      expect(ok(await first).provenance.result).toBe(result(1));
+      expect(gam.requests.filter((q) => q.method === 'POST' && q.path.endsWith(':run'))).toHaveLength(1);
+    })().finally(() => rmSync(dir, { recursive: true, force: true }));
   });
 });

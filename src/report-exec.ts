@@ -116,10 +116,12 @@ function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorE
 // produced the result, when this process waited on it.
 type Obtained = { report: string; result: string; operation?: string; cached: DoneEntry | null; resumed: boolean };
 
-// Finds or creates the report for `key` and runs it, or resumes the run a
-// timed-out call left behind, then waits. A wait that ends because GAM says
-// the run failed forgets the key; any other ending leaves a pending entry,
-// because GAM may still be running the report.
+// Finds or creates the report for `key` and runs it, or resumes the run an
+// earlier call left behind, then waits. A new run is recorded as pending the
+// moment GAM accepts it, so a call that fails later (while polling or reading
+// the first page), or a process that stops, leaves it for the next identical
+// call to resume; a resumed entry keeps the start time it has. A wait that
+// ends because GAM says the run failed forgets it.
 async function runOnce(
   ctx: ToolContext,
   definition: ReportDefinition,
@@ -136,14 +138,11 @@ async function runOnce(
   } else {
     report = await findOrCreateReport(ctx, definition, key, tool);
     operation = (await ctx.client.runReport(report)).operation;
+    ctx.reportCache?.putPending(key, { report, operation });
   }
   const done = await pollUntilDone(ctx, operation);
   if (!('error' in done)) return { report, result: done.result, operation, cached: null, resumed: pending !== undefined };
-  if (done.error.code === 'REPORT_FAILED') {
-    ctx.reportCache?.delete(key);
-  } else {
-    ctx.reportCache?.putPending(key, { report, operation, ...(pending && { started_at: pending.started_at }) });
-  }
+  if (done.error.code === 'REPORT_FAILED') ctx.reportCache?.delete(key, { operation });
   return done;
 }
 
@@ -264,18 +263,17 @@ async function firstPage(
       try {
         page = await ctx.client.fetchRows(got.result, { pageSize });
       } catch (e) {
-        // A cached or resumed result GAM no longer serves is dropped (unless
-        // another call has already replaced it) and the report is obtained
-        // once more. A result from a fresh run, or from that second attempt,
-        // that is already gone is an error.
-        if (e instanceof ResultUnavailableError && (got.cached || got.resumed) && !stale) {
-          ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
-          const ref: ResultRef = { result: got.result, operation: got.operation };
-          ctx.reportCache?.delete(key, ref);
-          stale = { promise: obtained.promise, ref };
-          continue;
-        }
-        throw e;
+        if (!(e instanceof ResultUnavailableError)) throw e;
+        // A result GAM no longer serves is forgotten, unless another call has
+        // already replaced its entry. A cached or resumed one is then obtained
+        // once more; one from a fresh run, or from that second attempt, is an
+        // error.
+        const ref: ResultRef = { result: got.result, operation: got.operation };
+        ctx.reportCache?.delete(key, ref);
+        if (!(got.cached || got.resumed) || stale) throw e;
+        ctx.logger.info('report.cached_result_gone', { tool, result: got.result });
+        stale = { promise: obtained.promise, ref };
+        continue;
       }
       // A hit keeps the facts of the call that produced the result.
       const facts: ResultFacts = got.cached

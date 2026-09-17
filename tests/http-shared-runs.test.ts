@@ -3,7 +3,8 @@ import { connectHttp } from '../src/http-transport.js';
 import { buildMcpServer } from '../src/server.js';
 import { createReportCache } from '../src/cache.js';
 import { createUsageCounters, instrumentGamClient } from '../src/usage.js';
-import { makeCtx, NETWORK } from './helpers.js';
+import { definitionHash } from '../src/report-key.js';
+import { definitionFor, makeCtx, NETWORK } from './helpers.js';
 
 function gate() {
   let open!: () => void;
@@ -11,14 +12,15 @@ function gate() {
   return { open, opened };
 }
 
+const QUERY = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
+const RANGE = { start: '2026-09-01', end: '2026-09-02' };
+const KEY = definitionHash(definitionFor(QUERY, RANGE));
+
 const call = (id: number) => ({
   jsonrpc: '2.0',
   id,
   method: 'tools/call',
-  params: {
-    name: 'run_report',
-    arguments: { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'], date_range: { start: '2026-09-01', end: '2026-09-02' } },
-  },
+  params: { name: 'run_report', arguments: { ...QUERY, date_range: RANGE } },
 });
 
 function post(port: number, payload: unknown, signal?: AbortSignal): Promise<Response> {
@@ -46,7 +48,7 @@ describe('HTTP client disconnect (spec §2.6)', () => {
     const reportCache = createReportCache({ networkCode: NETWORK });
     const counters = createUsageCounters();
     const ctx = makeCtx(
-      { reports: [{ query: { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] }, rows: [{ AD_UNIT_ID: 1, IMPRESSIONS: 5 }] }] },
+      { reports: [{ query: QUERY, rows: [{ AD_UNIT_ID: 1, IMPRESSIONS: 5 }] }] },
       {
         reportCache,
         // The first wait between polls holds until the test lets GAM finish.
@@ -61,7 +63,8 @@ describe('HTTP client disconnect (spec §2.6)', () => {
       abort.abort();
       await first;
       release.open(); // GAM finishes; nobody is listening
-      await vi.waitFor(() => expect(reportCache.size()).toBe(1), { timeout: 5000 });
+      // The run is recorded as pending when it starts, so wait for its result.
+      await vi.waitFor(() => expect(reportCache.get(KEY)).toMatchObject({ kind: 'done' }), { timeout: 5000 });
 
       const second = await toolResult(await post(handle.port, call(2)));
       expect(second.isError).toBeFalsy();
