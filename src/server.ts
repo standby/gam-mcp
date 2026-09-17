@@ -14,7 +14,7 @@ import { toolsFor, type TransportMode } from './tools/index.js';
 import { GAM_SCHEMA } from './schema.js';
 import { PROMPTS, renderPrompt } from './prompts.js';
 import type { ToolContext, ToolDefinition } from './report-tool-builder.js';
-import { gamError, isGamError } from './errors.js';
+import { gamError, isGamError, type GamErrorEnvelope } from './errors.js';
 import { toJsonSchema } from './json-schema.js';
 import { describeInputError } from './tool-input.js';
 
@@ -170,36 +170,26 @@ export function buildMcpServer(ctx: ToolContext, opts: ServerOptions): Server {
     const argKeys = Object.keys(req.params.arguments ?? {});
     ctx.logger.info('tool.call.start', { tool: toolName, arg_keys: argKeys });
     const start = Date.now();
+    const end = (ok: boolean) => ctx.logger.info('tool.call.end', { tool: toolName, duration_ms: Date.now() - start, ok });
+    // Every way a call can fail ends here: flagged, logged, and closed with
+    // one tool.call.end line like a success.
+    const failed = (err: GamErrorEnvelope) => {
+      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
+      end(false);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(err) }], isError: true };
+    };
 
     const tool = tools.find((t) => t.name === toolName);
-    if (!tool) {
-      const err = gamError('INVALID_INPUT', { reason: `Unknown tool ${toolName}` });
-      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
-      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
-    }
+    if (!tool) return failed(gamError('INVALID_INPUT', { reason: `Unknown tool ${toolName}` }));
     const parsed = tool.input.safeParse(req.params.arguments ?? {});
-    if (!parsed.success) {
-      const err = gamError('INVALID_INPUT', { reason: describeInputError(parsed.error) });
-      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
-      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
-    }
+    if (!parsed.success) return failed(gamError('INVALID_INPUT', { reason: describeInputError(parsed.error) }));
     try {
       const result = await tool.handler(parsed.data, ctx);
-      const duration_ms = Date.now() - start;
-      if (isGamError(result)) {
-        ctx.logger.warn('tool.call.error', { tool: toolName, error_code: result.error.code, reason: result.error.message });
-        ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
-        return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: true };
-      }
-      ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: true });
+      if (isGamError(result)) return failed(result);
+      end(true);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (e) {
-      const duration_ms = Date.now() - start;
-      const reason = e instanceof Error ? e.message : String(e);
-      const err = gamError('INTERNAL_ERROR', { reason });
-      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason });
-      ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
-      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
+      return failed(gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) }));
     }
   });
 

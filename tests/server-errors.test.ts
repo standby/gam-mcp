@@ -5,7 +5,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '../src/server.js';
 import { gamError, type GamErrorCode } from '../src/errors.js';
 import type { ToolDefinition } from '../src/report-tool-builder.js';
-import { makeCtx } from './helpers.js';
+import { createLogger } from '../src/log.js';
+import { connectClient, makeCtx } from './helpers.js';
 
 const CODES: GamErrorCode[] = [
   'INVALID_DATE_RANGE', 'INVALID_INPUT', 'AUTH_FAILED', 'QUOTA_EXCEEDED', 'REPORT_FAILED',
@@ -54,11 +55,34 @@ describe('every error reaches the client flagged', () => {
     expect(JSON.parse((r.content as { text: string }[])[0].text).error.code).toBe(code);
   });
 
-  it('an unknown tool, invalid input and an exception have isError', async () => {
+  it.each([
+    ['an unknown tool', 'nope', {}, 'INVALID_INPUT', 'Invalid input: Unknown tool nope.'],
+    ['invalid input', 'fine', { n: 'x' }, 'INVALID_INPUT', 'Invalid input: n: Expected number, received string.'],
+    ['an exception', 'throws', {}, 'INTERNAL_ERROR', 'Internal error: boom.'],
+  ])('%s has isError and its code', async (_label, name, args, code, message) => {
     const client = await connect();
-    expect((await client.callTool({ name: 'nope', arguments: {} })).isError).toBe(true);
-    expect((await client.callTool({ name: 'fine', arguments: { n: 'x' } })).isError).toBe(true);
-    expect((await client.callTool({ name: 'throws', arguments: {} })).isError).toBe(true);
+    const r = await client.callTool({ name, arguments: args });
+    expect(r.isError).toBe(true);
+    expect(JSON.parse((r.content as { text: string }[])[0].text)).toEqual({
+      error: { code, message, hint: expect.any(String), details: expect.any(Object) },
+    });
+  });
+
+  it.each([
+    ['nope', {}, false],
+    ['fine', { n: 'x' }, false],
+    ['returns_error', { code: 'REPORT_FAILED' }, false],
+    ['throws', {}, false],
+    ['fine', { n: 1 }, true],
+  ])('a call to %s with %j logs one start and one end line', async (name, args, ok) => {
+    const lines: Record<string, unknown>[] = [];
+    const logger = createLogger({ level: 'debug', sink: (l) => { lines.push(JSON.parse(l)); } });
+    const server = buildMcpServer(makeCtx({}, { logger }), { mode: 'stdio', tools: [returnsError, throws, fine, strict] });
+    const client = await connectClient(server);
+    await client.callTool({ name, arguments: args });
+    const calls = lines.filter((l) => String(l.msg).startsWith('tool.call.'));
+    expect(calls.map((l) => l.msg)).toEqual(ok ? ['tool.call.start', 'tool.call.end'] : ['tool.call.start', 'tool.call.error', 'tool.call.end']);
+    expect(calls.at(-1)).toMatchObject({ tool: name, ok, duration_ms: expect.any(Number) });
   });
 
   it('a success does not', async () => {

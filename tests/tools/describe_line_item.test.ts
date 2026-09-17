@@ -146,6 +146,8 @@ describe('describe_line_item', () => {
     expect(r.resolution.failed).toBe(1);
     expect(r.resolution.missing).toBe(0);
     expect(r.warnings[0]).toContain('could not be fetched');
+    // The caveat is written before the data it qualifies (spec §1.1).
+    expect(Object.keys(r).slice(0, 2)).toEqual(['summary', 'warnings']);
   });
 
   it('resolves in bounded batches rather than one unbounded burst', async () => {

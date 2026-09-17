@@ -85,6 +85,13 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
         (notFound.length ? `, ${notFound.length} not found` : '') +
         `; ${resolved.size} of ${unique.length} targeting resource path(s) resolved` +
         (failed ? `, ${failed} failed to fetch` : '') + '.',
+      // Qualifiers before data (spec §1.1).
+      ...(failed ? {
+        warnings: [
+          `${failed} targeting resource path(s) could not be fetched (rate limit or permission), ` +
+          'so their labels fall back to the raw resource path. Those labels are unknown, not absent — re-run for complete output.',
+        ],
+      } : {}),
       line_items,
       resolved_paths: Object.fromEntries(resolved),
       resolution: {
@@ -94,12 +101,6 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
         failed,
       },
       ...(notFound.length ? { not_found: notFound } : {}),
-      ...(failed ? {
-        warnings: [
-          `${failed} targeting resource path(s) could not be fetched (rate limit or permission), ` +
-          'so their labels fall back to the raw resource path. Those labels are unknown, not absent — re-run for complete output.',
-        ],
-      } : {}),
     };
   },
 };

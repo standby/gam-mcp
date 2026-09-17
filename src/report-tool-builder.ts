@@ -38,8 +38,18 @@ export type ToolContext = {
 
 // The shape for tools that return a nested object rather than report rows.
 // `summary` stays required so every tool result opens with one line of
-// orientation regardless of shape.
-export type JsonEnvelope = { summary: string; [k: string]: unknown };
+// orientation regardless of shape, and `warnings`, when there are any, come
+// straight after it. A result with rows or provenance is a ResultEnvelope
+// (built by envelope()), and an error is a GamErrorEnvelope (gamError()):
+// neither can pass for this shape.
+export type JsonEnvelope = {
+  summary: string;
+  warnings?: string[];
+  rows?: never;
+  provenance?: never;
+  error?: never;
+  [k: string]: unknown;
+};
 
 // Every tool input is a strict object: an unknown key is refused, not
 // dropped (spec §3.1). A tool whose input is not strict does not typecheck.
