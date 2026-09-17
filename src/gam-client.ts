@@ -60,6 +60,9 @@ export type RowsPage = {
 
 export type StoredReport = { name: string; definition: ReportDefinition };
 
+// What networks.get says about the network every report runs in.
+export type NetworkInfo = { networkCode: string; timeZone: string; currencyCode: string };
+
 // fetchRows throws this when GAM no longer serves a result.
 export class ResultUnavailableError extends Error {
   constructor(readonly result: string, readonly status: number) {
@@ -100,6 +103,8 @@ export type GAMClient = {
   // returns inside nested objects like a line item's targeting. Returns null
   // on 404 so callers can degrade to the raw path instead of throwing.
   getResource: (path: string) => Promise<Record<string, unknown> | null>;
+  // The network's identity: its time zone and primary currency (networks.get).
+  getNetwork: () => Promise<NetworkInfo>;
   // Throws GamHttpError for any non-2xx answer, 429 included.
   pollOperation: (operation_name: string) => Promise<OperationStatus>;
   // Create a report that runs exactly this definition. Returns its resource name.
@@ -134,6 +139,8 @@ export type MockState = {
   // Raw resources keyed by the path getResource() is called with.
   resources?: Record<string, Record<string, unknown>>;
   networkCode?: string;
+  // What getNetwork answers; defaults to Asia/Tokyo and USD.
+  network?: { timeZone?: string; currencyCode?: string };
   // Result names fetchRows treats as gone.
   expiredResults?: string[];
   // Operation outcomes by run number (1-based): 'failed' or 'never' (stays running).
@@ -199,6 +206,13 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     },
     async getResource(path) {
       return state.resources?.[path] ?? null;
+    },
+    async getNetwork() {
+      return {
+        networkCode: network,
+        timeZone: state.network?.timeZone ?? 'Asia/Tokyo',
+        currencyCode: state.network?.currencyCode ?? 'USD',
+      };
     },
     async pollOperation(name) {
       const run = runs.get(name);

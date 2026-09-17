@@ -217,6 +217,15 @@ export function createRestGamClient(opts: {
       return await res.json() as Record<string, unknown>;
     },
 
+    async getNetwork() {
+      const res = await fetchImpl(networkPath);
+      if (!res.ok) throw await httpError('getNetwork', res);
+      const n = await res.json() as { networkCode?: string; timeZone?: string; currencyCode?: string };
+      if (!n.timeZone) throw new Error('getNetwork: GAM returned no timeZone');
+      if (!n.currencyCode) throw new Error('getNetwork: GAM returned no currencyCode');
+      return { networkCode: n.networkCode ?? opts.networkCode, timeZone: n.timeZone, currencyCode: n.currencyCode };
+    },
+
     async pollOperation(operation_name: string): Promise<OperationStatus> {
       const res = await fetchImpl(`${BASE}/${operation_name}`);
       if (!res.ok) throw await httpError('pollOperation', res);

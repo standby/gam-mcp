@@ -83,3 +83,12 @@ describe('mock client typed report path', () => {
     await expect(client.fetchRows(done.result, { pageSize: 5 })).rejects.toThrow('no longer available');
   });
 });
+
+describe('mock client network', () => {
+  it('answers getNetwork with Asia/Tokyo and USD unless told otherwise', async () => {
+    expect(await createMockGamClient().getNetwork())
+      .toEqual({ networkCode: '1234', timeZone: 'Asia/Tokyo', currencyCode: 'USD' });
+    expect(await createMockGamClient({ networkCode: '5678', network: { timeZone: 'Europe/Berlin', currencyCode: 'EUR' } }).getNetwork())
+      .toEqual({ networkCode: '5678', timeZone: 'Europe/Berlin', currencyCode: 'EUR' });
+  });
+});

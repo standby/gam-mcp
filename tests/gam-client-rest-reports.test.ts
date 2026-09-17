@@ -125,4 +125,18 @@ describe('REST client report methods', () => {
       name: 'GamHttpError', call: 'pollOperation', status: 429, gamStatus: 'RESOURCE_EXHAUSTED',
     });
   });
+
+  it('reads the network time zone and currency', async () => {
+    const gam = createFakeGam();
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    expect(await client.getNetwork()).toEqual({ networkCode: '1234', timeZone: 'Asia/Tokyo', currencyCode: 'USD' });
+    expect(gam.requests.at(-1)).toEqual({ method: 'GET', path: 'networks/1234' });
+  });
+
+  it('refuses a network answer without a currency', async () => {
+    const gam = createFakeGam();
+    delete gam.network.currencyCode;
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    await expect(client.getNetwork()).rejects.toThrow('GAM returned no currencyCode');
+  });
 });

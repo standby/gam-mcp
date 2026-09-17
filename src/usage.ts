@@ -46,6 +46,10 @@ export function instrumentGamClient(client: GAMClient, counters: UsageCounters):
       counters.get_resource_calls += 1;
       return client.getResource(path);
     },
+    // The startup identity check, not a per-call cost, so it is not counted.
+    async getNetwork() {
+      return client.getNetwork();
+    },
     async pollOperation(name) {
       counters.poll_operations += 1;
       const start = Date.now();
