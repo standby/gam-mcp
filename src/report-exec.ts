@@ -19,7 +19,7 @@ import { definitionWarnings } from './report-warnings.js';
 import { zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
 import { findOrCreateReport } from './report-reuse.js';
-import type { DoneEntry } from './cache.js';
+import type { DoneEntry, PendingEntry } from './cache.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
 export const DEFAULT_PAGE_ROWS = 5_000;
@@ -111,33 +111,66 @@ function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorE
 // The result that answers a definition, and the cache entry it came from.
 type Obtained = { report: string; result: string; cached: DoneEntry | null };
 
-// Finds or creates the report for `key`, runs it and waits for the result.
+// Finds or creates the report for `key` and runs it, or resumes the run a
+// timed-out call left behind, then waits. A wait that ends because GAM says
+// the run failed forgets the key; any other ending leaves a pending entry,
+// because GAM may still be running the report.
 async function runOnce(
   ctx: ToolContext,
   definition: ReportDefinition,
   key: string,
   tool: string,
+  pending: PendingEntry | undefined,
 ): Promise<Obtained | GamErrorEnvelope> {
-  const report = await findOrCreateReport(ctx, definition, key, tool);
-  const { operation } = await ctx.client.runReport(report);
+  let report: string;
+  let operation: string;
+  if (pending) {
+    report = pending.report;
+    operation = pending.operation;
+    ctx.logger.info('report.resume', { tool, report, operation, started_at: pending.started_at });
+  } else {
+    report = await findOrCreateReport(ctx, definition, key, tool);
+    operation = (await ctx.client.runReport(report)).operation;
+  }
   const done = await pollUntilDone(ctx, operation);
-  return 'error' in done ? done : { report, result: done.result, cached: null };
+  if (!('error' in done)) return { report, result: done.result, cached: null };
+  if (done.error.code === 'REPORT_FAILED') {
+    ctx.reportCache?.delete(key);
+  } else {
+    ctx.reportCache?.putPending(key, { report, operation, ...(pending && { started_at: pending.started_at }) });
+  }
+  return done;
 }
 
-// A live cached result for `key`, else a new run (spec §2.1 steps 4 and 6).
-async function obtainResult(
+// Spec §2.1 steps 3–6: join an identical run in flight, else use a live cached
+// result, else resume a timed-out run, else start one. Every caller of a
+// shared run gets its outcome, failures included; the flight is removed as
+// soon as the run settles, so the next call starts fresh.
+function obtainResult(
   ctx: ToolContext,
   definition: ReportDefinition,
   key: string,
   tool: string,
   useCache: boolean,
 ): Promise<Obtained | GamErrorEnvelope> {
+  const { flights } = clientMemory(ctx);
+  const joined = flights.get(key);
+  if (joined) {
+    ctx.logger.info('report.shared', { tool, key: key.slice(0, 16) });
+    return joined;
+  }
   const entry = useCache ? ctx.reportCache?.get(key) : undefined;
   if (entry?.kind === 'done') {
     ctx.logger.info('report.cache_hit', { tool, key: key.slice(0, 16), result: entry.result, run_time: entry.run_time });
-    return { report: entry.report, result: entry.result, cached: entry };
+    return Promise.resolve({ report: entry.report, result: entry.result, cached: entry });
   }
-  return runOnce(ctx, definition, key, tool);
+  const run = runOnce(ctx, definition, key, tool, entry?.kind === 'pending' ? entry : undefined);
+  flights.set(key, run);
+  const settle = () => {
+    if (flights.get(key) === run) flights.delete(key);
+  };
+  run.then(settle, settle);
+  return run;
 }
 
 function toGamError(e: unknown, extra: Record<string, unknown> = {}): GamErrorEnvelope {
@@ -325,6 +358,8 @@ export async function executeReport(
 type ClientMemory = {
   stored: Lru<string, StoredReport>;
   facts: Lru<string, ResultFacts>;
+  // Identical runs in flight, by definition hash (spec §2.6).
+  flights: Map<string, Promise<Obtained | GamErrorEnvelope>>;
 };
 
 const memories = new WeakMap<object, ClientMemory>();
@@ -332,7 +367,11 @@ const memories = new WeakMap<object, ClientMemory>();
 function clientMemory(ctx: ToolContext): ClientMemory {
   let memory = memories.get(ctx.client);
   if (!memory) {
-    memory = { stored: new Lru(REMEMBERED_RESULTS_MAX), facts: new Lru(REMEMBERED_RESULTS_MAX) };
+    memory = {
+      stored: new Lru(REMEMBERED_RESULTS_MAX),
+      facts: new Lru(REMEMBERED_RESULTS_MAX),
+      flights: new Map(),
+    };
     memories.set(ctx.client, memory);
   }
   return memory;

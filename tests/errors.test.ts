@@ -36,4 +36,11 @@ describe('gamError', () => {
     expect(big.error.message).toBe('The input report has 60000 rows, over the limit of 50000.');
     expect(big.error.hint).toMatch(/Narrow/);
   });
+
+  it('REPORT_TIMEOUT names the operation and says the next call waits for it', () => {
+    const e = gamError('REPORT_TIMEOUT', { timeout_ms: 90000, operation: 'networks/1/operations/reports/runs/2' });
+    expect(e.error.message).toBe('Report did not finish within 90000ms (operation networks/1/operations/reports/runs/2).');
+    expect(e.error.hint).toContain('the same call');
+    expect(e.error.hint).toContain('GAM_REPORT_TIMEOUT_MS');
+  });
 });

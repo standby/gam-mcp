@@ -4,6 +4,7 @@ import { reportDefinition, type ReportDefinition } from '../src/report-definitio
 import { noopLogger } from '../src/log.js';
 import type { ToolContext } from '../src/report-tool-builder.js';
 import type { Provenance, ResultEnvelope } from '../src/envelope.js';
+import { createUsageCounters, instrumentGamClient, type UsageCounters } from '../src/usage.js';
 import type { FakeGam } from './fake-gam.js';
 
 export const NETWORK = '1234';
@@ -50,4 +51,12 @@ export type Page = ResultEnvelope & { provenance: Provenance };
 export function ok(r: unknown): Page {
   if (r && typeof r === 'object' && 'error' in r) throw new Error(JSON.stringify(r));
   return r as Page;
+}
+
+// A context over the mock client that counts every client call.
+export function counted(state: MockState, over: Partial<ToolContext> = {}): { ctx: ToolContext; counters: UsageCounters } {
+  const counters = createUsageCounters();
+  const ctx = makeCtx(state, over);
+  ctx.client = instrumentGamClient(ctx.client, counters);
+  return { ctx, counters };
 }

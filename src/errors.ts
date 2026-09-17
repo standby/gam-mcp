@@ -47,8 +47,9 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
     hint: 'Verify dimension/metric combinations are supported (call describe_schema) and filters reference real entities.',
   }),
   REPORT_TIMEOUT: (d) => ({
-    message: `Report did not finish within ${d.timeout_ms ?? 300000}ms.`,
-    hint: 'Narrow the date range, reduce dimensions, or set GAM_REPORT_TIMEOUT_MS higher.',
+    message: `Report did not finish within ${d.timeout_ms ?? 300000}ms${d.operation ? ` (operation ${d.operation})` : ''}.`,
+    hint: 'GAM is still running it: making the same call again waits for that operation instead of starting another report. ' +
+      "Set GAM_REPORT_TIMEOUT_MS below your client's call timeout, or narrow the date range.",
   }),
   ENTITY_NOT_FOUND: (d) => ({
     message: `No ${d.entity_type} matched ${JSON.stringify(d.query)}.`,

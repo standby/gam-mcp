@@ -2,27 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { executeReport, executeReportRows } from '../src/report-exec.js';
 import { createReportCache, type ReportCache } from '../src/cache.js';
 import { definitionHash, reportName } from '../src/report-key.js';
-import { createUsageCounters, instrumentGamClient, type UsageCounters } from '../src/usage.js';
 import { reachReportTool } from '../src/tools/reach_report.js';
 import { REACH_NON_ADDITIVE_WARNING } from '../src/report-warnings.js';
 import { createLogger } from '../src/log.js';
-import type { MockState } from '../src/gam-client.js';
-import type { ToolContext } from '../src/report-tool-builder.js';
-import { definitionFor, makeCtx, NETWORK, ok } from './helpers.js';
+import { counted, definitionFor, makeCtx, NETWORK, ok } from './helpers.js';
 
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
 const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
 const request = { tool: 'test', query, dateRange: RANGE, summary: 'S' };
 const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ AD_UNIT_ID: i + 1, IMPRESSIONS: i }));
 const result = (run: number) => `networks/${NETWORK}/reports/1/results/${run}`;
-
-// A context over the mock client that counts every client call.
-function counted(state: MockState, over: Partial<ToolContext>): { ctx: ToolContext; counters: UsageCounters } {
-  const counters = createUsageCounters();
-  const ctx = makeCtx(state, over);
-  ctx.client = instrumentGamClient(ctx.client, counters);
-  return { ctx, counters };
-}
 
 describe('the report path uses the result cache (spec §2.5)', () => {
   it('E1: a hit fetches a page of the cached result and runs nothing', async () => {
