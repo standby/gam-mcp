@@ -56,7 +56,7 @@ describe('HTTP client disconnect (spec §2.6)', () => {
       },
     );
     ctx.client = instrumentGamClient(ctx.client, counters);
-    const handle = await connectHttp(() => buildMcpServer(ctx, { networkCode: NETWORK }), { port: 0, logger: ctx.logger });
+    const handle = await connectHttp(() => buildMcpServer(ctx, { mode: 'http' }), { port: 0, logger: ctx.logger });
     try {
       const first = post(handle.port, call(1), abort.signal).then((r) => r.text()).catch(() => 'aborted');
       await polling.opened; // the run is between two polls

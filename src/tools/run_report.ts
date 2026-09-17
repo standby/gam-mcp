@@ -8,7 +8,7 @@ import {
   SUPPORTED_REPORT_TYPES,
 } from '../schema.js';
 import { executeReport } from '../report-exec.js';
-import type { ToolDefinition } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
 import { dateRangeInput, filterInput } from '../tool-input.js';
@@ -42,6 +42,7 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
   description:
     'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns the first page of rows with provenance; when more rows exist, pass next_cursor to fetch_report_page. Asking only for reach metrics (UNIQUE_VISITORS, REACH_IMPRESSIONS, AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR) switches GAM to its REACH report type automatically; those cannot be mixed with historical metrics in one call.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx) {
     // Rewrite alias dimension names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE)
     // to their canonical REST names before validating, so familiar names don't

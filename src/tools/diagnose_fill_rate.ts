@@ -4,7 +4,7 @@ import { numOr0, pct } from '../report-run.js';
 import { lastDays, previousPeriod } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Diagnostic vocabulary the tool emits. Single primary cause per row — the
@@ -52,6 +52,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
     'Filter by ad_unit_query (substring on AD_UNIT_NAME) or ad_unit_ids; without either, the tool diagnoses the network-wide top offenders ranked by unfilled-impression volume. ' +
     'Each row carries the supporting funnel ratios so the attribution is auditable.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     try {
       const baseRange = lastDays(input.lookback_days, ctx.timezone, ctx.now);

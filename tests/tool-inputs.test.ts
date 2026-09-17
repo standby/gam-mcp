@@ -3,14 +3,14 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { buildMcpServer } from '../src/server.js';
 import { ALL_TOOLS } from '../src/tools/index.js';
 import type { JsonSchema } from '../src/json-schema.js';
-import { connectClient, NETWORK, payloadOf } from './helpers.js';
+import { connectClient, payloadOf } from './helpers.js';
 import { argsFor, toolWorld, VALID_ARGS } from './tool-table.js';
 
 let client: Client;
 let listed: { name: string; inputSchema: JsonSchema }[];
 
 beforeAll(async () => {
-  client = await connectClient(buildMcpServer(toolWorld(), { networkCode: NETWORK }));
+  client = await connectClient(buildMcpServer(toolWorld(), { mode: 'stdio' }));
   listed = (await client.listTools()).tools as typeof listed;
 });
 

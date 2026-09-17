@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 
 // Resource paths GAM embeds inside a line item's targeting. Only these
 // collections carry a label worth resolving; every other string passes
@@ -36,6 +36,7 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
     'No reporting dimension exposes a targeting expression, so this is the only way to see what a line item ' +
     'targets: read it here rather than inferring it from delivery data. Read-only.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     const fetched = await Promise.all(
       input.ids.map(async (id) => ({ id, raw: await ctx.client.getResource(`lineItems/${id}`) })),

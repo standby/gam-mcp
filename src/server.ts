@@ -9,7 +9,8 @@ import {
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createRequire } from 'node:module';
-import { ALL_TOOLS } from './tools/index.js';
+import type { Readable, Writable } from 'node:stream';
+import { toolsFor, type TransportMode } from './tools/index.js';
 import { GAM_SCHEMA } from './schema.js';
 import { PROMPTS, renderPrompt } from './prompts.js';
 import type { ToolContext, ToolDefinition } from './report-tool-builder.js';
@@ -19,8 +20,8 @@ import { describeInputError } from './tool-input.js';
 
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
-export function listToolNames(): string[] {
-  return ALL_TOOLS.map((t) => t.name);
+export function listToolNames(mode: TransportMode = 'stdio'): string[] {
+  return toolsFor(mode).map((t) => t.name);
 }
 
 type ResourceDef = {
@@ -55,12 +56,19 @@ export function listResources(): ResourceDef[] {
   return RESOURCES;
 }
 
-function networkResource(networkCode: string, timezone: string): ResourceDef {
+function networkResource(ctx: ToolContext): ResourceDef {
   return {
     uri: 'gam://network',
     name: 'GAM network identity',
-    description: 'Network code and configured timezone this MCP is reporting on.',
-    body: () => ({ network_code: networkCode, timezone }),
+    description:
+      'The network this MCP reports on, its currency, the time zone GAM counts report days in, ' +
+      'and the time zone dates are chosen in (GAM_TIMEZONE).',
+    body: () => ({
+      network_code: ctx.networkCode,
+      currency_code: ctx.currencyCode,
+      report_time_zone: ctx.reportTimeZone,
+      date_time_zone: ctx.timezone,
+    }),
   };
 }
 
@@ -80,30 +88,31 @@ export function installStdoutGuard(): () => void {
   return () => { process.stdout.write = original; };
 }
 
-// Build the MCP Server with every capability and tool registered, but don't
-// connect a transport yet. Callers choose how to connect (stdio, HTTP, etc.)
-// — this split lets us keep the existing stdio entrypoint unchanged while
-// supporting alternate transports.
-export function buildMcpServer(
-  ctx: ToolContext,
-  opts: { networkCode: string; tools?: ToolDefinition[] } = { networkCode: '' },
-): Server {
-  const tools = opts.tools ?? ALL_TOOLS;
+export type ServerOptions = {
+  // Which transport the server is built for; it decides the tool set.
+  mode: TransportMode;
+  // Replaces the mode's tool set (tests).
+  tools?: ToolDefinition[];
+};
+
+// Build the MCP Server with every capability and the mode's tools
+// registered, but don't connect a transport yet: stdio connects one server,
+// HTTP builds one per request.
+export function buildMcpServer(ctx: ToolContext, opts: ServerOptions): Server {
+  const tools = opts.tools ?? toolsFor(opts.mode);
   const server = new Server(
     { name: 'gam-mcp', version: pkg.version },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
   );
 
-  const resources = [
-    ...RESOURCES,
-    ...(opts.networkCode ? [networkResource(opts.networkCode, ctx.timezone)] : []),
-  ];
+  const resources = [...RESOURCES, networkResource(ctx)];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: tools.map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: toJsonSchema(t.input),
+      annotations: t.annotations,
     })),
   }));
 
@@ -197,11 +206,12 @@ export function buildMcpServer(
   return server;
 }
 
-export async function startMcpServer(
+// Serves over stdio: this process's stdin and stdout, or the streams given.
+export async function connectStdio(
   ctx: ToolContext,
-  opts: { networkCode: string } = { networkCode: '' },
-): Promise<void> {
-  const server = buildMcpServer(ctx, opts);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  io: { stdin: Readable; stdout: Writable } = { stdin: process.stdin, stdout: process.stdout },
+): Promise<Server> {
+  const server = buildMcpServer(ctx, { mode: 'stdio' });
+  await server.connect(new StdioServerTransport(io.stdin, io.stdout));
+  return server;
 }

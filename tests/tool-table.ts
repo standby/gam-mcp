@@ -76,6 +76,50 @@ export const VALID_ARGS: Record<string, Record<string, unknown>> = {
   delete_saved_query: { name: 'weekly_units' },
 };
 
+// What each tool must declare (spec §3.4, H2). Tools that read GAM are
+// open-world; tools that never leave the process say so.
+const GAM = { readOnlyHint: true, openWorldHint: true };
+const LOCAL = { readOnlyHint: true, openWorldHint: false };
+const WRITES = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
+
+export const ANNOTATIONS: Record<string, Record<string, boolean>> = {
+  lookup: GAM,
+  describe_schema: LOCAL,
+  describe_line_item: GAM,
+  run_report: GAM,
+  fetch_report_page: GAM,
+  revenue_summary: GAM,
+  top_advertisers: GAM,
+  top_line_items: GAM,
+  pacing_status: GAM,
+  fill_rate: GAM,
+  inventory_breakdown: GAM,
+  revenue_trend: GAM,
+  compare_periods: GAM,
+  find_anomalies: GAM,
+  kv_breakdown: GAM,
+  kv_report: GAM,
+  bidder_breakdown: GAM,
+  yield_breakdown: GAM,
+  video_breakdown: GAM,
+  viewability_breakdown: GAM,
+  reach_report: GAM,
+  ad_speed: GAM,
+  sell_through: GAM,
+  consent_messaging: GAM,
+  find_unused_ad_units: GAM,
+  diagnose_fill_rate: GAM,
+  diagnose_floor_pricing: GAM,
+  health_check: GAM,
+  usage_stats: LOCAL,
+  save_query: WRITES,
+  list_saved_queries: LOCAL,
+  run_saved_query: GAM,
+  delete_saved_query: WRITES,
+};
+
+export const SAVED_QUERY_TOOLS = ['save_query', 'list_saved_queries', 'run_saved_query', 'delete_saved_query'];
+
 // A copy of a tool's row; throws for a tool without one.
 export function argsFor(tool: string): Record<string, unknown> {
   const args = VALID_ARGS[tool];

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { gamError } from '../errors.js';
 import { validateCombo } from '../schema.js';
 import { runReportTool } from './run_report.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, READS_LOCAL, WRITES_LOCAL, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 import { dateRangeInput, filterInput } from '../tool-input.js';
 
@@ -41,6 +41,7 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
     'Set replace=true to overwrite an existing name (default refuses). ' +
     'Storage location is the file pointed to by GAM_SAVED_QUERIES_FILE (default: ${XDG_CONFIG_HOME:-$HOME/.config}/gam-mcp/saved-queries.json).',
   input: saveInput,
+  annotations: WRITES_LOCAL,
   async handler(input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
@@ -81,6 +82,7 @@ export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
   name: 'list_saved_queries',
   description: 'List all saved query templates with their names, descriptions, and save timestamps.',
   input: listInput,
+  annotations: READS_LOCAL,
   async handler(_input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
@@ -109,6 +111,7 @@ export const runSavedQueryTool: ToolDefinition<typeof runInput> = {
   description:
     'Replay a previously saved query against a fresh date_range. The saved template provides dimensions/metrics/filters/custom_dimension_key_ids; you supply the time window. Equivalent to calling run_report with the saved fields merged in.',
   input: runInput,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
@@ -148,6 +151,7 @@ export const deleteSavedQueryTool: ToolDefinition<typeof deleteInput> = {
   name: 'delete_saved_query',
   description: 'Delete a saved query template by name. Returns success even if the name did not exist.',
   input: deleteInput,
+  annotations: WRITES_LOCAL,
   async handler(input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });

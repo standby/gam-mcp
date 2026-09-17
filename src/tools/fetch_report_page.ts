@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { fetchReportPage } from '../report-exec.js';
-import type { ToolDefinition } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition } from '../report-tool-builder.js';
 
 const inputSchema = z.object({
   cursor: z.string().min(1).describe('The next_cursor value from an earlier report result, passed back unchanged.'),
@@ -13,5 +13,6 @@ export const fetchReportPageTool: ToolDefinition<typeof inputSchema> = {
     'Each page carries the same provenance as the first page and its own next_cursor until the last page. ' +
     'If GAM has discarded the result, re-run the original tool.',
   input: inputSchema,
+  annotations: READS_GAM,
   handler: (input, ctx) => fetchReportPage(ctx, input.cursor),
 };

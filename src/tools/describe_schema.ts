@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { GAM_SCHEMA, REPORT_TYPES, SUPPORTED_REPORT_TYPES } from '../schema.js';
-import type { ToolDefinition } from '../report-tool-builder.js';
+import { READS_LOCAL, type ToolDefinition } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 
 // GAM declares ~1290 dimensions and metrics. Returning all of them with prose
@@ -39,6 +39,7 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
     'combine — e.g. KEY_VALUES_NAME ⊥ AD_REQUESTS. That matrix is best-effort: an empty ' +
     '`incompatible_with` does not guarantee GAM will accept the combination.',
   input: inputSchema,
+  annotations: READS_LOCAL,
   async handler(input, ctx) {
     const filtered = input.report_type || input.family || input.search;
     const withDescriptions = input.include_descriptions ?? Boolean(filtered);

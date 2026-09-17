@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_LOCAL, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 
 const inputSchema = z.object({}).strict();
@@ -11,6 +11,7 @@ export const usageStatsTool: ToolDefinition<typeof inputSchema> = {
     'Session-to-date counters for this MCP server: number of GAM API calls by type, report-job count, cumulative report latency, and cache effectiveness. ' +
     'Useful for the LLM to self-pace ("you have run 12 reports this session") and for the analyst to spot redundant work via the cache-hit ratio.',
   input: inputSchema,
+  annotations: READS_LOCAL,
   async handler(_input, ctx: ToolContext) {
     const counters = ctx.usageCounters;
     if (!counters) {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { executeReport } from './report-exec.js';
 import type { GAMClient, ReportQuery } from './gam-client.js';
 import { rangeRuleFor, resolveDateRange, type DateRangeInput, type ResolvedRange } from './dates.js';
@@ -44,10 +45,18 @@ export type JsonEnvelope = { summary: string; [k: string]: unknown };
 // dropped (spec §3.1). A tool whose input is not strict does not typecheck.
 export type ToolInput = z.ZodObject<z.ZodRawShape, 'strict'>;
 
+// What a client may assume about a tool (spec §3.4). MCP reads an absent
+// openWorldHint as true, so tools that never leave this process say false.
+export const READS_GAM: ToolAnnotations = { readOnlyHint: true, openWorldHint: true };
+export const READS_LOCAL: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
+export const WRITES_LOCAL: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
+
 export type ToolDefinition<I extends ToolInput = ToolInput> = {
   name: string;
   description: string;
   input: I;
+  // Declared by every tool; a tool without annotations does not typecheck.
+  annotations: ToolAnnotations;
   handler(input: z.infer<I>, ctx: ToolContext): Promise<ResultEnvelope | JsonEnvelope | GamErrorEnvelope>;
 };
 
@@ -76,6 +85,9 @@ export function buildReportTool<I extends ReportToolInput>(
     name: cfg.name,
     description: cfg.description,
     input: cfg.input,
+    // Every report tool reads GAM and changes nothing a user of the network
+    // can see: the reports it creates are HIDDEN.
+    annotations: READS_GAM,
     async handler(input, ctx) {
       const query = cfg.buildQuery(input);
       const range = resolveDateRange(input.date_range, {

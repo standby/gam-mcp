@@ -4,7 +4,7 @@ import { resolveDateRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
 import { executeReport } from '../report-exec.js';
 import { makeKvResolver, parseKvPair } from '../kv-rewrite.js';
-import type { ToolDefinition } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
@@ -40,6 +40,7 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
   description:
     "High-level KV-narrowed report. Accepts kv='key=value' (e.g. 'channel_id=479'), date_range, and metrics; internally resolves the key via lookup, picks a CUSTOM_DIMENSION slot, and runs a report that's compatible with request-time metrics (AD_REQUESTS, AdX/AdSense, etc.) that GAM normally forbids alongside KEY_VALUES_NAME. Optionally narrows by ad_unit_id, ad_unit_name (exact displayName match), order_id, or line_item_id.",
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx) {
     const parsed = parseKvPair(input.kv);
     if (!parsed) {

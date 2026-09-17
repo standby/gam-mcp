@@ -35,7 +35,10 @@ import {
 } from './saved_queries.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
 
-export const ALL_TOOLS: ToolDefinition[] = [
+export type TransportMode = 'stdio' | 'http';
+
+// Tools every transport serves.
+const SHARED_TOOLS: ToolDefinition[] = [
   lookupTool,
   describeSchemaTool,
   describeLineItemTool,
@@ -65,8 +68,20 @@ export const ALL_TOOLS: ToolDefinition[] = [
   diagnoseFloorPricingTool,
   healthCheckTool,
   usageStatsTool,
+];
+
+// Saved queries live in a file on the machine the server runs on and are
+// shared by everyone it serves, so only stdio offers them (spec D-3, §3.5).
+const STDIO_ONLY_TOOLS: ToolDefinition[] = [
   saveQueryTool,
   listSavedQueriesTool,
   runSavedQueryTool,
   deleteSavedQueryTool,
 ];
+
+export function toolsFor(mode: TransportMode): ToolDefinition[] {
+  return mode === 'stdio' ? [...SHARED_TOOLS, ...STDIO_ONLY_TOOLS] : [...SHARED_TOOLS];
+}
+
+// Every tool this server has: the stdio set.
+export const ALL_TOOLS: ToolDefinition[] = toolsFor('stdio');

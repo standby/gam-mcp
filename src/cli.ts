@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { startMcpServer, buildMcpServer, installStdoutGuard } from './server.js';
+import { buildMcpServer, connectStdio, installStdoutGuard } from './server.js';
 import { connectHttp } from './http-transport.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js';
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
@@ -71,9 +71,9 @@ async function main(): Promise<void> {
   };
   if (httpPort !== null) {
     // A factory: stateless HTTP needs a fresh server per request, not one shared.
-    await connectHttp(() => buildMcpServer(ctx, { networkCode }), { port: httpPort, logger });
+    await connectHttp(() => buildMcpServer(ctx, { mode: 'http' }), { port: httpPort, logger });
   } else {
-    await startMcpServer(ctx, { networkCode });
+    await connectStdio(ctx);
   }
 }
 

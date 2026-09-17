@@ -3,7 +3,7 @@ import { gamError } from '../errors.js';
 import { lastDays } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const inputSchema = z.object({
@@ -28,6 +28,7 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
     'GAM reports only emit rows for inventory that had activity, so a missing ad unit means zero requests. ' +
     'Defaults: lookback_days=30 (avoids false positives on seasonally-quiet inventory), min_requests=0 (strict zero), max_units=1000.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     try {
       const actualRange = lastDays(input.lookback_days, ctx.timezone, ctx.now);

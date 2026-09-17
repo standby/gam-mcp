@@ -4,7 +4,7 @@ import { previousPeriod, previousYear, resolveDateRange, type ResolvedRange } fr
 import { validateCombo } from '../schema.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { dateField, dateRangeInput, filterInput, HISTORICAL_RANGE } from '../tool-input.js';
 
@@ -36,6 +36,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
     "Output rows carry <metric>, <metric>_prev, and <metric>_delta_pct (signed percent change; null when prev is 0 or row is new). " +
     "Sorted by the first metric's current-period value, descending. top_n caps result rows.",
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     const comboError = validateCombo({ dimensions: input.dimensions, metrics: input.metrics });
     if (comboError) {

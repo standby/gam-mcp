@@ -4,7 +4,7 @@ import { numOr0, pct } from '../report-run.js';
 import { lastDays } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Floor-pricing verdict per ad unit. GAM's REST reporting API exposes no
@@ -46,6 +46,7 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
     'IMPORTANT: GAM\'s REST reporting API does not expose the actual floor / Unified Pricing Rule value, so this is INFERRED, not a floor readout — ' +
     'confirm against your UPRs in the GAM UI before acting. Scope with ad_unit_query / ad_unit_ids; without either it analyzes network-wide top inventory.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     try {
       const range = lastDays(input.lookback_days, ctx.timezone, ctx.now);

@@ -5,7 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '../src/server.js';
 import { gamError, type GamErrorCode } from '../src/errors.js';
 import type { ToolDefinition } from '../src/report-tool-builder.js';
-import { makeCtx, NETWORK } from './helpers.js';
+import { makeCtx } from './helpers.js';
 
 const CODES: GamErrorCode[] = [
   'INVALID_DATE_RANGE', 'INVALID_INPUT', 'AUTH_FAILED', 'QUOTA_EXCEEDED', 'REPORT_FAILED',
@@ -39,7 +39,7 @@ const fine: ToolDefinition<z.ZodTypeAny> = {
 };
 
 async function connect() {
-  const server = buildMcpServer(makeCtx(), { networkCode: NETWORK, tools: [returnsError, throws, fine, strict] });
+  const server = buildMcpServer(makeCtx(), { mode: 'stdio', tools: [returnsError, throws, fine, strict] });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0' });
   await Promise.all([server.connect(a), client.connect(b)]);

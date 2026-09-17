@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 
 const inputSchema = z.object({}).strict();
@@ -11,6 +11,7 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
     'and has permission to read the configured network. Calls listEntities for one company (lowest-cost GAM read), ' +
     'reports pass/fail and round-trip latency. Useful first call after setup or whenever the LLM sees mysterious tool errors.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(_input, ctx: ToolContext) {
     const start = Date.now();
     try {

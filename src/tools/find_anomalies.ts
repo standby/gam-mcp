@@ -3,7 +3,7 @@ import { gamError } from '../errors.js';
 import { lastDays, previousPeriod, resolveDateRange } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const inputSchema = z.object({
@@ -33,6 +33,7 @@ export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
     "threshold_pct *percentage points* (default 5pp). Low-volume ad units (<10k imps either side) are filtered. " +
     "All kinds return the top_n worst rows ranked by severity.",
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx) {
     try {
       switch (input.kind) {

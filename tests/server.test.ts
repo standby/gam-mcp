@@ -41,6 +41,12 @@ describe('server registry', () => {
     ]);
   });
 
+  it('HTTP mode lists every tool but the four saved-query tools', () => {
+    const saved = ['delete_saved_query', 'list_saved_queries', 'run_saved_query', 'save_query'];
+    expect(listToolNames('http').sort()).toEqual(listToolNames().filter((n) => !saved.includes(n)).sort());
+    expect(listToolNames('stdio')).toEqual(listToolNames());
+  });
+
   it('stdout guard redirects writes to stderr', () => {
     const restore = installStdoutGuard();
     const errs: string[] = [];
