@@ -3,8 +3,9 @@ import type {
   EntityType,
   OperationStatus,
   Entity,
+  StoredReport,
 } from './gam-client.js';
-import { GamHttpError, ResultUnavailableError } from './gam-client.js';
+import { GamHttpError, ReportFilterRejectedError, ResultUnavailableError } from './gam-client.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 import type { ReportRow } from './values.js';
@@ -91,6 +92,19 @@ function namesResult(err: GamHttpError, result: string): boolean {
   if (err.detail.includes(result)) return true;
   const id = result.slice(result.lastIndexOf('/') + 1);
   return /^\d+$/.test(id) && new RegExp(`results/${id}(?!\\d)`).test(err.detail);
+}
+
+type RawReport = { name: string; displayName?: string; reportDefinition?: Partial<ReportDefinition> };
+
+// GAM's JSON omits empty lists, so a stored definition can lack dimensions or
+// metrics; the rest of the server relies on both being present.
+function toStoredReport(r: RawReport): StoredReport {
+  const d = r.reportDefinition ?? {};
+  return {
+    name: r.name,
+    ...(r.displayName !== undefined && { displayName: r.displayName }),
+    definition: { ...d, dimensions: d.dimensions ?? [], metrics: d.metrics ?? [] } as ReportDefinition,
+  };
 }
 
 export function createRestGamClient(opts: {
@@ -303,8 +317,23 @@ export function createRestGamClient(opts: {
       const res = await fetchImpl(`${BASE}/${report}`);
       if (res.status === 404) return null;
       if (!res.ok) throw await httpError('getReport', res);
-      const r = await res.json() as { name: string; displayName?: string; reportDefinition: ReportDefinition };
-      return { name: r.name, ...(r.displayName !== undefined && { displayName: r.displayName }), definition: r.reportDefinition };
+      return toStoredReport(await res.json() as RawReport);
+    },
+
+    async listReports({ displayName }: { displayName: string }) {
+      const out: StoredReport[] = [];
+      let pageToken: string | undefined;
+      do {
+        const params = new URLSearchParams({ filter: `displayName = ${JSON.stringify(displayName)}`, pageSize: '100' });
+        if (pageToken) params.set('pageToken', pageToken);
+        const res = await fetchImpl(`${networkPath}/reports?${params}`);
+        if (res.status === 400) throw new ReportFilterRejectedError(res.status);
+        if (!res.ok) throw await httpError('listReports', res);
+        const body = await res.json() as { reports?: RawReport[]; nextPageToken?: string };
+        out.push(...(body.reports ?? []).map(toStoredReport));
+        pageToken = body.nextPageToken || undefined;
+      } while (pageToken);
+      return out;
     },
   };
 }

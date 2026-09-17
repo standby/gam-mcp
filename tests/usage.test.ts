@@ -57,4 +57,11 @@ describe('UsageCounters + instrumentGamClient', () => {
     expect(counters.report_pages_fetched).toBe(1);
     expect(counters.report_lookups).toBe(1);
   });
+
+  it('counts a report listing as a report lookup', async () => {
+    const counters = createUsageCounters();
+    const wrapped = instrumentGamClient(createMockGamClient(), counters);
+    await wrapped.listReports({ displayName: 'gam-mcp 0000000000000000' });
+    expect(counters.report_lookups).toBe(1);
+  });
 });

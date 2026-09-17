@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRestGamClient } from '../src/gam-client-rest.js';
-import { GamHttpError, ResultUnavailableError } from '../src/gam-client.js';
+import { GamHttpError, ReportFilterRejectedError, ResultUnavailableError } from '../src/gam-client.js';
 import { createFakeGam, int, dbl, str } from './fake-gam.js';
 import { definitionFor } from './helpers.js';
 import { definitionHash, reportName } from '../src/report-key.js';
@@ -140,5 +140,58 @@ describe('REST client report methods', () => {
     delete gam.network.currencyCode;
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
     await expect(client.getNetwork()).rejects.toThrow('GAM returned no currencyCode');
+  });
+
+  it('lists reports by exact display name', async () => {
+    const gam = createFakeGam();
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    const a = definitionFor({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, RANGE);
+    const b = definitionFor({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, { start: '2026-09-03', end: '2026-09-04' });
+    const { report } = await client.defineReport(a);
+    await client.defineReport(b);
+    const name = reportName(definitionHash(a));
+    expect(await client.listReports({ displayName: name })).toEqual([{ name: report, displayName: name, definition: a }]);
+    const path = gam.requests.at(-1)!.path;
+    expect(path.startsWith('networks/1234/reports?')).toBe(true);
+    expect(new URLSearchParams(path.split('?')[1]).get('filter')).toBe(`displayName = "${name}"`);
+    expect(await client.listReports({ displayName: 'gam-mcp 0000000000000000' })).toEqual([]);
+  });
+
+  it('follows list pages', async () => {
+    const gam = createFakeGam();
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    const a = definitionFor({ dimensions: ['DATE'], metrics: ['IMPRESSIONS'] }, RANGE);
+    const name = reportName(definitionHash(a));
+    const { report } = await client.defineReport(a);
+    gam.inject('GET', /^networks\/1234\/reports\?/, {
+      status: 200,
+      body: {
+        reports: [{ name: 'networks/1234/reports/9', displayName: name, reportDefinition: a }],
+        nextPageToken: 'p2',
+      },
+    });
+    const listed = await client.listReports({ displayName: name });
+    expect(listed.map((r) => r.name)).toEqual(['networks/1234/reports/9', report]);
+    expect(new URLSearchParams(gam.requests.at(-1)!.path.split('?')[1]).get('pageToken')).toBe('p2');
+  });
+
+  it('reports a refused name filter as ReportFilterRejectedError', async () => {
+    const gam = createFakeGam();
+    gam.inject('GET', /^networks\/1234\/reports\?/, { status: 400, body: { error: { code: 400, status: 'INVALID_ARGUMENT' } } });
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    await expect(client.listReports({ displayName: 'gam-mcp 0000000000000000' })).rejects.toBeInstanceOf(ReportFilterRejectedError);
+  });
+
+  it('reads a stored definition without empty lists as having them', async () => {
+    const gam = createFakeGam();
+    gam.reports.set('networks/1234/reports/5', {
+      name: 'networks/1234/reports/5',
+      displayName: 'gam-mcp 0000000000000005',
+      reportDefinition: { metrics: ['IMPRESSIONS'], reportType: 'HISTORICAL' },
+    });
+    const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
+    expect((await client.getReport('networks/1234/reports/5'))?.definition)
+      .toEqual({ dimensions: [], metrics: ['IMPRESSIONS'], reportType: 'HISTORICAL' });
+    expect((await client.listReports({ displayName: 'gam-mcp 0000000000000005' }))[0].definition.dimensions).toEqual([]);
   });
 });

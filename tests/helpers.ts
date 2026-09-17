@@ -1,7 +1,9 @@
-import { createMockGamClient, type DateRange, type MockState, type ReportQuery } from '../src/gam-client.js';
+import { createMockGamClient, type DateRange, type GAMClient, type MockState, type ReportQuery } from '../src/gam-client.js';
+import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { reportDefinition, type ReportDefinition } from '../src/report-definition.js';
 import { noopLogger } from '../src/log.js';
 import type { ToolContext } from '../src/report-tool-builder.js';
+import type { FakeGam } from './fake-gam.js';
 
 export const NETWORK = '1234';
 
@@ -26,4 +28,17 @@ export function makeCtx(state: MockState = {}, over: Partial<ToolContext> = {}):
 // The definition the report path builds for a query, and hands to defineReport.
 export function definitionFor(query: ReportQuery, range: DateRange): ReportDefinition {
   return reportDefinition(query, range, TEST_NETWORK);
+}
+
+// A REST client over a fake GAM. `retries` mirrors how a real process wraps
+// its fetch (withRetries, baseDelayMs 1 so tests never wait on real time).
+export function clientFor(gam: FakeGam, retries = false): GAMClient {
+  const fetchImpl = retries ? withRetries(gam.fetch, { baseDelayMs: 1 }) : gam.fetch;
+  return createRestGamClient({ networkCode: NETWORK, fetchImpl });
+}
+
+// A ToolContext over that REST client; a fresh one stands for a new process,
+// since per-client memory is keyed by the client object.
+export function restCtx(gam: FakeGam, over: Partial<ToolContext> = {}, retries = false): ToolContext {
+  return makeCtx({}, { client: clientFor(gam, retries), ...over });
 }

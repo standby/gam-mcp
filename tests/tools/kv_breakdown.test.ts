@@ -12,6 +12,8 @@ function spyClient(onDefine: (definition: ReportDefinition) => void): GAMClient 
   return {
     async listEntities() { return []; },
     async getResource() { return null; },
+    async getNetwork() { return { networkCode: NETWORK, timeZone: 'Asia/Tokyo', currencyCode: 'USD' }; },
+    async listReports() { return []; },
     async defineReport(definition) {
       onDefine(definition);
       return { report: `networks/${NETWORK}/reports/1` };

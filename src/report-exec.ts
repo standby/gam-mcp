@@ -17,6 +17,8 @@ import { envelope, inferSchema, type DateSpan, type InputReport, type ResultEnve
 import { Lru } from './lru.js';
 import { definitionWarnings } from './report-warnings.js';
 import { zoneWarning } from './zones.js';
+import { definitionHash } from './report-key.js';
+import { findOrCreateReport } from './report-reuse.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
 export const DEFAULT_PAGE_ROWS = 5_000;
@@ -105,21 +107,13 @@ function pollFailure(ctx: ToolContext, operation: string, e: unknown): GamErrorE
   return err;
 }
 
-// Creates the report for a definition, runs it and waits for the result.
+// Finds or creates the report for a definition, runs it and waits for the result.
 async function runToResult(
   ctx: ToolContext,
   definition: ReportDefinition,
   tool: string,
 ): Promise<{ report: string; result: string } | GamErrorEnvelope> {
-  const range = definitionRange(definition);
-  ctx.logger.debug('report.create', {
-    tool,
-    dimensions: definition.dimensions,
-    metrics: definition.metrics,
-    date_start: range?.start ?? null,
-    date_end: range?.end ?? null,
-  });
-  const { report } = await ctx.client.defineReport(definition);
+  const report = await findOrCreateReport(ctx, definition, definitionHash(definition), tool);
   const { operation } = await ctx.client.runReport(report);
   const done = await pollUntilDone(ctx, operation);
   return 'error' in done ? done : { report, result: done.result };

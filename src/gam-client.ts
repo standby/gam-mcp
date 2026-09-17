@@ -87,6 +87,14 @@ export class GamHttpError extends Error {
   }
 }
 
+// reports.list refused the displayName filter.
+export class ReportFilterRejectedError extends Error {
+  constructor(readonly status: number) {
+    super(`GAM refused the report name filter (HTTP ${status})`);
+    this.name = 'ReportFilterRejectedError';
+  }
+}
+
 export type GAMClient = {
   listEntities: (q: {
     entity_type: EntityType;
@@ -118,6 +126,9 @@ export type GAMClient = {
   fetchRows: (result: string, page: { pageSize: number; pageToken?: string }) => Promise<RowsPage>;
   // The stored definition of a report, or null if GAM has no such report.
   getReport: (report: string) => Promise<StoredReport | null>;
+  // Every report whose displayName is exactly this name, with its stored
+  // definition. Throws ReportFilterRejectedError if GAM refuses the filter.
+  listReports: (q: { displayName: string }) => Promise<StoredReport[]>;
 };
 
 // ------------------------- in-memory mock for tests ------------------------
@@ -270,6 +281,11 @@ export function createMockGamClient(state: MockState = {}): GAMClient {
     async getReport(report) {
       const d = defined.get(report);
       return d ? { name: report, displayName: d.displayName, definition: d.definition } : null;
+    },
+    async listReports({ displayName }) {
+      return [...defined.entries()]
+        .filter(([, d]) => d.displayName === displayName)
+        .map(([name, d]) => ({ name, displayName: d.displayName, definition: d.definition }));
     },
   };
 }

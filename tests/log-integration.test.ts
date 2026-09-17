@@ -121,6 +121,8 @@ describe('log integration', () => {
     const spyClient: GAMClient = {
       async listEntities() { return []; },
       async getResource() { return null; },
+      async getNetwork() { return { networkCode: '1234', timeZone: 'Asia/Tokyo', currencyCode: 'USD' }; },
+      async listReports() { return []; },
       async defineReport() { return { report: 'networks/1234/reports/1' }; },
       async runReport() { return { operation: `op/${SENTINEL}` }; },
       async pollOperation() {
@@ -139,10 +141,12 @@ describe('log integration', () => {
       },
       async getReport() { return null; },
     };
-    await topAdvertisersTool.handler(
+    const r = await topAdvertisersTool.handler(
       { date_range: { start: '2026-04-01', end: '2026-04-29' }, top_n: 10, metric: 'revenue' },
       makeCtx({}, { client: spyClient, logger: rec.logger, timezone: 'America/Los_Angeles' }),
     );
+    // The call must succeed, or the assertion below proves nothing.
+    expect(r).not.toHaveProperty('error');
     // The operation_name path DOES legitimately contain the sentinel
     // (because we stashed it in operation_name to exercise the spy), and
     // operation_name IS logged. So this end-to-end test specifically pins

@@ -85,6 +85,15 @@ describe('mock client typed report path', () => {
     if (done.state !== 'done') throw new Error('expected done');
     await expect(client.fetchRows(done.result, { pageSize: 5 })).rejects.toThrow('no longer available');
   });
+
+  it('lists the reports it defined by display name', async () => {
+    const client = createMockGamClient({ reports: [fixture] });
+    const definition = definitionFor(query, range);
+    const { report } = await client.defineReport(definition);
+    const name = reportName(definitionHash(definition));
+    expect(await client.listReports({ displayName: name })).toEqual([{ name: report, displayName: name, definition }]);
+    expect(await client.listReports({ displayName: 'gam-mcp ffffffffffffffff' })).toEqual([]);
+  });
 });
 
 describe('mock client network', () => {

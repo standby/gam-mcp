@@ -85,5 +85,9 @@ export function instrumentGamClient(client: GAMClient, counters: UsageCounters):
       counters.report_lookups += 1;
       return client.getReport(report);
     },
+    async listReports(q) {
+      counters.report_lookups += 1;
+      return client.listReports(q);
+    },
   };
 }
