@@ -12,9 +12,9 @@ import { createRequire } from 'node:module';
 import { ALL_TOOLS } from './tools/index.js';
 import { GAM_SCHEMA } from './schema.js';
 import { PROMPTS, renderPrompt } from './prompts.js';
-import type { ToolContext } from './report-tool-builder.js';
-import { gamError } from './errors.js';
-import { z } from 'zod';
+import type { ToolContext, ToolDefinition } from './report-tool-builder.js';
+import { gamError, isGamError } from './errors.js';
+import { z, type ZodTypeAny } from 'zod';
 
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -85,8 +85,9 @@ export function installStdoutGuard(): () => void {
 // supporting alternate transports.
 export function buildMcpServer(
   ctx: ToolContext,
-  opts: { networkCode: string } = { networkCode: '' },
+  opts: { networkCode: string; tools?: ToolDefinition<ZodTypeAny>[] } = { networkCode: '' },
 ): Server {
+  const tools = opts.tools ?? ALL_TOOLS;
   const server = new Server(
     { name: 'gam-mcp', version: pkg.version },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
@@ -98,7 +99,7 @@ export function buildMcpServer(
   ];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: ALL_TOOLS.map((t) => ({
+    tools: tools.map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: zodToJsonSchema(t.input),
@@ -160,7 +161,7 @@ export function buildMcpServer(
     ctx.logger.info('tool.call.start', { tool: toolName, arg_keys: argKeys });
     const start = Date.now();
 
-    const tool = ALL_TOOLS.find((t) => t.name === toolName);
+    const tool = tools.find((t) => t.name === toolName);
     if (!tool) {
       const err = gamError('INVALID_INPUT', { reason: `Unknown tool ${toolName}` });
       ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
@@ -175,14 +176,12 @@ export function buildMcpServer(
     try {
       const result = await tool.handler(parsed.data, ctx);
       const duration_ms = Date.now() - start;
-      // Result is either an envelope or a gamError; check the discriminator.
-      if (result && typeof result === 'object' && 'error' in result) {
-        const e = (result as { error: { code: string; message: string } }).error;
-        ctx.logger.warn('tool.call.error', { tool: toolName, error_code: e.code, reason: e.message });
+      if (isGamError(result)) {
+        ctx.logger.warn('tool.call.error', { tool: toolName, error_code: result.error.code, reason: result.error.message });
         ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
-      } else {
-        ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: true });
+        return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: true };
       }
+      ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: true });
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (e) {
       const duration_ms = Date.now() - start;
