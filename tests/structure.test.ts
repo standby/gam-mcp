@@ -49,6 +49,17 @@ describe('structure', () => {
     expect(regions).toEqual(['defineReport', 'runReport', 'withRetries']);
   });
 
+  // Any other HTTP write method, written as a string literal in any quotes.
+  const OTHER_WRITE = /(['"`])(PUT|PATCH|DELETE)\1/;
+
+  it('H7: no string literal PUT, PATCH or DELETE appears in src/', () => {
+    for (const q of [`'`, `"`, '`']) {
+      for (const m of ['PUT', 'PATCH', 'DELETE']) expect(OTHER_WRITE.test(`method: ${q}${m}${q}`)).toBe(true);
+    }
+    expect(OTHER_WRITE.test("method: 'GET'")).toBe(false);
+    expect(sources.filter((s) => OTHER_WRITE.test(s.text)).map((s) => s.file)).toEqual([]);
+  });
+
   it('H7: a fake GAM records every write other than create and run', async () => {
     const gam = createFakeGam();
     const url = (p: string) => `https://admanager.googleapis.com/v1/${p}`;
@@ -63,6 +74,23 @@ describe('structure', () => {
     expect(takeViolations()).toEqual([]);
   });
 
+  it('H7: a fake GAM reads the method and URL of a Request passed without init', async () => {
+    const gam = createFakeGam();
+    const url = (p: string) => `https://admanager.googleapis.com/v1/${p}`;
+    await gam.fetch(new Request(url('networks/1234/reports/1'), { method: 'DELETE' }));
+    await gam.fetch(new Request(url('networks/5678/reports'), {
+      method: 'POST',
+      body: JSON.stringify({ reportDefinition: { timeZoneSource: 'PUBLISHER', currencyCode: 'USD' } }),
+    }));
+    await gam.fetch(new Request(url('networks/1234/reports/1:run'), { method: 'POST', body: '{}' }));
+    expect(takeViolations()).toEqual(['DELETE networks/1234/reports/1', 'POST networks/5678/reports']);
+    expect(gam.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+      'DELETE networks/1234/reports/1',
+      'POST networks/5678/reports',
+      'POST networks/1234/reports/1:run',
+    ]);
+  });
+
   it('H7: the write guard flags a disallowed write and lets a clean log through', () => {
     // Permanent coverage of the guard's own logic (`findViolations`), not
     // routed through a fake GAM at all — this pins the check itself, not
@@ -70,15 +98,28 @@ describe('structure', () => {
     const dirty = [
       { method: 'PATCH', path: 'networks/1234/reports/1' },
       { method: 'POST', path: 'networks/1234/orders/9' },
+      { method: 'POST', path: 'networks/1234/reports/5:run/extra' },
+      { method: 'POST', path: 'networks/1234/reportsX' },
+      { method: 'POST', path: 'networks/5678/reports' },
+      { method: 'POST', path: 'networks/5678/reports/5:run' },
     ];
-    expect(findViolations(dirty)).toEqual(['PATCH networks/1234/reports/1', 'POST networks/1234/orders/9']);
+    expect(findViolations(dirty, '1234')).toEqual([
+      'PATCH networks/1234/reports/1',
+      'POST networks/1234/orders/9',
+      'POST networks/1234/reports/5:run/extra',
+      'POST networks/1234/reportsX',
+      'POST networks/5678/reports',
+      'POST networks/5678/reports/5:run',
+    ]);
 
     const clean = [
       { method: 'GET', path: 'networks/1234/reports/1' },
+      { method: 'GET', path: 'networks/5678/reports/1' },
       { method: 'POST', path: 'networks/1234/reports' },
+      { method: 'POST', path: 'networks/1234/reports?x=1' },
       { method: 'POST', path: 'networks/1234/reports/1:run' },
     ];
-    expect(findViolations(clean)).toEqual([]);
+    expect(findViolations(clean, '1234')).toEqual([]);
   });
 
   it('H7: every test file runs the write guard', () => {

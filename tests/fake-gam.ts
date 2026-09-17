@@ -10,17 +10,21 @@ export const dbl = (n: number): ReportValue => ({ doubleValue: n });
 export const str = (s: string): ReportValue => ({ stringValue: s });
 
 // H7 (spec §7.2): the only writes the client may send are creating a report
-// and running one. The guard below scans a request log for anything else —
-// whichever fake received it — and tests/setup.ts fails the test that sent
-// it. `findViolations` is the guard itself, exported so a permanent test can
-// exercise its logic directly against a fabricated log, without a fake GAM.
-const ALLOWED_POSTS = [/^networks\/\d+\/reports$/, /^networks\/\d+\/reports\/\d+:run$/];
+// in its own network and running one of that network's reports. The guard
+// below scans a request log for anything else — whichever fake received it —
+// and tests/setup.ts fails the test that sent it. `findViolations` is the
+// guard itself, exported so a permanent test can exercise its logic directly
+// against a fabricated log, without a fake GAM.
 const violations: string[] = [];
 
-export function findViolations(log: { method: string; path: string }[]): string[] {
+export function findViolations(log: { method: string; path: string }[], networkCode: string): string[] {
+  const allowedPosts = [
+    new RegExp(`^networks/${networkCode}/reports$`),
+    new RegExp(`^networks/${networkCode}/reports/\\d+:run$`),
+  ];
   return log.reduce<string[]>((found, { method, path }) => {
     const pathname = path.split('?')[0];
-    if (method !== 'GET' && !(method === 'POST' && ALLOWED_POSTS.some((re) => re.test(pathname)))) {
+    if (method !== 'GET' && !(method === 'POST' && allowedPosts.some((re) => re.test(pathname)))) {
       found.push(`${method} ${pathname}`);
     }
     return found;
@@ -165,12 +169,16 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
   }
 
   const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const method = (init?.method ?? 'GET').toUpperCase();
+    // fetch takes its URL, method and body from a Request unless init overrides them.
+    const request = input instanceof Request ? input : undefined;
+    const url = request ? request.url : String(input);
+    const method = (init?.method ?? request?.method ?? 'GET').toUpperCase();
     const path = url.startsWith(BASE) ? url.slice(BASE.length) : url;
-    const body = typeof init?.body === 'string' && init.body.length ? JSON.parse(init.body) : undefined;
+    let text = typeof init?.body === 'string' ? init.body : '';
+    if (request && init?.body === undefined) text = await request.clone().text();
+    const body = text.length ? JSON.parse(text) : undefined;
     requests.push({ method, path, ...(body !== undefined && { body }) });
-    violations.push(...findViolations([{ method, path }]));
+    violations.push(...findViolations([{ method, path }], code));
 
     // D5: every report is created in the network's zone and currency.
     const pathname = path.split('?')[0];
