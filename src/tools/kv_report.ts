@@ -2,12 +2,10 @@ import { z } from 'zod';
 import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
-import { readCsvGz } from '../output.js';
-import { join } from 'node:path';
+import { executeReport } from '../report-exec.js';
 import { makeKvResolver, parseKvPair } from '../kv-rewrite.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
-import type { ReportQuery, GAMClient, DateRange } from '../gam-client.js';
-import type { Logger } from '../log.js';
+import type { ReportQuery, DateRange } from '../gam-client.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -130,53 +128,6 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       `Resolved '${parsed.key}' to custom_targeting_key_id=${keyId}; filtering on CUSTOM_DIMENSION_0_VALUE='${parsed.value}'.`,
     ];
 
-    const cached = ctx.reportCache?.get(query, dateRange);
-    if (cached) return ctx.output!.fromInlineRows(cached, `${summary} (cached)`);
-
-    try {
-      ctx.logger.debug('report.create', {
-        tool: 'kv_report',
-        dimensions: query.dimensions,
-        metrics: query.metrics,
-        date_start: dateRange.start,
-        date_end: dateRange.end,
-      });
-      const op = await ctx.client.createReport(query, dateRange);
-      const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
-      if ('error' in status) return status;
-      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(status.download_url, dest);
-      if (ctx.reportCache) {
-        try {
-          const { rows } = await readCsvGz(dest);
-          ctx.reportCache.set(query, dateRange, rows);
-        } catch { /* cache best-effort */ }
-      }
-      return ctx.output!.fromCsvGzFile(dest, summary, warnings);
-    } catch (e) {
-      return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
-    }
+    return executeReport(ctx, { query, dateRange, summary, warnings });
   },
 };
-
-async function pollUntilDone(client: GAMClient, name: string, timeoutMs: number, logger: Logger) {
-  const start = Date.now();
-  let delay = 2000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await client.pollOperation(name);
-    const elapsed_ms = Date.now() - start;
-    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
-    if (s.state === 'done') {
-      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
-      return { download_url: s.download_url };
-    }
-    if (s.state === 'failed') {
-      logger.warn('report.failed', { operation: name, reason: s.reason });
-      return gamError('REPORT_FAILED', { reason: s.reason });
-    }
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
-  return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
-}

@@ -1,37 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { gzipSync } from 'node:zlib';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { runReportTool } from '../../src/tools/run_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
+import { makeCtx } from '../helpers.js';
 import type { GAMClient, ReportQuery } from '../../src/gam-client.js';
-
-const setup = () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rr-'));
-  const csv = 'advertiser_name,revenue\nAcme,1000\n';
-  return {
-    dir,
-    ctx: {
-      client: createMockGamClient({
-        reports: [{
-          query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
-          csvGz: gzipSync(Buffer.from(csv)),
-        }],
-      }),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'America/Los_Angeles',
-      logger: noopLogger(),
-      now: new Date('2026-04-30T12:00:00Z'),
-    },
-  };
-};
 
 describe('run_report', () => {
   it('runs a valid query', async () => {
-    const { ctx, dir } = setup();
+    const ctx = makeCtx(
+      {
+        reports: [{
+          query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
+          rows: [{ ADVERTISER_NAME: 'Acme', REVENUE: 1000 }],
+        }],
+      },
+      { timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') },
+    );
     const r = await runReportTool.handler(
       {
         dimensions: ['ADVERTISER_NAME'],
@@ -41,12 +24,11 @@ describe('run_report', () => {
       ctx,
     );
     if ('error' in r) throw new Error(JSON.stringify(r));
-    expect(r.row_count).toBe(1);
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.total_row_count).toBe(1);
   });
 
   it('rejects unknown dimension', async () => {
-    const { ctx, dir } = setup();
+    const ctx = makeCtx({}, { timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') });
     const r = await runReportTool.handler(
       {
         dimensions: ['NOT_A_DIMENSION'],
@@ -59,20 +41,22 @@ describe('run_report', () => {
     if ('error' in r) {
       expect((r.error as { code: string }).code).toBe('INVALID_INPUT');
     }
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('rewrites the CREATIVE_SIZE alias to RENDERED_CREATIVE_SIZE and warns', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rr-'));
-    const csv = 'rendered_creative_size,average_ecpm\n300x250,2.5\n';
-    const csvGz = gzipSync(Buffer.from(csv));
     let captured: ReportQuery | null = null;
-
+    const mock = createMockGamClient({
+      reports: [{
+        query: { dimensions: ['AD_UNIT_NAME', 'RENDERED_CREATIVE_SIZE'], metrics: ['AVERAGE_ECPM'] },
+        rows: [{ AD_UNIT_NAME: 'Homepage', RENDERED_CREATIVE_SIZE: '300x250', AVERAGE_ECPM: 2.5 }],
+      }],
+    });
     const client: GAMClient = {
-      async listEntities() { return []; },
-      async createReport(query) { captured = query; return { operation_name: 'op/1' }; },
-      async pollOperation() { return { state: 'done', download_url: 'mock://op/1' }; },
-      async downloadReport(_url, dest) { writeFileSync(dest, csvGz); return dest; },
+      ...mock,
+      defineReport: (query, dateRange) => {
+        captured = query;
+        return mock.defineReport(query, dateRange);
+      },
     };
 
     const r = await runReportTool.handler(
@@ -81,37 +65,29 @@ describe('run_report', () => {
         metrics: ['AVERAGE_ECPM'],
         date_range: { relative: 'last_7_days' as const },
       },
-      {
-        client,
-        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-        timezone: 'America/Los_Angeles',
-        logger: noopLogger(),
-        now: new Date('2026-04-30T12:00:00Z'),
-      },
+      makeCtx({}, { client, timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') }),
     );
     if ('error' in r) throw new Error(JSON.stringify(r));
     expect(captured).not.toBeNull();
     expect(captured!.dimensions).toEqual(['AD_UNIT_NAME', 'RENDERED_CREATIVE_SIZE']);
-    expect(r.warnings?.some((w) => w.includes('RENDERED_CREATIVE_SIZE'))).toBe(true);
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.warnings.some((w) => w.includes('RENDERED_CREATIVE_SIZE'))).toBe(true);
   });
 
   it('auto-rewrites KEY_VALUES_NAME filter + AD_REQUESTS to CUSTOM_DIMENSION_0_VALUE', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rr-'));
-    const csv = 'date,ad_requests\n2026-04-29,1000\n';
-    const csvGz = gzipSync(Buffer.from(csv));
     let captured: ReportQuery | null = null;
-
+    const mock = createMockGamClient({
+      entities: { custom_targeting_key: [{ id: 4242, name: 'channel_id', displayName: 'Channel ID' }] },
+      reports: [{
+        query: { dimensions: ['DATE'], metrics: ['AD_REQUESTS'] },
+        rows: [{ DATE: '2026-04-29', AD_REQUESTS: 1000 }],
+      }],
+    });
     const client: GAMClient = {
-      async listEntities({ entity_type, query }) {
-        if (entity_type === 'custom_targeting_key' && query === 'channel_id') {
-          return [{ id: 4242, name: 'channel_id', displayName: 'Channel ID' }];
-        }
-        return [];
+      ...mock,
+      defineReport: (query, dateRange) => {
+        captured = query;
+        return mock.defineReport(query, dateRange);
       },
-      async createReport(query) { captured = query; return { operation_name: 'op/1' }; },
-      async pollOperation() { return { state: 'done', download_url: 'mock://op/1' }; },
-      async downloadReport(_url, dest) { writeFileSync(dest, csvGz); return dest; },
     };
 
     const r = await runReportTool.handler(
@@ -121,13 +97,7 @@ describe('run_report', () => {
         date_range: { start: '2026-04-01', end: '2026-04-29' },
         filters: [{ field: 'KEY_VALUES_NAME', op: '=', value: 'channel_id=479' }],
       },
-      {
-        client,
-        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-        timezone: 'America/Los_Angeles',
-        logger: noopLogger(),
-        now: new Date('2026-04-30T12:00:00Z'),
-      },
+      makeCtx({}, { client, timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') }),
     );
     if ('error' in r) throw new Error(JSON.stringify(r));
     expect(captured).not.toBeNull();
@@ -138,18 +108,16 @@ describe('run_report', () => {
     ]);
     expect(captured!.custom_dimension_key_ids).toEqual([4242]);
     // Caller learns about the rewrite via the envelope warnings array.
-    expect(r.warnings?.length).toBeGreaterThan(0);
-    expect(r.warnings![0]).toContain('CUSTOM_DIMENSION_0_VALUE');
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.warnings.length).toBeGreaterThan(0);
+    expect(r.warnings[0]).toContain('CUSTOM_DIMENSION_0_VALUE');
   });
 
   it('surfaces INVALID_INPUT when KEY_VALUES rewrite is needed but the key is unknown', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rr-'));
     const client: GAMClient = {
-      async listEntities() { return []; }, // unresolvable
-      async createReport() { throw new Error('should not be reached'); },
-      async pollOperation() { throw new Error('unused'); },
-      async downloadReport() { throw new Error('unused'); },
+      ...createMockGamClient({}), // unresolvable key: no entities configured
+      defineReport: async () => { throw new Error('should not be reached'); },
+      runReport: async () => { throw new Error('unused'); },
+      fetchRows: async () => { throw new Error('unused'); },
     };
     const r = await runReportTool.handler(
       {
@@ -158,16 +126,27 @@ describe('run_report', () => {
         date_range: { start: '2026-04-01', end: '2026-04-29' },
         filters: [{ field: 'KEY_VALUES_NAME', op: '=', value: 'mystery=42' }],
       },
-      {
-        client,
-        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-        timezone: 'America/Los_Angeles',
-        logger: noopLogger(),
-        now: new Date('2026-04-30T12:00:00Z'),
-      },
+      makeCtx({}, { client, timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') }),
     );
     if (!('error' in r)) throw new Error('expected error');
     expect((r.error as { code: string }).code).toBe('INVALID_INPUT');
-    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns the first page with a cursor instead of a file path', async () => {
+    const rows = Array.from({ length: 7 }, (_, i) => ({ AD_UNIT_ID: i + 1, IMPRESSIONS: i }));
+    const ctx = makeCtx(
+      { reports: [{ query: { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] }, rows }] },
+      { pageRows: 5, now: new Date('2026-04-30T12:00:00Z') },
+    );
+    const r = await runReportTool.handler(
+      runReportTool.input.parse({
+        dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'],
+        date_range: { start: '2026-04-01', end: '2026-04-02' },
+      }),
+      ctx,
+    );
+    expect(r).toMatchObject({ total_row_count: 7, returned_row_count: 5, truncated: true });
+    expect(r).not.toHaveProperty('file_path');
+    expect(typeof (r as { next_cursor: unknown }).next_cursor).toBe('string');
   });
 });

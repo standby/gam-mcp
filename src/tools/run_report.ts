@@ -7,11 +7,9 @@ import {
   resolveReportType,
   SUPPORTED_REPORT_TYPES,
 } from '../schema.js';
-import { readCsvGz } from '../output.js';
-import { join } from 'node:path';
+import { executeReport } from '../report-exec.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
-import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
-import type { Logger } from '../log.js';
+import type { ReportQuery } from '../gam-client.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
 import { REACH_NON_ADDITIVE_WARNING } from './reach_report.js';
 
@@ -48,7 +46,7 @@ const inputSchema = z.object({
 export const runReportTool: ToolDefinition<typeof inputSchema> = {
   name: 'run_report',
   description:
-    'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns standard envelope (inline if small, file path if large). Asking only for reach metrics (UNIQUE_VISITORS, REACH_IMPRESSIONS, AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR) switches GAM to its REACH report type automatically; those cannot be mixed with historical metrics in one call.',
+    'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns the first page of rows with provenance; when more rows exist, pass next_cursor to fetch_report_page. Asking only for reach metrics (UNIQUE_VISITORS, REACH_IMPRESSIONS, AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR) switches GAM to its REACH report type automatically; those cannot be mixed with historical metrics in one call.',
   input: inputSchema,
   async handler(input, ctx) {
     // Rewrite alias dimension names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE)
@@ -132,57 +130,6 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       `Report: dims=[${query.dimensions.join(',')}] metrics=[${query.metrics.join(',')}] ` +
       `${dateRange.start}..${dateRange.end}`;
 
-    // Cache hit: skip create→poll→download entirely.
-    const cached = ctx.reportCache?.get(query, dateRange);
-    if (cached) return ctx.output!.fromInlineRows(cached, `${summary} (cached)`);
-
-    try {
-      ctx.logger.debug('report.create', {
-        tool: 'run_report',
-        dimensions: query.dimensions,
-        metrics: query.metrics,
-        date_start: dateRange.start,
-        date_end: dateRange.end,
-      });
-      const op = await ctx.client.createReport(query, dateRange);
-      const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
-      if ('error' in status) return status;
-      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(status.download_url, dest);
-      // Read once for the cache, then either inline-or-file via output manager.
-      // The output manager re-reads the file but on subsequent identical
-      // queries the cache short-circuits before we ever hit createReport.
-      if (ctx.reportCache) {
-        try {
-          const { rows } = await readCsvGz(dest);
-          ctx.reportCache.set(query, dateRange, rows);
-        } catch { /* cache best-effort; envelope path is authoritative */ }
-      }
-      return ctx.output!.fromCsvGzFile(dest, summary, warnings.length ? warnings : undefined);
-    } catch (e) {
-      return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
-    }
+    return executeReport(ctx, { query, dateRange, summary, warnings });
   },
 };
-
-async function pollUntilDone(client: GAMClient, name: string, timeoutMs: number, logger: Logger) {
-  const start = Date.now();
-  let delay = 2000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await client.pollOperation(name);
-    const elapsed_ms = Date.now() - start;
-    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
-    if (s.state === 'done') {
-      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
-      return { download_url: s.download_url };
-    }
-    if (s.state === 'failed') {
-      logger.warn('report.failed', { operation: name, reason: s.reason });
-      return gamError('REPORT_FAILED', { reason: s.reason });
-    }
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
-  return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
-}

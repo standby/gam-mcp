@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { join } from 'node:path';
-import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
+import { executeReport } from '../report-exec.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
@@ -33,21 +32,10 @@ export const pacingStatusTool: ToolDefinition<typeof inputSchema> = {
       ],
     };
 
-    const op = await ctx.client.createReport(query, dateRange);
-    const timeout = ctx.reportTimeoutMs ?? 300_000;
-    const start = Date.now();
-    let delay = 2000;
-    while (Date.now() - start < timeout) {
-      const s = await ctx.client.pollOperation(op.operation_name);
-      if (s.state === 'done') {
-        const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-        await ctx.client.downloadReport(s.download_url, dest);
-        return ctx.output!.fromCsvGzFile(dest, 'Pacing status (current month)');
-      }
-      if (s.state === 'failed') return gamError('REPORT_FAILED', { reason: s.reason });
-      await new Promise((r) => setTimeout(r, delay));
-      delay = Math.min(delay * 1.5, 15_000);
-    }
-    return gamError('REPORT_TIMEOUT', { timeout_ms: timeout });
+    return executeReport(ctx, {
+      query,
+      dateRange,
+      summary: `Pacing status (month to date, ${dateRange.start}..${dateRange.end})`,
+    });
   },
 };

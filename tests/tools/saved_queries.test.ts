@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import {
   saveQueryTool,
   listSavedQueriesTool,
@@ -13,8 +12,12 @@ import { createSavedQueryStore } from '../../src/saved-queries.js';
 import { createMockGamClient } from '../../src/gam-client.js';
 import { createOutputManager } from '../../src/output.js';
 import { noopLogger } from '../../src/log.js';
+import { makeCtx as freshCtx } from '../helpers.js';
 
-function makeCtx() {
+// save_query/list_saved_queries/delete_saved_query still call ctx.output!
+// inside src/tools/saved_queries.ts until Task 8, so their test contexts
+// must keep providing an OutputManager.
+function legacyCtx() {
   const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
   const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
   return {
@@ -31,7 +34,7 @@ function makeCtx() {
 
 describe('saved_queries tools', () => {
   it('save_query persists and rejects duplicate names without replace=true', async () => {
-    const { ctx, dir } = makeCtx();
+    const { ctx, dir } = legacyCtx();
     const args = saveQueryTool.input.parse({
       name: 'wow_revenue',
       dimensions: ['DATE'],
@@ -48,7 +51,7 @@ describe('saved_queries tools', () => {
   });
 
   it('list_saved_queries returns saved entries', async () => {
-    const { ctx, dir } = makeCtx();
+    const { ctx, dir } = legacyCtx();
     await saveQueryTool.handler(
       saveQueryTool.input.parse({ name: 'a', dimensions: ['DATE'], metrics: ['REVENUE'] }),
       ctx,
@@ -60,33 +63,35 @@ describe('saved_queries tools', () => {
   });
 
   it('run_saved_query replays against a fresh date_range via run_report', async () => {
-    const { ctx, dir } = makeCtx();
-    // Replace mock client with one that has a matching report fixture.
-    const csv = gzipSync(Buffer.from('date,revenue\n2026-04-01,123\n'));
-    const ctxWithReport = {
-      ...ctx,
-      client: createMockGamClient({
-        reports: [{
-          query: { dimensions: ['DATE'], metrics: ['REVENUE'] },
-          csvGz: csv,
-        }],
-      }),
-    };
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    // saveQueryTool still calls ctx.output!, so this context needs both
+    // output (for save_query) and the report-path client fixture (for the
+    // run_report call run_saved_query delegates to).
+    const ctx = freshCtx(
+      { reports: [{
+        query: { dimensions: ['DATE'], metrics: ['REVENUE'] },
+        rows: [{ DATE: '2026-04-01', REVENUE: 123 }],
+      }] },
+      { timezone: 'UTC', savedQueries, output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }) },
+    );
     await saveQueryTool.handler(
       saveQueryTool.input.parse({ name: 'rev', dimensions: ['DATE'], metrics: ['REVENUE'] }),
-      ctxWithReport,
+      ctx,
     );
     const r = await runSavedQueryTool.handler(
       runSavedQueryTool.input.parse({ name: 'rev', date_range: { start: '2026-04-01', end: '2026-04-01' } }),
-      ctxWithReport,
+      ctx,
     );
-    if (!('row_count' in r)) throw new Error(JSON.stringify(r));
-    expect(r.row_count).toBe(1);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.total_row_count).toBe(1);
     rmSync(dir, { recursive: true, force: true });
   });
 
   it('run_saved_query returns ENTITY_NOT_FOUND for unknown name', async () => {
-    const { ctx, dir } = makeCtx();
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = freshCtx({}, { timezone: 'UTC', savedQueries });
     const r = await runSavedQueryTool.handler(
       { name: 'nope', date_range: { start: '2026-04-01', end: '2026-04-01' } },
       ctx,
@@ -99,7 +104,7 @@ describe('saved_queries tools', () => {
   });
 
   it('delete_saved_query removes the entry', async () => {
-    const { ctx, dir } = makeCtx();
+    const { ctx, dir } = legacyCtx();
     await saveQueryTool.handler(
       saveQueryTool.input.parse({ name: 'x', dimensions: ['DATE'], metrics: ['REVENUE'] }),
       ctx,
