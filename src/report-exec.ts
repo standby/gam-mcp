@@ -221,16 +221,20 @@ export async function fetchReportPage(
     if (!stored) return gamError('REPORT_RESULT_EXPIRED', { result: cursor.result });
     const page = await ctx.client.fetchRows(cursor.result, { pageSize: pageRows(ctx), pageToken: cursor.page_token });
     const last = cursor.offset + page.rows.length;
+    // A missing count from GAM is only unknowable while more pages remain —
+    // on the page that turns out to be the last one, the total is exactly
+    // what's been seen so far.
+    const total = cursor.total_row_count ?? (page.nextPageToken ? null : last);
     return pageEnvelope({
       ctx,
       report,
       result: cursor.result,
       definition: stored.definition,
-      summary: `Rows ${cursor.offset + 1}–${last} of ${cursor.total_row_count ?? 'an unreported number'} from ${report}`,
+      summary: `Rows ${cursor.offset + 1}–${last} of ${total ?? 'an unreported number'} from ${report}`,
       warnings: [],
       page,
       offset: cursor.offset,
-      total: cursor.total_row_count,
+      total,
       runTime: cursor.run_time,
       dateRange: cursor.date_range,
     });

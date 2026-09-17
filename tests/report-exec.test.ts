@@ -126,6 +126,17 @@ describe('executeReport', () => {
     expect(r.truncated).toBe(true);
   });
 
+  it('a final page with no reported count still knows its total', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3) }] }, { pageRows: 2 });
+    const realFetch = ctx.client.fetchRows;
+    ctx.client = { ...ctx.client, fetchRows: async (r, p) => { const page = await realFetch(r, p); delete page.totalRowCount; return page; } };
+    const first = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }));
+    expect(first.total_row_count).toBeNull();
+    const second = ok(await fetchReportPage(ctx, first.next_cursor!));
+    expect(second).toMatchObject({ total_row_count: 3, truncated: false, next_cursor: null });
+    expect(second.warnings).not.toContain('GAM did not report how many rows this result has.');
+  });
+
   it('returns REPORT_FAILED when the run fails', async () => {
     const ctx = makeCtx({ reports: [{ query, rows: rows(1) }], runOutcomes: { 1: 'failed' } });
     expect(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }))
