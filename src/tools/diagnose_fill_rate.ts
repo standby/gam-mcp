@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { numOr0, pct, lookbackRange, previousPeriod, runAndRead } from '../report-run.js';
+import { numOr0, pct, lookbackRange, previousPeriod } from '../report-run.js';
+import { executeReportRows, derivedEnvelope } from '../report-exec.js';
+import { cellText, type Cell } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
@@ -67,25 +69,27 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
         ...(filters.length && { filters }),
       };
 
-      const [baseRows, prevRows] = await Promise.all([
-        runAndRead(ctx, query, baseRange),
-        prevRange ? runAndRead(ctx, query, prevRange) : Promise.resolve([] as Record<string, string>[]),
+      const [base, prev] = await Promise.all([
+        executeReportRows(ctx, query, baseRange),
+        prevRange ? executeReportRows(ctx, query, prevRange) : Promise.resolve(null),
       ]);
-      const prevByKey = new Map(prevRows.map((r) => [r.AD_UNIT_ID, r]));
+      if ('error' in base) return base;
+      if (prev && 'error' in prev) return prev;
+      const prevByKey = new Map((prev?.rows ?? []).map((r) => [cellText(r.AD_UNIT_ID), r]));
 
       const diagnosed: Record<string, string>[] = [];
-      for (const r of baseRows) {
+      for (const r of base.rows) {
         const requests = numOr0(r.AD_REQUESTS);
         if (requests < input.min_requests) continue;
 
         const f = funnel(r);
-        const prev = prevByKey.get(r.AD_UNIT_ID);
-        const prevF = prev ? funnel(prev) : null;
+        const prevRow = prevByKey.get(cellText(r.AD_UNIT_ID));
+        const prevF = prevRow ? funnel(prevRow) : null;
         const cause = diagnose(f, prevF);
 
         diagnosed.push({
-          AD_UNIT_ID: r.AD_UNIT_ID,
-          AD_UNIT_NAME: r.AD_UNIT_NAME,
+          AD_UNIT_ID: cellText(r.AD_UNIT_ID),
+          AD_UNIT_NAME: cellText(r.AD_UNIT_NAME),
           cause,
           fill_rate_pct: pct(f.fillRate),
           ...(prevF && {
@@ -110,7 +114,12 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
       const summary =
         `Fill-rate diagnosis (${baseRange.start}..${baseRange.end}${cmpDesc}): ` +
         `${diagnosed.length} ad units examined (min_requests=${input.min_requests}), top ${top.length} by unfilled-impression volume.`;
-      return ctx.output!.fromInlineRows(top, summary);
+      return derivedEnvelope(ctx, {
+        summary,
+        inputs: prev ? [base.input, prev.input] : [base.input],
+        rows: top,
+        warnings: [...base.warnings, ...(prev?.warnings ?? [])],
+      });
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }
@@ -128,7 +137,7 @@ type Funnel = {
   fillRate: number;            // FILL_RATE (already 0..1)
 };
 
-function funnel(r: Record<string, string>): Funnel {
+function funnel(r: Record<string, Cell>): Funnel {
   const requests = numOr0(r.AD_REQUESTS);
   const adxReq = numOr0(r.AD_EXCHANGE_TOTAL_REQUESTS);
   const responses = numOr0(r.AD_SERVER_RESPONSES_SERVED);
@@ -156,4 +165,3 @@ function diagnose(now: Funnel, prev: Funnel | null): Cause {
   if (now.unfilledShare > 0.50) return 'no_demand';
   return 'mixed';
 }
-

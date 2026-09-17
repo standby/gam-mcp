@@ -1,13 +1,11 @@
-// Shared report-execution helpers for diagnostic tools that need raw rows
-// (rather than the inline-or-file envelope buildReportTool produces) so they
-// can post-process — funnel attribution, floor-pricing classification, etc.
-import { join } from 'node:path';
-import { unlinkSync } from 'node:fs';
-import { readCsvGz } from './output.js';
-import type { ToolContext } from './report-tool-builder.js';
-import type { ReportQuery, DateRange } from './gam-client.js';
+// Shared report helpers for diagnostic tools that need raw rows (rather than
+// the inline-or-file envelope buildReportTool produces) so they can
+// post-process — funnel attribution, floor-pricing classification, etc.
+import type { Cell } from './values.js';
+import type { DateRange } from './gam-client.js';
 
-export function numOr0(v: string | undefined): number {
+// ponytail: missing values still count as 0 here; 0.6.0 PR 4 replaces this with null-propagating arithmetic.
+export function numOr0(v: Cell | undefined): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
@@ -38,34 +36,4 @@ export function previousPeriod(r: DateRange): DateRange {
   const prevStart = new Date(prevEnd.getTime() - lengthMs);
   const iso = (dt: Date) => dt.toISOString().slice(0, 10);
   return { start: iso(prevStart), end: iso(prevEnd) };
-}
-
-// Create → poll → download → parse a report into rows, using the report cache
-// when available. Cleans up the temp CSV after reading.
-export async function runAndRead(
-  ctx: ToolContext,
-  query: ReportQuery,
-  range: DateRange,
-): Promise<Record<string, string>[]> {
-  const cached = ctx.reportCache?.get(query, range);
-  if (cached) return cached;
-  const op = await ctx.client.createReport(query, range);
-  const start = Date.now();
-  let delay = 2000;
-  const timeoutMs = ctx.reportTimeoutMs ?? 300_000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await ctx.client.pollOperation(op.operation_name);
-    if (s.state === 'done') {
-      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(s.download_url, dest);
-      const { rows } = await readCsvGz(dest);
-      try { unlinkSync(dest); } catch { /* ignore */ }
-      ctx.reportCache?.set(query, range, rows);
-      return rows;
-    }
-    if (s.state === 'failed') throw new Error(`report failed: ${s.reason}`);
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  throw new Error(`report timed out after ${timeoutMs}ms`);
 }

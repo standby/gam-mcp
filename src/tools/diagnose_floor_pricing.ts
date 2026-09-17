@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { numOr0, pct, lookbackRange, runAndRead } from '../report-run.js';
+import { numOr0, pct, lookbackRange } from '../report-run.js';
+import { executeReportRows, derivedEnvelope } from '../report-exec.js';
+import { cellText } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
@@ -63,13 +65,14 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         ...(filters.length && { filters }),
       };
 
-      const rows = await runAndRead(ctx, query, range);
+      const result = await executeReportRows(ctx, query, range);
+      if ('error' in result) return result;
 
       // Qualifying rows: enough AdX volume for a stable signal.
-      const qualifying = rows
+      const qualifying = result.rows
         .map((r) => ({
-          id: r.AD_UNIT_ID,
-          name: r.AD_UNIT_NAME,
+          id: cellText(r.AD_UNIT_ID),
+          name: cellText(r.AD_UNIT_NAME),
           requests: numOr0(r.AD_EXCHANGE_TOTAL_REQUESTS),
           matchRate: numOr0(r.AD_EXCHANGE_MATCH_RATE), // already 0..1
           ecpm: numOr0(r.AD_EXCHANGE_AVERAGE_ECPM),
@@ -79,10 +82,12 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         .filter((r) => r.requests >= input.min_requests);
 
       if (qualifying.length === 0) {
-        return ctx.output!.fromInlineRows(
-          [],
-          `Floor-pricing diagnosis (${range.start}..${range.end}): no ad units with >= ${input.min_requests} AdX requests.`,
-        );
+        return derivedEnvelope(ctx, {
+          summary: `Floor-pricing diagnosis (${range.start}..${range.end}): no ad units with >= ${input.min_requests} AdX requests.`,
+          inputs: [result.input],
+          rows: [],
+          warnings: result.warnings,
+        });
       }
 
       // Network benchmark: median of qualifying ad units (robust to outliers).
@@ -133,7 +138,12 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         `(min_requests=${input.min_requests}; network median match=${pct(medMatch)}%, median eCPM=${medEcpm.toFixed(2)}), ` +
         `top ${top.length} by estimated opportunity. est_opportunity is an upper-bound estimate in publisher currency — ` +
         `floors are inferred from match-rate × eCPM, not read from UPRs.`;
-      return ctx.output!.fromInlineRows(top, summary);
+      return derivedEnvelope(ctx, {
+        summary,
+        inputs: [result.input],
+        rows: top,
+        warnings: result.warnings,
+      });
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }

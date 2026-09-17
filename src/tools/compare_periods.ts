@@ -1,12 +1,11 @@
 import { z } from 'zod';
-import { join } from 'node:path';
-import { unlinkSync } from 'node:fs';
 import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
-import { readCsvGz } from '../output.js';
+import { executeReportRows, derivedEnvelope } from '../report-exec.js';
+import { cellText, type Cell } from '../values.js';
 import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
-import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
+import type { ReportQuery, DateRange } from '../gam-client.js';
 
 const RELATIVE = z.enum([
   'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
@@ -67,18 +66,25 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
 
     try {
       // Run both reports in parallel — they're independent createReport calls.
-      const [baseRows, prevRows] = await Promise.all([
-        runAndRead(ctx, query, baseRange),
-        runAndRead(ctx, query, prevRange),
+      const [base, prev] = await Promise.all([
+        executeReportRows(ctx, query, baseRange),
+        executeReportRows(ctx, query, prevRange),
       ]);
-      const joined = joinAndCompare(baseRows, prevRows, input.dimensions, input.metrics);
+      if ('error' in base) return base;
+      if ('error' in prev) return prev;
+      const joined = joinAndCompare(base.rows, prev.rows, input.dimensions, input.metrics);
       const sorted = sortByPrimaryMetric(joined, input.metrics[0]);
       const top = sorted.slice(0, input.top_n);
       const summary =
         `Compare: dims=[${input.dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
         `base=${baseRange.start}..${baseRange.end} vs prev=${prevRange.start}..${prevRange.end} ` +
         `(${joined.length} keys, top_n=${input.top_n})`;
-      return ctx.output!.fromInlineRows(top, summary);
+      return derivedEnvelope(ctx, {
+        summary,
+        inputs: [base.input, prev.input],
+        rows: top,
+        warnings: [...base.warnings, ...prev.warnings],
+      });
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
     }
@@ -109,45 +115,13 @@ function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function runAndRead(
-  ctx: ToolContext,
-  query: ReportQuery,
-  range: DateRange,
-): Promise<Record<string, string>[]> {
-  // Cache hit: skip the entire flow. Common for "show me last week, now
-  // compare to previous week" — the base half is often identical to a
-  // recent run_report.
-  const cached = ctx.reportCache?.get(query, range);
-  if (cached) return cached;
-
-  const op = await ctx.client.createReport(query, range);
-  const start = Date.now();
-  let delay = 2000;
-  const timeoutMs = ctx.reportTimeoutMs ?? 300_000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await ctx.client.pollOperation(op.operation_name);
-    if (s.state === 'done') {
-      const dest = join(ctx.output!.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(s.download_url, dest);
-      const { rows } = await readCsvGz(dest);
-      try { unlinkSync(dest); } catch { /* ignore */ }
-      ctx.reportCache?.set(query, range, rows);
-      return rows;
-    }
-    if (s.state === 'failed') throw new Error(`report failed: ${s.reason}`);
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  throw new Error(`report timed out after ${timeoutMs}ms`);
-}
-
 function joinAndCompare(
-  baseRows: Record<string, string>[],
-  prevRows: Record<string, string>[],
+  baseRows: Record<string, Cell>[],
+  prevRows: Record<string, Cell>[],
   dims: string[],
   metrics: string[],
 ): Record<string, string>[] {
-  const key = (r: Record<string, string>) => dims.map((d) => r[d] ?? '').join('\u0001');
+  const key = (r: Record<string, Cell>) => dims.map((d) => cellText(r[d])).join('');
   const prevByKey = new Map(prevRows.map((r) => [key(r), r]));
   const seenPrev = new Set<string>();
   const out: Record<string, string>[] = [];
@@ -168,13 +142,13 @@ function joinAndCompare(
 }
 
 function buildRow(
-  base: Record<string, string> | undefined,
-  prev: Record<string, string> | undefined,
+  base: Record<string, Cell> | undefined,
+  prev: Record<string, Cell> | undefined,
   dims: string[],
   metrics: string[],
 ): Record<string, string> {
   const row: Record<string, string> = {};
-  for (const d of dims) row[d] = base?.[d] ?? prev?.[d] ?? '';
+  for (const d of dims) row[d] = cellText(base?.[d] ?? prev?.[d]);
   for (const m of metrics) {
     const cur = base ? toNum(base[m]) : null;
     const old = prev ? toNum(prev[m]) : null;
@@ -185,8 +159,8 @@ function buildRow(
   return row;
 }
 
-function toNum(v: string | undefined): number | null {
-  if (v === undefined || v === '') return null;
+function toNum(v: Cell | undefined): number | null {
+  if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }

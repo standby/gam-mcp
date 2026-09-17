@@ -1,64 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { gzipSync } from 'node:zlib';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { comparePeriodsTool } from '../../src/tools/compare_periods.js';
-import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
-
-function csv(header: string[], rows: (string | number)[][]): Buffer {
-  const lines = [header.join(','), ...rows.map((r) => r.join(','))];
-  return gzipSync(Buffer.from(lines.join('\n') + '\n'));
-}
-
-function ctx() {
-  const dir = mkdtempSync(join(tmpdir(), 'cmp-'));
-  return {
-    dir,
-    ctx: {
-      client: createMockGamClient({
-        reports: [
-          // BASE period (last 7 days)
-          {
-            query: { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
-            dateRange: { start: '2026-04-23', end: '2026-04-29' },
-            csvGz: csv(['ADVERTISER_NAME', 'IMPRESSIONS'], [
-              ['Acme', 1000],
-              ['Beta', 200],
-              ['NewCo', 50],
-            ]),
-          },
-          // PREV period (previous_period -> 2026-04-16..22)
-          {
-            query: { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
-            dateRange: { start: '2026-04-16', end: '2026-04-22' },
-            csvGz: csv(['ADVERTISER_NAME', 'IMPRESSIONS'], [
-              ['Acme', 800],
-              ['Beta', 250],
-              ['Gone', 99],
-            ]),
-          },
-        ],
-      }),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'UTC',
-      logger: noopLogger(),
-    },
-  };
-}
+import { makeCtx } from '../helpers.js';
 
 describe('compare_periods', () => {
   it('joins base and previous_period rows, emits delta_pct, includes one-sided rows', async () => {
-    const { ctx: c, dir } = ctx();
+    const query = { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] };
+    const ctx = makeCtx({
+      reports: [
+        // BASE period (last 7 days)
+        {
+          query,
+          dateRange: { start: '2026-04-23', end: '2026-04-29' },
+          rows: [
+            { ADVERTISER_NAME: 'Acme', IMPRESSIONS: 1000 },
+            { ADVERTISER_NAME: 'Beta', IMPRESSIONS: 200 },
+            { ADVERTISER_NAME: 'NewCo', IMPRESSIONS: 50 },
+          ],
+        },
+        // PREV period (previous_period -> 2026-04-16..22)
+        {
+          query,
+          dateRange: { start: '2026-04-16', end: '2026-04-22' },
+          rows: [
+            { ADVERTISER_NAME: 'Acme', IMPRESSIONS: 800 },
+            { ADVERTISER_NAME: 'Beta', IMPRESSIONS: 250 },
+            { ADVERTISER_NAME: 'Gone', IMPRESSIONS: 99 },
+          ],
+        },
+      ],
+    }, { timezone: 'UTC' });
+
     const args = comparePeriodsTool.input.parse({
       dimensions: ['ADVERTISER_NAME'],
       metrics: ['IMPRESSIONS'],
       base_range: { start: '2026-04-23', end: '2026-04-29' },
       comparison: 'previous_period',
     });
-    const r = await comparePeriodsTool.handler(args, c);
+    const r = await comparePeriodsTool.handler(args, ctx);
     expect('rows' in r).toBe(true);
     if (!('rows' in r)) return;
     const byAdv = Object.fromEntries(r.rows!.map((row) => [row.ADVERTISER_NAME, row]));
@@ -83,21 +61,36 @@ describe('compare_periods', () => {
 
     // Sorted by primary metric (IMPRESSIONS) descending — Acme first
     expect(r.rows![0].ADVERTISER_NAME).toBe('Acme');
-
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('rejects unknown metrics with an actionable hint', async () => {
-    const { ctx: c, dir } = ctx();
+    const ctx = makeCtx({}, { timezone: 'UTC' });
     const args = comparePeriodsTool.input.parse({
       dimensions: ['ADVERTISER_NAME'],
       metrics: ['NOT_A_METRIC'],
       base_range: { start: '2026-04-23', end: '2026-04-29' },
       comparison: 'previous_period',
     });
-    const r = await comparePeriodsTool.handler(args, c);
+    const r = await comparePeriodsTool.handler(args, ctx);
     expect('error' in r).toBe(true);
     if ('error' in r) expect((r.error as { code: string }).code).toBe('INVALID_INPUT');
-    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('names both input reports in provenance', async () => {
+    const query = { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] };
+    const ctx = makeCtx({ reports: [
+      { query, dateRange: { start: '2026-04-08', end: '2026-04-14' }, rows: [{ ADVERTISER_NAME: 'A', IMPRESSIONS: 20 }] },
+      { query, dateRange: { start: '2026-04-01', end: '2026-04-07' }, rows: [{ ADVERTISER_NAME: 'A', IMPRESSIONS: 10 }] },
+    ] }, { now: new Date('2026-04-20T12:00:00Z') });
+    const r = await comparePeriodsTool.handler(comparePeriodsTool.input.parse({
+      dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'],
+      base_range: { start: '2026-04-08', end: '2026-04-14' }, comparison: 'previous_period',
+    }), ctx);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const inputs = (r as { provenance: { inputs: { date_range: unknown }[] } }).provenance.inputs;
+    expect(inputs.map((i) => i.date_range)).toEqual([
+      { start: '2026-04-08', end: '2026-04-14' },
+      { start: '2026-04-01', end: '2026-04-07' },
+    ]);
   });
 });
