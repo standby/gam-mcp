@@ -50,11 +50,14 @@ export function offsetMinutes(zone: string, at: number): number {
 // a calendar day of `range` in either of them. Offsets are compared at every
 // UTC midnight from the day before `start` to two days after `end`; a day on
 // which either zone changes offset is also checked every 15 minutes. A range
-// that cannot be read proves nothing, so it counts as differing.
+// that cannot be read, or that ends before it starts, proves nothing, so it
+// counts as differing.
 export function offsetsDiffer(a: string, b: string, range: { start: string; end: string }): boolean {
-  const first = Date.parse(`${range.start}T00:00:00Z`) - DAY;
-  const last = Date.parse(`${range.end}T00:00:00Z`) + 2 * DAY;
-  if (!Number.isFinite(first) || !Number.isFinite(last)) return true;
+  const start = Date.parse(`${range.start}T00:00:00Z`);
+  const end = Date.parse(`${range.end}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return true;
+  const first = start - DAY;
+  const last = end + 2 * DAY;
   for (let day = first; day < last; day += DAY) {
     const a0 = offsetMinutes(a, day);
     const b0 = offsetMinutes(b, day);

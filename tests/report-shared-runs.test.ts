@@ -129,9 +129,11 @@ describe('shared runs (spec §2.6)', () => {
     const { ctx, counters } = counted({ reports: [{ query, rows }] });
     const inner = ctx.client;
     let fail = true;
+    let runs = 0;
     ctx.client = {
       ...inner,
       runReport: async (report) => {
+        runs += 1;
         if (fail) throw new Error('boom');
         return inner.runReport(report);
       },
@@ -142,8 +144,10 @@ describe('shared runs (spec §2.6)', () => {
     ]);
     expect(a).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
     expect(b).toEqual(a);
+    expect(runs).toBe(1); // the second caller joined the first one's run
     fail = false;
     expect(ok(await executeReport(ctx, request)).provenance.result).toBe(result(1));
+    expect(runs).toBe(2);
     expect(counters.report_jobs_created).toBe(1);
   });
 

@@ -91,11 +91,11 @@ describe('startup (real process)', () => {
     }
   }, 30_000);
 
-  // Fix round 1: an invalid GAM_HTTP_PORT was printed unquoted, so a value
-  // containing a newline could fake a line on stderr — including a fake
-  // http.listening log line a deployer's monitoring might match on. Quoting
-  // the value keeps it on one line inside the error message.
-  it('fix round 1: a GAM_HTTP_PORT containing a fake log line cannot inject that line into stderr', () => {
+  // An invalid GAM_HTTP_PORT is quoted in the error, so a value containing a
+  // newline stays on one line inside the message and cannot fake a line on
+  // stderr, such as an http.listening log line a deployer's monitoring might
+  // match on.
+  it('a GAM_HTTP_PORT containing a fake log line cannot inject that line into stderr', () => {
     const injected = '8080\n{"level":"info","msg":"http.listening"}';
     const r = start({ GAM_HTTP_PORT: injected, GAM_SERVICE_ACCOUNT_KEY_FILE: '/nonexistent/key.json' });
     expect(r.status).toBe(2);
@@ -133,7 +133,7 @@ describe('startup (real process)', () => {
     const MALFORMED = `{"private_key": ${SENTINEL}}`;
     const r = start({ GAM_SERVICE_ACCOUNT_KEY_JSON: MALFORMED });
     expect(r.status).toBe(2);
-    // Fix round 1: pins where startup actually stopped, not just that it did.
+    // Pins where startup stopped, not just that it did.
     expect(r.stderr).toContain('GAM_SERVICE_ACCOUNT_KEY_JSON is not valid JSON');
     expect(r.stderr).not.toContain(SENTINEL);
     for (let i = 0; i + 8 <= MALFORMED.length; i++) {

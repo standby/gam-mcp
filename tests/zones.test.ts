@@ -9,12 +9,12 @@ describe('canonicalTimeZone', () => {
     expect(canonicalTimeZone('')).toBeNull();
   });
 
-  it('fix round 1: refuses a raw UTC offset — Node accepts it as a timeZone, but it is not an IANA name', () => {
+  it('refuses a raw UTC offset — Node accepts it as a timeZone, but it is not an IANA name', () => {
     expect(canonicalTimeZone('+08:00')).toBeNull();
     expect(canonicalTimeZone('-0500')).toBeNull();
   });
 
-  it('fix round 1: Etc/GMT offsets stay accepted — spelled with a leading letter, so they are IANA names', () => {
+  it('keeps accepting Etc/GMT zones — spelled with a leading letter, so they are IANA names', () => {
     expect(canonicalTimeZone('Etc/GMT-8')).toBe('Etc/GMT-8');
     expect(canonicalTimeZone('asia/seoul')).toBe('Asia/Seoul');
   });
@@ -57,6 +57,11 @@ describe('offsetsDiffer', () => {
 
   it('cannot prove anything about a range it cannot read', () => {
     expect(offsetsDiffer('Asia/Seoul', 'Asia/Tokyo', { start: 'someday', end: '2026-09-01' })).toBe(true);
+  });
+
+  it('cannot prove anything about a range that ends before it starts', () => {
+    expect(offsetsDiffer('Asia/Seoul', 'Asia/Tokyo', { start: '2026-12-31', end: '2026-01-01' })).toBe(true);
+    expect(offsetsDiffer('Asia/Seoul', 'Asia/Tokyo', { start: '2026-09-02', end: '2026-09-01' })).toBe(true);
   });
 });
 

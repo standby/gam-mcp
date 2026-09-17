@@ -177,7 +177,7 @@ describe('failureKind', () => {
   });
 });
 
-describe('inline credential errors do not echo the value (fix round 1)', () => {
+describe('inline credential errors do not echo the value', () => {
   const SENTINEL = 'SENTINEL_KEY_MATERIAL';
   // Unquoted value forces JSON.parse's own error to quote a slice of the raw
   // text starting right at the sentinel (Node quotes the first ~10 characters
