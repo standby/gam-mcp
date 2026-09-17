@@ -56,6 +56,7 @@ async function main(): Promise<void> {
   const client = instrumentGamClient(rawClient, usageCounters);
   const cacheDir = cacheDirFor(settings);
   const reportCache = createReportCache({
+    networkCode,
     logger,
     ttlMs: settings.cacheTtlMs,
     ...(cacheDir ? { diskDir: cacheDir } : {}),

@@ -4,7 +4,7 @@ import { withRetries } from '../src/gam-client-rest.js';
 import { createReportCache } from '../src/cache.js';
 import { createGoogleAuth } from '../src/auth.js';
 import { topAdvertisersTool } from '../src/tools/top_advertisers.js';
-import { makeCtx } from './helpers.js';
+import { makeCtx, NETWORK } from './helpers.js';
 import type { GAMClient } from '../src/gam-client.js';
 
 // Capture-everything sink and a recording logger seeded at debug level so
@@ -63,7 +63,7 @@ describe('log integration', () => {
 
   it('emits cache.miss then cache.hit', () => {
     const rec = recordingLogger();
-    const cache = createReportCache({ logger: rec.logger });
+    const cache = createReportCache({ networkCode: NETWORK, logger: rec.logger });
     const key = 'c'.repeat(64);
     expect(cache.get(key)).toBeUndefined();
     cache.putDone(key, {

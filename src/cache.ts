@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DateSpan } from './envelope.js';
 import type { Logger } from './log.js';
@@ -60,6 +61,14 @@ function isSpan(v: unknown): v is DateSpan {
     && typeof (v as DateSpan).start === 'string' && typeof (v as DateSpan).end === 'string';
 }
 
+// Keys are definition hashes (definitionHash) and become file names, so any
+// other key is a programming error.
+const KEY = /^[0-9a-f]{64}$/;
+
+function checkKey(key: string): void {
+  if (!KEY.test(key)) throw new Error('report cache keys are definition hashes: 64 lower-case hex characters');
+}
+
 // An entry read from disk, or undefined if the file holds anything else.
 function parseEntry(v: unknown): CacheEntry | undefined {
   if (typeof v !== 'object' || v === null) return undefined;
@@ -87,25 +96,46 @@ function parseEntry(v: unknown): CacheEntry | undefined {
 }
 
 export function createReportCache(opts: {
+  // GAM_NETWORK_CODE: every report, result and operation an entry names is this network's.
+  networkCode: string;
   // GAM_REPORT_CACHE_TTL_MS: how long a done entry is used; 0 keeps none.
   ttlMs?: number;
   // GAM_REPORT_CACHE_DIR, already specific to one network (cacheDirFor).
   diskDir?: string;
   logger?: Logger;
   now?: () => number;
-} = {}): ReportCache {
+}): ReportCache {
+  if (!/^\d+$/.test(opts.networkCode)) throw new Error('the report cache needs a numeric network code');
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
   const now = opts.now ?? Date.now;
   const logger = opts.logger ?? noopLogger();
   const dir = opts.diskDir;
   const memory = new Lru<string, CacheEntry>(CACHE_MAX_ENTRIES);
-  if (dir) mkdirSync(dir, { recursive: true });
+  if (dir) mkdirSync(dir, { recursive: true, mode: 0o700 });
   let hits = 0;
   let misses = 0;
+
+  const network = `networks/${opts.networkCode}`;
+  const REPORT = new RegExp(`^${network}/reports/\\d+$`);
+  const RESULT = new RegExp(`^${network}/reports/\\d+/results/\\d+$`);
+  const OPERATION = new RegExp(`^${network}/operations/reports/runs/\\d+$`);
 
   const short = (key: string) => key.slice(0, 16);
   const iso = (ms: number) => new Date(ms).toISOString();
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  // A time this cache could have written: a real instant, not in the future.
+  const past = (t: string): boolean => {
+    const ms = Date.parse(t);
+    return Number.isFinite(ms) && ms <= now();
+  };
+  // Whether an entry names only this network's report, a result of that
+  // report and this network's operation, each matched in full (a prefix check
+  // would let an encoded ".." reach another network), with times this cache
+  // could have written.
+  const valid = (e: CacheEntry): boolean =>
+    REPORT.test(e.report) && (e.kind === 'done'
+      ? RESULT.test(e.result) && e.result.startsWith(`${e.report}/results/`) && past(e.stored_at)
+      : OPERATION.test(e.operation) && past(e.started_at));
   // An unreadable timestamp is not live.
   const live = (e: CacheEntry): boolean =>
     e.kind === 'done'
@@ -129,19 +159,31 @@ export function createReportCache(opts: {
     } catch {
       entry = undefined;
     }
-    if (!entry) logger.warn('cache.disk_entry_invalid', { key: short(key) });
-    return entry;
+    if (entry && valid(entry)) return entry;
+    logger.warn('cache.disk_entry_invalid', { key: short(key) });
+    return undefined;
   }
 
-  // Written under a temporary name and renamed, so a reader never sees half a file.
+  // Written under a new temporary name and renamed, so a reader never sees
+  // half a file. The temporary file is removed if the write or the rename fails.
   function writeDisk(key: string, entry: CacheEntry): void {
     if (!dir) return;
     const path = join(dir, `${key}.json`);
-    const tmp = `${path}.${process.pid}.tmp`;
+    const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    let written = false;
     try {
-      writeFileSync(tmp, JSON.stringify(entry));
+      writeFileSync(tmp, JSON.stringify(entry), { flag: 'wx' });
+      written = true;
       renameSync(tmp, path);
     } catch (e) {
+      // `wx` refuses a file that already exists, and that file is not this write's.
+      if (written || (e as NodeJS.ErrnoException).code !== 'EEXIST') {
+        try {
+          rmSync(tmp, { force: true });
+        } catch {
+          // Nothing more can be done; the failure is logged below.
+        }
+      }
       logger.warn('cache.disk_write_failed', { key: short(key), message: message(e) });
     }
   }
@@ -158,6 +200,10 @@ export function createReportCache(opts: {
   }
 
   function put(key: string, entry: CacheEntry): void {
+    if (!valid(entry)) {
+      logger.warn('cache.entry_rejected', { key: short(key), kind: entry.kind });
+      return;
+    }
     memory.set(key, entry);
     writeDisk(key, entry);
   }
@@ -169,6 +215,7 @@ export function createReportCache(opts: {
 
   return {
     get(key) {
+      checkKey(key);
       let entry = memory.get(key);
       if (!entry) {
         entry = readDisk(key);
@@ -188,6 +235,7 @@ export function createReportCache(opts: {
       return entry;
     },
     putDone(key, e) {
+      checkKey(key);
       if (ttlMs === 0) {
         remove(key);
         return;
@@ -203,9 +251,11 @@ export function createReportCache(opts: {
       });
     },
     putPending(key, e) {
+      checkKey(key);
       put(key, { kind: 'pending', report: e.report, operation: e.operation, started_at: e.started_at ?? iso(now()) });
     },
     delete(key, only) {
+      checkKey(key);
       if (only) {
         const current = memory.get(key) ?? readDisk(key);
         if (!current || !names(current, only)) return;

@@ -64,7 +64,7 @@ describe('report reuse (spec §2.2)', () => {
 
   it('B3: the same process with the result cache off reuses the report it remembers: no list, no create', async () => {
     const gam = fakeWithRows();
-    const ctx = processOn(gam, { reportCache: createReportCache({ ttlMs: 0 }) });
+    const ctx = processOn(gam, { reportCache: createReportCache({ networkCode: NETWORK, ttlMs: 0 }) });
     await executeReport(ctx, REQUEST);
     const from = gam.requests.length;
     const p = provenance(await executeReport(ctx, REQUEST));

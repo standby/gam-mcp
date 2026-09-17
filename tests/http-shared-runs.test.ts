@@ -43,7 +43,7 @@ describe('HTTP client disconnect (spec §2.6)', () => {
     const polling = gate();
     const release = gate();
     const abort = new AbortController();
-    const reportCache = createReportCache();
+    const reportCache = createReportCache({ networkCode: NETWORK });
     const counters = createUsageCounters();
     const ctx = makeCtx(
       { reports: [{ query: { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] }, rows: [{ AD_UNIT_ID: 1, IMPRESSIONS: 5 }] }] },

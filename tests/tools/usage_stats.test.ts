@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { usageStatsTool } from '../../src/tools/usage_stats.js';
-import { makeCtx } from '../helpers.js';
+import { makeCtx, NETWORK } from '../helpers.js';
 import { createUsageCounters, instrumentGamClient } from '../../src/usage.js';
 import { createReportCache } from '../../src/cache.js';
 import { executeReport } from '../../src/report-exec.js';
@@ -10,7 +10,7 @@ describe('usage_stats', () => {
     const usageCounters = createUsageCounters();
     usageCounters.report_jobs_created = 3;
     usageCounters.cumulative_report_latency_ms = 1500;
-    const reportCache = createReportCache();
+    const reportCache = createReportCache({ networkCode: NETWORK });
     const key = 'd'.repeat(64);
     reportCache.get(key); // miss
     reportCache.putDone(key, {
@@ -41,7 +41,7 @@ describe('usage_stats', () => {
   it('counts what a miss and then a hit really cost', async () => {
     const query = { dimensions: ['AD_UNIT_ID'], metrics: ['IMPRESSIONS'] };
     const usageCounters = createUsageCounters();
-    const reportCache = createReportCache();
+    const reportCache = createReportCache({ networkCode: NETWORK });
     const ctx = makeCtx({ reports: [{ query, rows: [{ AD_UNIT_ID: 1, IMPRESSIONS: 2 }] }] }, { usageCounters, reportCache });
     ctx.client = instrumentGamClient(ctx.client, usageCounters);
     const request = { tool: 'test', query, dateRange: { start: '2026-09-01', end: '2026-09-01' }, summary: 'S' };

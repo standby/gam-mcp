@@ -41,7 +41,7 @@ describe('shared runs (spec §2.6)', () => {
   it('F1: two concurrent identical calls share one create, run and poll sequence', async () => {
     const lines: Record<string, unknown>[] = [];
     const logger = createLogger({ level: 'info', sink: (l) => { lines.push(JSON.parse(l)); } });
-    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache(), logger });
+    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache({ networkCode: NETWORK }), logger });
     const [a, b] = await Promise.all([
       executeReport(ctx, request),
       executeReport(ctx, { ...request, tool: 'second_tool' }),
@@ -60,7 +60,7 @@ describe('shared runs (spec §2.6)', () => {
   });
 
   it('F2: two concurrent different calls run twice', async () => {
-    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache() });
+    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache({ networkCode: NETWORK }) });
     const other = { ...request, dateRange: { start: '2026-09-03', end: '2026-09-04' } };
     const [a, b] = await Promise.all([executeReport(ctx, request), executeReport(ctx, other)]);
     expect(ok(a).provenance.report).not.toBe(ok(b).provenance.report);
@@ -70,7 +70,7 @@ describe('shared runs (spec §2.6)', () => {
   it('F3: a failed shared run fails both callers, and the next call starts fresh', async () => {
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: { 1: 'failed' } },
-      { reportCache: createReportCache() },
+      { reportCache: createReportCache({ networkCode: NETWORK }) },
     );
     const [a, b] = await Promise.all([executeReport(ctx, request), executeReport(ctx, request)]);
     expect(a).toMatchObject({ error: { code: 'REPORT_FAILED' } });
@@ -81,7 +81,7 @@ describe('shared runs (spec §2.6)', () => {
   });
 
   it('a call arriving after the run settles but before the first page is recorded still joins it', async () => {
-    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache() });
+    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache({ networkCode: NETWORK }) });
     const inner = ctx.client;
     let releaseFetch!: () => void;
     const gate = new Promise<void>((resolve) => { releaseFetch = resolve; });
@@ -146,7 +146,7 @@ describe('shared runs (spec §2.6)', () => {
 
   it('a caller that finds a cached result gone after another caller ran the report again uses the fresh result', async () => {
     const expired: string[] = [];
-    const cache = createReportCache();
+    const cache = createReportCache({ networkCode: NETWORK });
     const { ctx, counters } = counted({ reports: [{ query, rows }], expiredResults: expired }, { reportCache: cache });
     ok(await executeReport(ctx, request));
     expired.push(result(1));
@@ -166,7 +166,7 @@ describe('shared runs (spec §2.6)', () => {
   it('a caller that finds a resumed result gone does not wait on that run again', async () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const expired: string[] = [];
-    const cache = createReportCache();
+    const cache = createReportCache({ networkCode: NETWORK });
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
       { reportCache: cache, reportTimeoutMs: 0 },
@@ -191,7 +191,7 @@ describe('shared runs (spec §2.6)', () => {
 describe('runs that outlive their caller (spec §2.6)', () => {
   it('F4: after REPORT_TIMEOUT the next identical call waits for the same operation', async () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
-    const cache = createReportCache();
+    const cache = createReportCache({ networkCode: NETWORK });
     const lines: Record<string, unknown>[] = [];
     const logger = createLogger({ level: 'info', sink: (l) => { lines.push(JSON.parse(l)); } });
     const { ctx, counters } = counted(
@@ -214,7 +214,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
 
   it('F4: a run that times out again keeps its first start time', async () => {
     let t = Date.parse('2026-09-17T04:00:00Z');
-    const cache = createReportCache({ now: () => t });
+    const cache = createReportCache({ networkCode: NETWORK, now: () => t });
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: { 1: 'never' } },
       { reportCache: cache, reportTimeoutMs: 0 },
@@ -233,7 +233,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: outcomes },
-      { reportCache: createReportCache({ now: () => t }), reportTimeoutMs: 0 },
+      { reportCache: createReportCache({ networkCode: NETWORK, now: () => t }), reportTimeoutMs: 0 },
     );
     await executeReport(ctx, request);
     t += PENDING_TTL_MS;
@@ -248,7 +248,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
 
   it('forgets a resumed run that GAM reports failed', async () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
-    const cache = createReportCache();
+    const cache = createReportCache({ networkCode: NETWORK });
     const { ctx } = counted({ reports: [{ query, rows }], runOutcomes: outcomes }, { reportCache: cache, reportTimeoutMs: 0 });
     await executeReport(ctx, request);
     outcomes[1] = 'failed';
@@ -259,7 +259,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
   it('a resumed run whose result is gone runs again once, leaving no stale pending entry', async () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const expired: string[] = [];
-    const cache = createReportCache();
+    const cache = createReportCache({ networkCode: NETWORK });
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
       { reportCache: cache, reportTimeoutMs: 0 },
@@ -276,7 +276,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
   it('a resumed run whose re-run result is also gone fails once, and the next call after that starts fresh', async () => {
     const outcomes: Record<number, 'failed' | 'never'> = { 1: 'never' };
     const expired: string[] = [];
-    const cache = createReportCache();
+    const cache = createReportCache({ networkCode: NETWORK });
     const { ctx, counters } = counted(
       { reports: [{ query, rows }], runOutcomes: outcomes, expiredResults: expired },
       { reportCache: cache, reportTimeoutMs: 0 },
@@ -295,7 +295,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
   });
 
   it('after a poll that could not reach GAM, the next call waits for the same operation', async () => {
-    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache() });
+    const { ctx, counters } = counted({ reports: [{ query, rows }] }, { reportCache: createReportCache({ networkCode: NETWORK }) });
     const inner = ctx.client;
     let unreachable = true;
     ctx.client = {
@@ -317,7 +317,7 @@ describe('runs that outlive their caller (spec §2.6)', () => {
     const gam = createFakeGam();
     gam.setRows([{ dimensionValues: [int(1)], metricValueGroups: [{ primaryValues: [int(5)] }] }]);
     for (let i = 0; i < 4; i++) gam.inject('GET', /^networks\/1234\/operations\//, { status: 429 });
-    const ctx = restCtx(gam, { reportCache: createReportCache() }, true);
+    const ctx = restCtx(gam, { reportCache: createReportCache({ networkCode: NETWORK }) }, true);
     expect(await executeReport(ctx, request)).toMatchObject({
       error: { code: 'QUOTA_EXCEEDED', details: { operation: operation(1) } },
     });

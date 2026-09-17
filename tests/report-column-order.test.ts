@@ -4,7 +4,7 @@ import { createReportCache } from '../src/cache.js';
 import type { ReportQuery } from '../src/gam-client.js';
 import type { ToolContext } from '../src/report-tool-builder.js';
 import { createFakeGam, int } from './fake-gam.js';
-import { counted, ok, restCtx } from './helpers.js';
+import { counted, NETWORK, ok, restCtx } from './helpers.js';
 
 // GAM returns each row's values in the column order of the report that ran,
 // so the order of dimensions and metrics is part of what a report is: two
@@ -26,7 +26,7 @@ function expectRow(rows: Record<string, unknown>[], q: ReportQuery): void {
 }
 
 const caches = [
-  ['with a result cache', () => createReportCache()],
+  ['with a result cache', () => createReportCache({ networkCode: NETWORK })],
   ['without a result cache', () => undefined],
 ] as const;
 
@@ -77,7 +77,7 @@ describe('dimension and metric order is part of a report (spec §2.2)', () => {
     const run = async (ctx: ToolContext, query: ReportQuery) =>
       ok(await executeReport(ctx, { tool: 'test', query, dateRange: RANGE, summary: 'S' }));
     const first = await run(restCtx(gam), A);
-    const second = await run(restCtx(gam, { reportCache: createReportCache() }), B);
+    const second = await run(restCtx(gam, { reportCache: createReportCache({ networkCode: NETWORK }) }), B);
     expectRow(first.rows, A);
     expectRow(second.rows, B);
     expect(second.provenance.report).not.toBe(first.provenance.report);
