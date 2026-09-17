@@ -5,7 +5,7 @@ import { createReportCache } from '../src/cache.js';
 import { createGoogleAuth } from '../src/auth.js';
 import { topAdvertisersTool } from '../src/tools/top_advertisers.js';
 import { makeCtx } from './helpers.js';
-import type { GAMClient, ReportQuery, DateRange } from '../src/gam-client.js';
+import type { GAMClient } from '../src/gam-client.js';
 
 // Capture-everything sink and a recording logger seeded at debug level so
 // every code path's events surface for assertions.
@@ -64,11 +64,16 @@ describe('log integration', () => {
   it('emits cache.miss then cache.hit', () => {
     const rec = recordingLogger();
     const cache = createReportCache({ logger: rec.logger });
-    const q: ReportQuery = { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] };
-    const dr: DateRange = { start: '2026-04-01', end: '2026-04-29' };
-    expect(cache.get(q, dr)).toBeUndefined();
-    cache.set(q, dr, [{ advertiser_name: 'Acme', revenue: '1' }]);
-    expect(cache.get(q, dr)).toBeDefined();
+    const key = 'c'.repeat(64);
+    expect(cache.get(key)).toBeUndefined();
+    cache.putDone(key, {
+      report: 'networks/1234/reports/1',
+      result: 'networks/1234/reports/1/results/1',
+      run_time: null,
+      date_range: null,
+      total_row_count: 0,
+    });
+    expect(cache.get(key)).toBeDefined();
     const msgs = rec.events().map((e) => e.msg as string);
     expect(msgs[0]).toBe('cache.miss');
     expect(msgs[1]).toBe('cache.hit');

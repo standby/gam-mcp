@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { CredentialError, gamError } from './errors.js';
 import { GamHttpError, type GAMClient, type NetworkInfo } from './gam-client.js';
 import type { Logger } from './log.js';
@@ -86,6 +87,12 @@ function describeFailure(e: unknown): string {
   if (e instanceof GamHttpError) return `GAM answered HTTP ${e.status}${e.gamStatus ? ` ${e.gamStatus}` : ''}`;
   if (e instanceof CredentialError) return `GAM was not reached: ${e.message}`;
   return `GAM could not be read: ${e instanceof Error ? e.message : String(e)}`;
+}
+
+// The disk tier for one network: the cache key does not name the network, so
+// two networks sharing GAM_REPORT_CACHE_DIR must not share entries.
+export function cacheDirFor(settings: Settings): string | undefined {
+  return settings.cacheDir ? join(settings.cacheDir, settings.networkCode) : undefined;
 }
 
 // GAM_TIMEZONE chooses calendar dates; unset, it is the network's zone, and a

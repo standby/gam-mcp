@@ -8,8 +8,6 @@ export type UsageCounters = {
   get_resource_calls: number;
   report_jobs_created: number;
   poll_operations: number;
-  report_cache_hits: number;
-  report_cache_misses: number;
   cumulative_report_latency_ms: number;
   report_definitions_created: number;
   report_pages_fetched: number;
@@ -23,8 +21,6 @@ export function createUsageCounters(): UsageCounters {
     get_resource_calls: 0,
     report_jobs_created: 0,
     poll_operations: 0,
-    report_cache_hits: 0,
-    report_cache_misses: 0,
     cumulative_report_latency_ms: 0,
     report_definitions_created: 0,
     report_pages_fetched: 0,

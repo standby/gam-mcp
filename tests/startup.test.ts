@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chooseDateTimeZone, checkNetworkIdentity, readSettings } from '../src/startup.js';
+import { cacheDirFor, chooseDateTimeZone, checkNetworkIdentity, readSettings } from '../src/startup.js';
 import { createRestGamClient } from '../src/gam-client-rest.js';
 import { CredentialError, gamError } from '../src/errors.js';
 import { createLogger } from '../src/log.js';
@@ -128,5 +128,16 @@ describe('chooseDateTimeZone', () => {
       level: 'info', msg: 'startup.identity',
       report_time_zone: 'Asia/Tokyo', date_time_zone: 'Asia/Seoul', zones_differ: true,
     })]);
+  });
+});
+
+describe('cacheDirFor', () => {
+  it('keeps each network in its own directory', () => {
+    const settings = readSettings({ ...CODE, GAM_REPORT_CACHE_DIR: '/var/cache/gam-mcp' });
+    if ('error' in settings) throw new Error(settings.error);
+    expect(cacheDirFor(settings)).toBe('/var/cache/gam-mcp/1234');
+    const none = readSettings(CODE);
+    if ('error' in none) throw new Error(none.error);
+    expect(cacheDirFor(none)).toBeUndefined();
   });
 });

@@ -7,7 +7,7 @@ import { createReportCache } from './cache.js';
 import { createLogger, levelFromEnv } from './log.js';
 import { resolvePageRows } from './report-exec.js';
 import { createSavedQueryStore, defaultSavedQueriesPath } from './saved-queries.js';
-import { checkNetworkIdentity, chooseDateTimeZone, readSettings } from './startup.js';
+import { cacheDirFor, checkNetworkIdentity, chooseDateTimeZone, readSettings } from './startup.js';
 import { createUsageCounters, instrumentGamClient } from './usage.js';
 
 function stop(message: string): never {
@@ -54,10 +54,11 @@ async function main(): Promise<void> {
 
   const usageCounters = createUsageCounters();
   const client = instrumentGamClient(rawClient, usageCounters);
+  const cacheDir = cacheDirFor(settings);
   const reportCache = createReportCache({
     logger,
     ttlMs: settings.cacheTtlMs,
-    ...(settings.cacheDir ? { diskDir: settings.cacheDir } : {}),
+    ...(cacheDir ? { diskDir: cacheDir } : {}),
   });
   const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
   const ctx = {

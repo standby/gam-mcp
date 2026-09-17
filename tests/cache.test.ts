@@ -1,97 +1,156 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createReportCache } from '../src/cache.js';
-import type { ReportQuery, DateRange } from '../src/gam-client.js';
+import { CACHE_MAX_ENTRIES, PENDING_TTL_MS, createReportCache } from '../src/cache.js';
+import { createLogger } from '../src/log.js';
 
-const dr: DateRange = { start: '2026-04-01', end: '2026-04-07' };
-const drOther: DateRange = { start: '2026-03-01', end: '2026-03-07' };
+const KEY = 'a'.repeat(64);
+const OTHER = 'b'.repeat(64);
+const T0 = Date.parse('2026-09-17T04:00:00Z');
+const DONE = {
+  report: 'networks/1234/reports/1',
+  result: 'networks/1234/reports/1/results/1',
+  run_time: '2026-09-17T03:59:00Z',
+  date_range: { start: '2026-09-01', end: '2026-09-02' },
+  total_row_count: 12,
+};
+const PENDING = { report: 'networks/1234/reports/1', operation: 'networks/1234/operations/reports/runs/1' };
+const DONE_KEYS = ['kind', 'report', 'result', 'run_time', 'date_range', 'total_row_count', 'stored_at'];
 
-describe('ReportCache', () => {
-  it('hits when query and date range match exactly', () => {
-    const c = createReportCache();
-    const q: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'] };
-    c.set(q, dr, [{ DATE: '20260401', IMPRESSIONS: '100' }]);
-    expect(c.get(q, dr)).toEqual([{ DATE: '20260401', IMPRESSIONS: '100' }]);
+function clock(start = T0) {
+  let t = start;
+  return { now: () => t, advance: (ms: number) => { t += ms; } };
+}
+
+function withDir(run: (dir: string) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), 'gam-cache-'));
+  try {
+    run(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('result cache (spec §2.5)', () => {
+  it('E1: stores a result reference and never rows', () => {
+    const c = createReportCache({ now: clock().now });
+    c.putDone(KEY, DONE);
+    const entry = c.get(KEY);
+    expect(entry).toEqual({ kind: 'done', ...DONE, stored_at: '2026-09-17T04:00:00.000Z' });
+    expect(Object.keys(entry!)).toEqual(DONE_KEYS);
   });
 
-  it('misses when date range differs', () => {
+  it('counts a done entry as a hit and anything else as a miss', () => {
     const c = createReportCache();
-    const q: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'] };
-    c.set(q, dr, [{ DATE: '20260401', IMPRESSIONS: '100' }]);
-    expect(c.get(q, drOther)).toBeUndefined();
-  });
-
-  it('treats different dimension/metric ORDER as the same query', () => {
-    const c = createReportCache();
-    const q1: ReportQuery = { dimensions: ['DATE', 'ADVERTISER_NAME'], metrics: ['IMPRESSIONS', 'REVENUE'] };
-    const q2: ReportQuery = { dimensions: ['ADVERTISER_NAME', 'DATE'], metrics: ['REVENUE', 'IMPRESSIONS'] };
-    c.set(q1, dr, [{ x: '1' }]);
-    expect(c.get(q2, dr)).toEqual([{ x: '1' }]);
-  });
-
-  it('treats custom_dimension_key_ids ORDER as significant (positional)', () => {
-    const c = createReportCache();
-    const q1: ReportQuery = { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['IMPRESSIONS'], custom_dimension_key_ids: [111, 222] };
-    const q2: ReportQuery = { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['IMPRESSIONS'], custom_dimension_key_ids: [222, 111] };
-    c.set(q1, dr, [{ x: 'a' }]);
-    expect(c.get(q2, dr)).toBeUndefined();
-  });
-
-  it('treats different filters as different queries', () => {
-    const c = createReportCache();
-    const q1: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'], filters: [{ field: 'AD_UNIT_ID', op: '=', value: 1 }] };
-    const q2: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'], filters: [{ field: 'AD_UNIT_ID', op: '=', value: 2 }] };
-    c.set(q1, dr, [{ x: '1' }]);
-    expect(c.get(q2, dr)).toBeUndefined();
-  });
-
-  it('tracks hits and misses for usage stats', () => {
-    const c = createReportCache();
-    const q: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'] };
     expect(c.stats()).toEqual({ hits: 0, misses: 0 });
-    c.get(q, dr); // miss
-    c.set(q, dr, [{ x: '1' }]);
-    c.get(q, dr); // hit
-    c.get(q, drOther); // miss
+    c.get(KEY);
+    c.putDone(KEY, DONE);
+    c.get(KEY);
+    c.putPending(OTHER, PENDING);
+    c.get(OTHER);
     expect(c.stats()).toEqual({ hits: 1, misses: 2 });
+  });
+
+  it('E3: a done entry lives for the TTL and no longer', () => {
+    const t = clock();
+    const c = createReportCache({ ttlMs: 60_000, now: t.now });
+    c.putDone(KEY, DONE);
+    t.advance(59_999);
+    expect(c.get(KEY)?.kind).toBe('done');
+    t.advance(1);
+    expect(c.get(KEY)).toBeUndefined();
+    expect(c.size()).toBe(0);
+  });
+
+  it('E3: a TTL of 0 keeps no done entry and drops a pending one for the same key', () => {
+    const c = createReportCache({ ttlMs: 0 });
+    c.putDone(KEY, DONE);
+    expect(c.get(KEY)).toBeUndefined();
+    c.putPending(KEY, PENDING);
+    expect(c.get(KEY)?.kind).toBe('pending');
+    c.putDone(KEY, DONE);
+    expect(c.get(KEY)).toBeUndefined();
+  });
+
+  it('keeps a pending entry for one hour, whatever the TTL', () => {
+    const t = clock();
+    const c = createReportCache({ ttlMs: 1, now: t.now });
+    c.putPending(KEY, PENDING);
+    t.advance(PENDING_TTL_MS - 1);
+    expect(c.get(KEY)).toEqual({ kind: 'pending', ...PENDING, started_at: '2026-09-17T04:00:00.000Z' });
+    t.advance(1);
+    expect(c.get(KEY)).toBeUndefined();
+  });
+
+  it('a pending entry stores the start time it is given', () => {
+    const t = clock();
+    const c = createReportCache({ now: t.now });
+    c.putPending(KEY, PENDING);
+    t.advance(10_000);
+    c.putPending(KEY, { ...PENDING, started_at: '2026-09-17T04:00:00.000Z' });
+    expect(c.get(KEY)).toMatchObject({ started_at: '2026-09-17T04:00:00.000Z' });
+  });
+
+  it('E4: holds 1,000 entries and drops the least recently used', () => {
+    expect(CACHE_MAX_ENTRIES).toBe(1000);
+    const c = createReportCache();
+    for (let i = 0; i < CACHE_MAX_ENTRIES; i++) c.putDone(`k${i}`, DONE);
+    expect(c.get('k0')?.kind).toBe('done'); // k0 becomes the most recently used
+    c.putDone('k1000', DONE); // the 1,001st entry
+    expect(c.size()).toBe(CACHE_MAX_ENTRIES);
+    expect(c.get('k1')).toBeUndefined();
+    expect(c.get('k0')?.kind).toBe('done');
+    expect(c.get('k1000')?.kind).toBe('done');
+  });
+
+  it('deletes', () => {
+    const c = createReportCache();
+    c.putDone(KEY, DONE);
+    c.delete(KEY);
+    expect(c.get(KEY)).toBeUndefined();
   });
 });
 
-describe('ReportCache disk tier', () => {
-  it('persists rows to disk and serves them on a fresh instance', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rc-'));
-    const q: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'] };
-    const c1 = createReportCache({ diskDir: dir });
-    c1.set(q, dr, [{ DATE: '20260401', IMPRESSIONS: '100' }]);
-    // A different process / fresh instance should still hit on the same key.
-    const c2 = createReportCache({ diskDir: dir });
-    expect(c2.get(q, dr)).toEqual([{ DATE: '20260401', IMPRESSIONS: '100' }]);
-    // And the disk hit promotes to in-memory for cheap subsequent hits.
-    expect(c2.stats().hits).toBe(1);
-    rmSync(dir, { recursive: true, force: true });
-  });
+describe('result cache disk tier (E6)', () => {
+  it('stores references on disk that a fresh instance serves', () => withDir((dir) => {
+    createReportCache({ diskDir: dir }).putDone(KEY, DONE);
+    expect(Object.keys(JSON.parse(readFileSync(join(dir, `${KEY}.json`), 'utf8')))).toEqual(DONE_KEYS);
+    const fresh = createReportCache({ diskDir: dir });
+    expect(fresh.get(KEY)).toMatchObject({ kind: 'done', ...DONE });
+    expect(fresh.stats().hits).toBe(1);
+  }));
 
-  it('expires entries past ttlMs', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rc-'));
-    const q: ReportQuery = { dimensions: ['DATE'], metrics: ['IMPRESSIONS'] };
-    // 50ms TTL — write, sleep, read.
-    const c1 = createReportCache({ diskDir: dir, ttlMs: 50 });
-    c1.set(q, dr, [{ x: '1' }]);
-    await new Promise((r) => setTimeout(r, 80));
-    const c2 = createReportCache({ diskDir: dir, ttlMs: 50 });
-    expect(c2.get(q, dr)).toBeUndefined();
-    // Stale file is opportunistically removed on read.
-    expect(readdirSync(dir).length).toBe(0);
-    rmSync(dir, { recursive: true, force: true });
-  });
+  it('applies the TTL to entries on disk and removes expired files', () => withDir((dir) => {
+    const t = clock();
+    createReportCache({ diskDir: dir, ttlMs: 50, now: t.now }).putDone(KEY, DONE);
+    t.advance(50);
+    expect(createReportCache({ diskDir: dir, ttlMs: 50, now: t.now }).get(KEY)).toBeUndefined();
+    expect(readdirSync(dir)).toEqual([]);
+  }));
 
-  it('creates the cache dir if it does not exist', () => {
-    const parent = mkdtempSync(join(tmpdir(), 'rc-'));
+  it('stores pending runs on disk too, and deletes from disk', () => withDir((dir) => {
+    const c = createReportCache({ diskDir: dir });
+    c.putPending(KEY, PENDING);
+    expect(createReportCache({ diskDir: dir }).get(KEY)?.kind).toBe('pending');
+    c.delete(KEY);
+    expect(existsSync(join(dir, `${KEY}.json`))).toBe(false);
+  }));
+
+  it('treats an unreadable or foreign file as a miss and says so', () => withDir((dir) => {
+    writeFileSync(join(dir, `${KEY}.json`), '{"rows":[{"REVENUE":1}]}');
+    writeFileSync(join(dir, `${OTHER}.json`), 'not json');
+    const lines: string[] = [];
+    const logger = createLogger({ level: 'warn', sink: (l) => { lines.push(l); } });
+    const c = createReportCache({ diskDir: dir, logger });
+    expect(c.get(KEY)).toBeUndefined();
+    expect(c.get(OTHER)).toBeUndefined();
+    expect(lines.filter((l) => l.includes('"msg":"cache.disk_entry_invalid"'))).toHaveLength(2);
+  }));
+
+  it('creates the cache directory if it does not exist', () => withDir((parent) => {
     const dir = join(parent, 'nested', 'cache');
     createReportCache({ diskDir: dir });
     expect(existsSync(dir)).toBe(true);
-    rmSync(parent, { recursive: true, force: true });
-  });
+  }));
 });
