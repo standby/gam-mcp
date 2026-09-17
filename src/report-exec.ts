@@ -272,10 +272,17 @@ export async function executeReportRows(
       token = page.nextPageToken;
     } while (token);
     const table = buildTable(query.dimensions, query.metrics, pages.flatMap((p) => p.rows));
+    const warnings = [...table.warnings];
+    const reportedTotal = pages[0].totalRowCount;
+    if (reportedTotal !== undefined && reportedTotal !== count) {
+      warnings.push(
+        `GAM reported ${reportedTotal} rows for ${ran.result} but served ${count}; results below were computed from ${count} rows.`,
+      );
+    }
     return {
       columns: table.columns,
       rows: table.rows,
-      warnings: table.warnings,
+      warnings,
       input: {
         report: ran.report,
         result: ran.result,

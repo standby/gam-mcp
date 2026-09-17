@@ -187,6 +187,24 @@ describe('executeReportRows and derivedEnvelope', () => {
     });
   });
 
+  it('warns when the loop ends short of the reported total row count', async () => {
+    const ctx = makeCtx({ reports: [{ query, rows: rows(3) }] });
+    const realFetch = ctx.client.fetchRows;
+    ctx.client = {
+      ...ctx.client,
+      fetchRows: async (r, p) => {
+        const page = await realFetch(r, p);
+        return { ...page, totalRowCount: 5 };
+      },
+    };
+    const r = await executeReportRows(ctx, query, RANGE);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.rows).toHaveLength(3);
+    expect(r.warnings).toContain(
+      `GAM reported 5 rows for ${r.input.result} but served 3; results below were computed from 3 rows.`,
+    );
+  });
+
   it('A4: refuses computed output over the page size instead of cutting it', () => {
     const ctx = makeCtx({}, { pageRows: 2 });
     const input = { report: 'r', result: 'r/results/1', run_time: null, date_range: null };
