@@ -47,8 +47,11 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
     }
     // Resolve familiar names (e.g. CREATIVE_SIZE) the same way run_report does,
-    // so a template saved with an alias replays correctly and isn't refused
-    // up front the way it used to be.
+    // so a template saved with an alias replays correctly and isn't refused up
+    // front the way it used to be. The rewrite is disclosed via warnings here
+    // -- the only point in the alias lifecycle it happens, since a replayed
+    // template is already canonical and run_report's own re-resolution is a
+    // silent no-op on it.
     const canonical = canonicalizeQuery({
       dimensions: input.dimensions,
       metrics: input.metrics,
@@ -79,6 +82,8 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
     return listEnvelope(
       [{ name: entry.name, saved_at: entry.saved_at, description: entry.description ?? '' }],
       `Saved query "${entry.name}" (${existing ? 'replaced' : 'new'}).`,
+      undefined,
+      canonical.warnings,
     );
   },
 };

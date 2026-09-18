@@ -31,7 +31,7 @@ describe('saved_queries tools', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('save_query accepts the CREATIVE_SIZE alias in dimensions and a same-named filter, and stores it canonicalized', async () => {
+  it('save_query accepts the CREATIVE_SIZE alias in dimensions and a same-named filter, stores it canonicalized, and warns (only disclosure point in the lifecycle)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
     const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
     const ctx = makeCtx({}, { savedQueries });
@@ -42,10 +42,16 @@ describe('saved_queries tools', () => {
       filters: [{ field: 'CREATIVE_SIZE', op: '=', value: '300x250' }],
     });
     const r = await saveQueryTool.handler(args, ctx);
-    expect('rows' in r).toBe(true);
+    if ('error' in r) throw new Error(JSON.stringify(r));
     const entry = savedQueries.get('by_creative_size');
     expect(entry?.body.dimensions).toEqual(['RENDERED_CREATIVE_SIZE']);
     expect(entry?.body.filters).toEqual([{ field: 'RENDERED_CREATIVE_SIZE', op: '=', value: '300x250' }]);
+    // Two rewrites (the dimension and the filter field), each naming both the
+    // given and the canonical spelling -- the only place this rewrite is ever
+    // disclosed, since a replayed template is already canonical and
+    // run_report's own re-resolution of it is a silent no-op.
+    expect(r.warnings).toHaveLength(2);
+    for (const w of r.warnings) expect(w).toMatch(/CREATIVE_SIZE.*RENDERED_CREATIVE_SIZE/);
     rmSync(dir, { recursive: true, force: true });
   });
 

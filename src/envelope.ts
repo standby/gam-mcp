@@ -99,17 +99,20 @@ export function inferSchema(rows: Record<string, unknown>[]): Column[] {
 }
 
 // For tools whose rows are not a GAM report (lookups, schema, stats).
+// `warnings` defaults to [] so every existing positional call (schema as the
+// 3rd argument) keeps behaving exactly as before.
 export function listEnvelope(
   rows: Record<string, unknown>[],
   summary: string,
   schema?: Column[],
+  warnings: string[] = [],
 ): ResultEnvelope {
   return envelope({
     summary,
     total_row_count: rows.length,
     truncated: false,
     next_cursor: null,
-    warnings: [],
+    warnings,
     schema: schema ?? inferSchema(rows),
     rows,
   });
