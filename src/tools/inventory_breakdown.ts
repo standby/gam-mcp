@@ -9,9 +9,9 @@ const inputSchema = z.object({
 }).strict();
 
 const DIM = {
-  line_item_type: 'LINE_ITEM_TYPE',
-  advertiser: 'ADVERTISER_NAME',
-  order: 'ORDER_NAME',
+  line_item_type: ['LINE_ITEM_TYPE'],
+  advertiser: ['ADVERTISER_ID', 'ADVERTISER_NAME'],
+  order: ['ORDER_ID', 'ORDER_NAME'],
 } as const;
 
 export const inventoryBreakdownTool = buildReportTool({
@@ -20,7 +20,7 @@ export const inventoryBreakdownTool = buildReportTool({
     'Revenue and impressions broken down by line_item_type (programmatic vs. direct vs. house mix), or by advertiser/order.',
   input: inputSchema,
   buildQuery: (input) => ({
-    dimensions: [DIM[input.group_by]],
+    dimensions: [...DIM[input.group_by]],
     metrics: ['REVENUE', 'IMPRESSIONS'],
   }),
   summary: (input, range) =>

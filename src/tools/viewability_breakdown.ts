@@ -5,17 +5,25 @@ import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension for viewability.
 const PRIMARY = {
-  ad_unit: 'AD_UNIT_NAME',
-  size: 'RENDERED_CREATIVE_SIZE',
-  device: 'DEVICE_CATEGORY_NAME',
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  size: ['RENDERED_CREATIVE_SIZE'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
+  day: ['DATE'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
+
+// Whether two dimension lists name the same pair (or single dimension), not
+// merely equal strings — PRIMARY/SECONDARY entries are now [ID, NAME] arrays,
+// so by:'device' + group_by:'device' produces two distinct array instances
+// with identical contents; `!==` would miss that and double the dimension.
+function sameDims(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((d, i) => d === b[i]);
+}
 
 const inputSchema = z.object({
   date_range: dateRangeInput(HISTORICAL_RANGE),
@@ -44,9 +52,9 @@ export const viewabilityBreakdownTool = buildReportTool({
     const primary = PRIMARY[input.by];
     const secondary = SECONDARY[input.group_by];
     // Guard against by:'device' + group_by:'device' emitting a duplicate dim.
-    const useSecondary = secondary && secondary !== primary ? secondary : null;
+    const useSecondary = secondary && !sameDims(secondary, primary) ? secondary : null;
     return {
-      dimensions: useSecondary ? [primary, useSecondary] : [primary],
+      dimensions: useSecondary ? [...primary, ...useSecondary] : [...primary],
       metrics: [
         'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',
         'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS',

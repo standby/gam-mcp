@@ -45,8 +45,9 @@ describe('ad_speed', () => {
       createMockGamClient({
         networkCode: NETWORK,
         reports: [{
-          query: { dimensions: ['AD_UNIT_NAME'], metrics: CREATIVE_LOAD },
+          query: { dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'], metrics: CREATIVE_LOAD },
           rows: [{
+            AD_UNIT_ID: 1,
             AD_UNIT_NAME: 'Homepage',
             IMPRESSIONS: 1000000,
             CREATIVE_LOAD_TIME_0_500_PERCENT: 0.42,
@@ -69,7 +70,7 @@ describe('ad_speed', () => {
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(seen.definition?.reportType).toBe('AD_SPEED');
-    expect(seen.definition?.dimensions).toEqual(['AD_UNIT_NAME']);
+    expect(seen.definition?.dimensions).toEqual(['AD_UNIT_ID', 'AD_UNIT_NAME']);
     expect(seen.definition?.metrics).toEqual(CREATIVE_LOAD);
     expect(r.total_row_count).toBe(1);
     expect(r.rows[0]?.CREATIVE_LOAD_TIME_GT_8000_PERCENT).toBe(0.02);

@@ -3,10 +3,10 @@ import { buildReportTool } from '../report-tool-builder.js';
 import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const GROUP_BY = {
-  ad_unit:         'AD_UNIT_NAME',
-  device_category: 'DEVICE_CATEGORY_NAME',
-  country:         'COUNTRY_NAME',
-  day:             'DATE',
+  ad_unit:         ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  device_category: ['DEVICE_CATEGORY_NAME'],
+  country:         ['COUNTRY_NAME'],
+  day:             ['DATE'],
 } as const;
 
 const inputSchema = z.object({
@@ -20,7 +20,7 @@ export const fillRateTool = buildReportTool({
   description: 'Fill rate, ad requests, and unfilled impressions grouped by ad_unit, device_category, country, or day.',
   input: inputSchema,
   buildQuery: (input) => ({
-    dimensions: [GROUP_BY[input.group_by]],
+    dimensions: [...GROUP_BY[input.group_by]],
     metrics: [
       'AD_REQUESTS',
       'UNFILLED_IMPRESSIONS',

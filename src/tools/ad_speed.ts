@@ -7,10 +7,10 @@ import type { ReportQuery } from '../gam-client.js';
 // dimensions are useful for latency triage — placement, form factor, network
 // conditions, and creative weight.
 const PRIMARY = {
-  ad_unit: 'AD_UNIT_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
-  country: 'COUNTRY_NAME',
-  creative_size: 'RENDERED_CREATIVE_SIZE',
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
+  country: ['COUNTRY_NAME'],
+  creative_size: ['RENDERED_CREATIVE_SIZE'],
 } as const;
 
 // The latency buckets GAM reports, in ascending order. Every family below uses
@@ -89,7 +89,7 @@ export const adSpeedTool = buildReportTool({
     'placements are unviewable, this one shows why.',
   input: inputSchema,
   buildQuery: (input): ReportQuery => ({
-    dimensions: [PRIMARY[input.by]],
+    dimensions: [...PRIMARY[input.by]],
     metrics: FOCUS_METRICS[input.focus],
     report_type: 'AD_SPEED',
   }),

@@ -6,18 +6,18 @@ import type { ReportQuery } from '../gam-client.js';
 // Primary breakdown dimension: the Open Bidding partner (buyer) vs the
 // configured yield group itself.
 const PRIMARY = {
-  buyer: 'YIELD_GROUP_BUYER_NAME',
-  yield_group: 'YIELD_GROUP_NAME',
+  buyer: ['YIELD_GROUP_BUYER_NAME'],
+  yield_group: ['YIELD_GROUP_NAME'],
 } as const;
 
 // Optional secondary slice — same set as bidder_breakdown so the two read
 // alike (see *where* a partner wins).
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  ad_unit: 'AD_UNIT_NAME',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
+  day: ['DATE'],
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
 const inputSchema = z.object({
@@ -50,7 +50,7 @@ export const yieldBreakdownTool = buildReportTool({
     const primary = PRIMARY[input.by];
     const secondary = SECONDARY[input.group_by];
     return {
-      dimensions: secondary ? [primary, secondary] : [primary],
+      dimensions: secondary ? [...primary, ...secondary] : [...primary],
       metrics: [
         'YIELD_GROUP_IMPRESSIONS',
         'YIELD_GROUP_ESTIMATED_REVENUE',

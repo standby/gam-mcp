@@ -20,7 +20,7 @@ export const topAdvertisersTool = buildReportTool({
   description: 'Top N advertisers by revenue or impressions over a date range.',
   input: inputSchema,
   buildQuery: (input) => ({
-    dimensions: ['ADVERTISER_NAME'],
+    dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'],
     metrics: [METRIC_MAP[input.metric]],
   }),
   summary: (input, range) =>

@@ -5,11 +5,11 @@ import type { ReportQuery } from '../gam-client.js';
 
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  ad_unit: 'AD_UNIT_NAME',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
-  line_item_type: 'LINE_ITEM_TYPE',
+  day: ['DATE'],
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
+  line_item_type: ['LINE_ITEM_TYPE'],
 } as const;
 
 const inputSchema = z.object({
@@ -34,7 +34,7 @@ export const bidderBreakdownTool = buildReportTool({
   buildQuery: (input): ReportQuery => {
     const secondary = SECONDARY[input.group_by];
     return {
-      dimensions: secondary ? ['BIDDER_NAME', secondary] : ['BIDDER_NAME'],
+      dimensions: secondary ? ['BIDDER_NAME', ...secondary] : ['BIDDER_NAME'],
       metrics: [
         'AD_EXCHANGE_IMPRESSIONS',
         'AD_EXCHANGE_REVENUE',

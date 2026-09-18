@@ -3,12 +3,12 @@ import { buildReportTool } from '../report-tool-builder.js';
 import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const SPLIT = {
-  advertiser: 'ADVERTISER_NAME',
-  order: 'ORDER_NAME',
-  line_item_type: 'LINE_ITEM_TYPE',
-  ad_unit: 'AD_UNIT_NAME',
-  country: 'COUNTRY_NAME',
-  device_category: 'DEVICE_CATEGORY_NAME',
+  advertiser: ['ADVERTISER_ID', 'ADVERTISER_NAME'],
+  order: ['ORDER_ID', 'ORDER_NAME'],
+  line_item_type: ['LINE_ITEM_TYPE'],
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  country: ['COUNTRY_NAME'],
+  device_category: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
 const inputSchema = z.object({
@@ -27,7 +27,7 @@ export const revenueTrendTool = buildReportTool({
   buildQuery: (input) => ({
     dimensions: [
       input.granularity === 'week' ? 'WEEK' : 'DATE',
-      ...(input.split_by ? [SPLIT[input.split_by]] : []),
+      ...(input.split_by ? SPLIT[input.split_by] : []),
     ],
     metrics: ['REVENUE', 'IMPRESSIONS'],
   }),

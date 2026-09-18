@@ -20,8 +20,9 @@ describe('video_breakdown', () => {
       args,
       makeCtx(
         { reports: [{
-          query: { dimensions: ['AD_UNIT_NAME'], metrics: METRICS },
+          query: { dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'], metrics: METRICS },
           rows: [{
+            AD_UNIT_ID: 1,
             AD_UNIT_NAME: 'Homepage',
             VIDEO_VIEWERSHIP_STARTS: 100000,
             VIDEO_VIEWERSHIP_FIRST_QUARTILES: 90000,

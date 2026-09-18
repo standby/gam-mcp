@@ -7,10 +7,10 @@ describe('revenue_summary', () => {
     const ctx = makeCtx(
       { reports: [{
         query: {
-          dimensions: ['ADVERTISER_NAME'],
+          dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'],
           metrics: ['REVENUE', 'IMPRESSIONS'],
         },
-        rows: [{ ADVERTISER_NAME: 'Acme', REVENUE: 5000, IMPRESSIONS: 1000 }],
+        rows: [{ ADVERTISER_ID: 1, ADVERTISER_NAME: 'Acme', REVENUE: 5000, IMPRESSIONS: 1000 }],
       }] },
       { timezone: 'America/Los_Angeles', now: new Date('2026-04-30T12:00:00Z') },
     );

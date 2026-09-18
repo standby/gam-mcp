@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { gamError } from '../errors.js';
+import { gamError, type GamErrorEnvelope } from '../errors.js';
 import { previousPeriod, previousYear, resolveDateRange, type ResolvedRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
@@ -65,6 +65,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
       if ('error' in base) return base;
       if ('error' in prev) return prev;
       const joined = joinAndCompare(base.rows, prev.rows, input.dimensions, input.metrics);
+      if ('error' in joined) return joined;
       const sorted = sortByPrimaryMetric(joined, input.metrics[0]);
       const top = sorted.slice(0, input.top_n);
       const summary =
@@ -89,26 +90,61 @@ function comparisonRange(base: ResolvedRange, comparison: 'previous_period' | 'p
   return comparison === 'previous_year' ? previousYear(base) : previousPeriod(base);
 }
 
+const joinKey = (r: Record<string, Cell>, dims: string[]) =>
+  dims.map((d) => cellText(r[d])).join('\u0001');
+
+// The dimension→value map a duplicate key error names, built from the row
+// that collided rather than the opaque joined key string.
+const keyDetails = (r: Record<string, Cell>, dims: string[]): Record<string, string> =>
+  Object.fromEntries(dims.map((d) => [d, cellText(r[d])]));
+
+// Groups one period's rows by the full dimension tuple. A key that occurs
+// twice means the join cannot tell which row the other period's row should
+// be compared against, so this refuses rather than letting a Map silently
+// keep only the last row written under that key (spec §4.1, finding F8).
+function groupByKey(
+  rows: Record<string, Cell>[],
+  dims: string[],
+  period: 'base' | 'previous',
+): Map<string, Record<string, Cell>> | GamErrorEnvelope {
+  const byKey = new Map<string, Record<string, Cell>>();
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const k = joinKey(r, dims);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+    if (!byKey.has(k)) byKey.set(k, r);
+  }
+  for (const [k, count] of counts) {
+    if (count > 1) {
+      return gamError('DUPLICATE_JOIN_KEY', { key: keyDetails(byKey.get(k)!, dims), period });
+    }
+  }
+  return byKey;
+}
+
 function joinAndCompare(
   baseRows: Record<string, Cell>[],
   prevRows: Record<string, Cell>[],
   dims: string[],
   metrics: string[],
-): Record<string, string>[] {
-  const key = (r: Record<string, Cell>) => dims.map((d) => cellText(r[d])).join('\u0001');
-  const prevByKey = new Map(prevRows.map((r) => [key(r), r]));
+): Record<string, string>[] | GamErrorEnvelope {
+  // Checked independently — a duplicate in the base is exactly as wrong as
+  // one in the previous period, so both sides are checked, not just one.
+  const baseByKey = groupByKey(baseRows, dims, 'base');
+  if ('error' in baseByKey) return baseByKey;
+  const prevByKey = groupByKey(prevRows, dims, 'previous');
+  if ('error' in prevByKey) return prevByKey;
+
   const seenPrev = new Set<string>();
   const out: Record<string, string>[] = [];
 
-  for (const b of baseRows) {
-    const k = key(b);
+  for (const [k, b] of baseByKey) {
     const p = prevByKey.get(k);
     if (p) seenPrev.add(k);
     out.push(buildRow(b, p, dims, metrics));
   }
   // Rows that exist only in the previous period.
-  for (const p of prevRows) {
-    const k = key(p);
+  for (const [k, p] of prevByKey) {
     if (seenPrev.has(k)) continue;
     out.push(buildRow(undefined, p, dims, metrics));
   }

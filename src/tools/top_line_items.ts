@@ -22,7 +22,7 @@ export const topLineItemsTool = buildReportTool({
   description: 'Top N line items by revenue or impressions, with order and advertiser context. Optional line_item_type filter (STANDARD, SPONSORSHIP, etc.).',
   input: inputSchema,
   buildQuery: (input) => ({
-    dimensions: ['LINE_ITEM_NAME', 'ORDER_NAME', 'ADVERTISER_NAME'],
+    dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME', 'ORDER_ID', 'ORDER_NAME', 'ADVERTISER_ID', 'ADVERTISER_NAME'],
     metrics: [METRIC_MAP[input.metric]],
     filters: input.line_item_type
       ? [{ field: 'LINE_ITEM_TYPE', op: '=', value: input.line_item_type }]

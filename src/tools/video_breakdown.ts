@@ -5,17 +5,17 @@ import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension for the video completion funnel.
 const PRIMARY = {
-  ad_unit: 'AD_UNIT_NAME',
-  placement: 'VIDEO_PLCMT_NAME',
-  size: 'RENDERED_CREATIVE_SIZE',
-  duration: 'VIDEO_AD_DURATION',
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  placement: ['VIDEO_PLCMT_NAME'],
+  size: ['RENDERED_CREATIVE_SIZE'],
+  duration: ['VIDEO_AD_DURATION'],
 } as const;
 
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
+  day: ['DATE'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
 const inputSchema = z.object({
@@ -45,7 +45,7 @@ export const videoBreakdownTool = buildReportTool({
     const primary = PRIMARY[input.by];
     const secondary = SECONDARY[input.group_by];
     return {
-      dimensions: secondary ? [primary, secondary] : [primary],
+      dimensions: secondary ? [...primary, ...secondary] : [...primary],
       metrics: [
         'VIDEO_VIEWERSHIP_STARTS',
         'VIDEO_VIEWERSHIP_FIRST_QUARTILES',

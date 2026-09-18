@@ -176,7 +176,17 @@ export function toolWorld(over: Partial<ToolContext> = {}): ToolContext {
     ...inner,
     defineReport: (definition) => {
       const dateRange = definitionRange(definition) ?? undefined;
-      reports.push({ query: { dimensions: definition.dimensions, metrics: definition.metrics }, dateRange, rows: [{}, {}] });
+      // Two rows, distinguished on every requested dimension by index: a
+      // join-sensitive tool (compare_periods) that groups by whatever
+      // dimensions the request names must not see two identical rows and
+      // read that as a duplicate join key (spec §4.1). Metrics stay blank —
+      // nothing here depends on their values, only on there being two rows.
+      const rowAt = (i: number) => Object.fromEntries(definition.dimensions.map((d) => [d, i]));
+      reports.push({
+        query: { dimensions: definition.dimensions, metrics: definition.metrics },
+        dateRange,
+        rows: [rowAt(0), rowAt(1)],
+      });
       return inner.defineReport(definition);
     },
   };

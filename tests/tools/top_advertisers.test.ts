@@ -13,8 +13,11 @@ describe('top_advertisers', () => {
       args,
       makeCtx(
         { reports: [{
-          query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
-          rows: [{ ADVERTISER_NAME: 'Acme', REVENUE: 9999 }, { ADVERTISER_NAME: 'Beta', REVENUE: 500 }],
+          query: { dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'], metrics: ['REVENUE'] },
+          rows: [
+            { ADVERTISER_ID: 1, ADVERTISER_NAME: 'Acme', REVENUE: 9999 },
+            { ADVERTISER_ID: 2, ADVERTISER_NAME: 'Beta', REVENUE: 500 },
+          ],
         }] },
         { timezone: 'America/Los_Angeles' },
       ),

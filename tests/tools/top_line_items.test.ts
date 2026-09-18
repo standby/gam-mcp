@@ -14,10 +14,15 @@ describe('top_line_items', () => {
       makeCtx(
         { reports: [{
           query: {
-            dimensions: ['LINE_ITEM_NAME', 'ORDER_NAME', 'ADVERTISER_NAME'],
+            dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME', 'ORDER_ID', 'ORDER_NAME', 'ADVERTISER_ID', 'ADVERTISER_NAME'],
             metrics: ['REVENUE'],
           },
-          rows: [{ LINE_ITEM_NAME: 'LI1', ORDER_NAME: 'Order1', ADVERTISER_NAME: 'Acme', REVENUE: 10000 }],
+          rows: [{
+            LINE_ITEM_ID: 1, LINE_ITEM_NAME: 'LI1',
+            ORDER_ID: 2, ORDER_NAME: 'Order1',
+            ADVERTISER_ID: 3, ADVERTISER_NAME: 'Acme',
+            REVENUE: 10000,
+          }],
         }] },
         { timezone: 'America/Los_Angeles' },
       ),

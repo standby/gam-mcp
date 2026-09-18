@@ -82,8 +82,13 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
   }),
   // Two rows in the same period reduced to the same join key, so the join
   // cannot tell which one the other period's row should be compared against.
+  // `period` names which side had the collision ('base' or 'previous') and
+  // `key` is the dimension→value map that repeated; both are required from
+  // the caller — an absent period is a caller bug, not a value to paper
+  // over, so it renders literally (as "undefined") rather than as a
+  // plausible-sounding "same period" that would hide the omission.
   DUPLICATE_JOIN_KEY: (d) => ({
-    message: `Multiple rows in the ${d.period ?? 'same'} period share the join key ${JSON.stringify(d.key)}.`,
+    message: `Multiple rows in the ${d.period} period share the join key ${JSON.stringify(d.key)}.`,
     hint: 'Add a dimension that separates these rows (e.g. a more granular ID) so each join key names exactly one row.',
   }),
 };

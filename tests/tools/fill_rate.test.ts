@@ -9,10 +9,10 @@ describe('fill_rate', () => {
       makeCtx(
         { reports: [{
           query: {
-            dimensions: ['AD_UNIT_NAME'],
+            dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
             metrics: ['AD_REQUESTS', 'UNFILLED_IMPRESSIONS', 'FILL_RATE'],
           },
-          rows: [{ AD_UNIT_NAME: '/home', AD_REQUESTS: 1000, UNFILLED_IMPRESSIONS: 100, FILL_RATE: 0.9 }],
+          rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: '/home', AD_REQUESTS: 1000, UNFILLED_IMPRESSIONS: 100, FILL_RATE: 0.9 }],
         }] },
         { timezone: 'America/Los_Angeles' },
       ),

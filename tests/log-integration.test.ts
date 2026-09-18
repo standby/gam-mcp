@@ -31,8 +31,8 @@ describe('log integration', () => {
       args,
       makeCtx(
         { reports: [{
-          query: { dimensions: ['ADVERTISER_NAME'], metrics: ['REVENUE'] },
-          rows: [{ ADVERTISER_NAME: 'Acme', REVENUE: 1 }],
+          query: { dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'], metrics: ['REVENUE'] },
+          rows: [{ ADVERTISER_ID: 1, ADVERTISER_NAME: 'Acme', REVENUE: 1 }],
         }] },
         { logger: rec.logger, timezone: 'America/Los_Angeles' },
       ),
