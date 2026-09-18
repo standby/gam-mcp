@@ -201,14 +201,24 @@ GAM runs each report family as a distinct `reportType`, and a request is wholly 
 git clone <this repo>
 cd gam-mcp
 npm install
-npm test                # unit tests with synthetic fixtures (~60 tests, ≈3s)
+npm test                # unit tests with synthetic fixtures; no credential needed
 npm run build           # tsc → dist/
 GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... npm run smoke
-                        # opt-in: hits real GAM end-to-end
+                        # opt-in: hits real GAM end-to-end, through the library
+GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... \
+  npm run smoke:transports -- --yes
+                        # opt-in: drives the packaged dist/cli.js over BOTH
+                        # stdio and HTTP, then repeats the run in a fresh
+                        # process to prove report reuse works across processes
 GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... npm run verify:pack
                         # release gate: pack tarball, install in tempdir,
                         # exercise the bin as a real MCP client would
 ```
+
+`smoke:transports` refuses to start without `--yes`: it runs against a live network and **defines a report
+object, which the Ad Manager API creates hidden and cannot delete**. It uses one fixed date range for every
+run so it only ever defines one such report — later runs find that report again instead of adding another.
+Override `GAM_SMOKE_DATE_START` / `GAM_SMOKE_DATE_END` if GAM has aged that window out of retention.
 
 `npm publish` is gated by `prepublishOnly` which runs build + tests + verify:pack — a publish can't ship a broken artifact.
 
