@@ -85,6 +85,16 @@ async function exercise(client: Client, mode: 'stdio' | 'http'): Promise<void> {
   }
   expect(names).toHaveLength(mode === 'stdio' ? 33 : 29);
 
+  // Resources go over the same transport and were only ever read in memory.
+  const resources = (await client.listResources()).resources.map((r) => r.uri);
+  expect(resources).toContain('gam://network');
+  const network = await client.readResource({ uri: 'gam://network' });
+  expect(JSON.parse((network.contents[0] as { text: string }).text)).toMatchObject({
+    network_code: NETWORK,
+    report_time_zone: 'Asia/Tokyo',
+    date_time_zone: 'Asia/Tokyo',
+  });
+
   const first = await client.callTool({ name: 'run_report', arguments: RUN });
   expect(first.isError, JSON.stringify(first.content)).toBeFalsy();
   const page1 = payloadOf(first);
@@ -156,6 +166,7 @@ describe('both MCP transports, end to end (owner requirement)', () => {
     try {
       const refused = new Client({ name: 'e2e-http-no-token', version: '1' });
       await expect(refused.connect(new StreamableHTTPClientTransport(url))).rejects.toThrow();
+      await refused.close();
 
       await client.connect(new StreamableHTTPClientTransport(url, {
         requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
