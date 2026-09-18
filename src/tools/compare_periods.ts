@@ -3,10 +3,21 @@ import { gamError, type GamErrorEnvelope } from '../errors.js';
 import { previousPeriod, previousYear, resolveDateRange, type ResolvedRange } from '../dates.js';
 import { canonicalizeQuery, validateCombo } from '../schema.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
+import { derived } from '../derived.js';
 import { cellText, type Cell } from '../values.js';
 import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 import { dateField, dateRangeInput, filterInput, HISTORICAL_RANGE } from '../tool-input.js';
+
+// Fixed across every row/metric: spec §4.6 wants the rule stated, not just
+// implied by a null. This is arithmetic, not inference (derived.heuristic is
+// always false) -- the three null/zero branches below are the whole rule.
+const DELTA_PCT_METHOD =
+  'Signed percent change from the comparison period to base_range: ((base - prev) / prev) * 100, rounded to 2 ' +
+  'decimals. value is null when the metric is missing (not reported by GAM) in either period -- a null input; ' +
+  'value is also null when prev is exactly 0 and base is not, because the percent change is undefined/unbounded, ' +
+  'though this is not counted as a null-input row since neither input is itself missing; value is 0 when both ' +
+  'periods report exactly 0 (no change).';
 
 const inputSchema = z.object({
   dimensions: z.array(z.string()).min(1).max(10)
@@ -33,7 +44,10 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
   description:
     "Run the same report over two date ranges and return per-row deltas. Useful for week-over-week, month-over-month, year-over-year decisions. " +
     "comparison can be 'previous_period' (same length, immediately preceding base_range), 'previous_year' (base shifted back 1 year), or explicit {start,end}. " +
-    "Output rows carry <metric>, <metric>_prev, and <metric>_delta_pct (signed percent change; null when prev is 0 or row is new). " +
+    "Output rows carry <metric> and <metric>_prev (each '' when that period didn't report the metric), plus " +
+    "<metric>_delta_pct as a derived object ({value, method, heuristic: false, inputs}): value is the signed percent " +
+    "change, null when the metric is missing in either period or when prev is exactly 0 and the metric isn't " +
+    "(undefined change), and 0 when both periods report exactly 0. " +
     "Sorted by the first metric's current-period value, descending. top_n caps result rows.",
   input: inputSchema,
   annotations: READS_GAM,
@@ -71,18 +85,19 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
       if ('error' in prev) return prev;
       const joined = joinAndCompare(base.rows, prev.rows, dimensions, input.metrics);
       if ('error' in joined) return joined;
-      const sorted = sortByPrimaryMetric(joined, input.metrics[0]);
+      const sorted = sortByPrimaryMetric(joined.rows, input.metrics[0]);
       const top = sorted.slice(0, input.top_n);
       const summary =
         `Compare: dims=[${dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
         `base=${baseRange.start}..${baseRange.end} vs prev=${prevRange.start}..${prevRange.end} ` +
-        `(${joined.length} keys, top_n=${input.top_n})`;
+        `(${joined.rows.length} keys, top_n=${input.top_n})`;
       return derivedEnvelope(ctx, {
         summary,
         inputs: [base.input, prev.input],
         rows: top,
-        total_row_count: joined.length,
+        total_row_count: joined.rows.length,
         warnings: [...canonical.warnings, ...base.warnings, ...prev.warnings],
+        null_input_rows: joined.nullInputRows,
       });
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
@@ -132,7 +147,7 @@ function joinAndCompare(
   prevRows: Record<string, Cell>[],
   dims: string[],
   metrics: string[],
-): Record<string, string>[] | GamErrorEnvelope {
+): { rows: Record<string, unknown>[]; nullInputRows: number } | GamErrorEnvelope {
   // Checked independently — a duplicate in the base is exactly as wrong as
   // one in the previous period, so both sides are checked, not just one.
   const baseByKey = groupByKey(baseRows, dims, 'base');
@@ -141,19 +156,30 @@ function joinAndCompare(
   if ('error' in prevByKey) return prevByKey;
 
   const seenPrev = new Set<string>();
-  const out: Record<string, string>[] = [];
+  const out: Record<string, unknown>[] = [];
+  // Counted from the outcome, once per row, the way
+  // diagnose_floor_pricing.ts's nullInputRows is: a row counts here only
+  // when at least one of its metrics' delta came out null because that
+  // metric was missing (not reported) on one side -- never for the
+  // prev===0-but-base-isn't case, which is null for a different reason
+  // (undefined percent change, not a missing input; see DELTA_PCT_METHOD).
+  let nullInputRows = 0;
 
   for (const [k, b] of baseByKey) {
     const p = prevByKey.get(k);
     if (p) seenPrev.add(k);
-    out.push(buildRow(b, p, dims, metrics));
+    const built = buildRow(b, p, dims, metrics);
+    if (built.nullInput) nullInputRows++;
+    out.push(built.row);
   }
   // Rows that exist only in the previous period.
   for (const [k, p] of prevByKey) {
     if (seenPrev.has(k)) continue;
-    out.push(buildRow(undefined, p, dims, metrics));
+    const built = buildRow(undefined, p, dims, metrics);
+    if (built.nullInput) nullInputRows++;
+    out.push(built.row);
   }
-  return out;
+  return { rows: out, nullInputRows };
 }
 
 function buildRow(
@@ -161,17 +187,25 @@ function buildRow(
   prev: Record<string, Cell> | undefined,
   dims: string[],
   metrics: string[],
-): Record<string, string> {
-  const row: Record<string, string> = {};
+): { row: Record<string, unknown>; nullInput: boolean } {
+  const row: Record<string, unknown> = {};
   for (const d of dims) row[d] = cellText(base?.[d] ?? prev?.[d]);
+  let nullInput = false;
   for (const m of metrics) {
     const cur = base ? toNum(base[m]) : null;
     const old = prev ? toNum(prev[m]) : null;
     row[m] = cur === null ? '' : String(cur);
     row[`${m}_prev`] = old === null ? '' : String(old);
-    row[`${m}_delta_pct`] = pctChange(cur, old);
+    const delta = deltaPct(cur, old);
+    if (delta.nullInput) nullInput = true;
+    row[`${m}_delta_pct`] = derived({
+      value: delta.value,
+      method: DELTA_PCT_METHOD,
+      heuristic: false,
+      inputs: { [`${m}_now`]: cur, [`${m}_prev`]: old },
+    });
   }
-  return row;
+  return { row, nullInput };
 }
 
 function toNum(v: Cell | undefined): number | null {
@@ -180,15 +214,21 @@ function toNum(v: Cell | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function pctChange(cur: number | null, prev: number | null): string {
-  if (cur === null || prev === null) return ''; // missing on one side
-  if (prev === 0) return cur === 0 ? '0' : ''; // undefined when prev is 0
-  return (((cur - prev) / prev) * 100).toFixed(2);
+// nullInput is true only when a metric is missing (not reported by GAM) on
+// one side -- a genuine null input to the computation. The prev===0 branch
+// below also produces a null value (percent change from zero is undefined
+// unless base is also zero), but both inputs are present and known there, so
+// it is a different reason for null and does not set nullInput (spec: count
+// only rows a null input actually nulled).
+function deltaPct(cur: number | null, prev: number | null): { value: number | null; nullInput: boolean } {
+  if (cur === null || prev === null) return { value: null, nullInput: true };
+  if (prev === 0) return { value: cur === 0 ? 0 : null, nullInput: false };
+  return { value: Number((((cur - prev) / prev) * 100).toFixed(2)), nullInput: false };
 }
 
 function sortByPrimaryMetric(
-  rows: Record<string, string>[],
+  rows: Record<string, unknown>[],
   primary: string,
-): Record<string, string>[] {
-  return [...rows].sort((a, b) => (toNum(b[primary]) ?? 0) - (toNum(a[primary]) ?? 0));
+): Record<string, unknown>[] {
+  return [...rows].sort((a, b) => (toNum(b[primary] as Cell) ?? 0) - (toNum(a[primary] as Cell) ?? 0));
 }

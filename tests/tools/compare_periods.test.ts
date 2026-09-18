@@ -43,24 +43,81 @@ describe('compare_periods', () => {
 
     expect(byAdv.Acme.IMPRESSIONS).toBe('1000');
     expect(byAdv.Acme.IMPRESSIONS_prev).toBe('800');
-    expect(byAdv.Acme.IMPRESSIONS_delta_pct).toBe('25.00');
+    // derived block: key order is value, method, heuristic, inputs (derived()
+    // never emits `reason` here — compare_periods never passes one).
+    expect(Object.keys(byAdv.Acme.IMPRESSIONS_delta_pct as object)).toEqual(['value', 'method', 'heuristic', 'inputs']);
+    expect(byAdv.Acme.IMPRESSIONS_delta_pct).toMatchObject({
+      value: 25,
+      heuristic: false,
+      inputs: { IMPRESSIONS_now: 1000, IMPRESSIONS_prev: 800 },
+    });
+    expect((byAdv.Acme.IMPRESSIONS_delta_pct as { method: string }).method).toMatch(/percent change/i);
 
     expect(byAdv.Beta.IMPRESSIONS).toBe('200');
     expect(byAdv.Beta.IMPRESSIONS_prev).toBe('250');
-    expect(byAdv.Beta.IMPRESSIONS_delta_pct).toBe('-20.00');
+    expect(byAdv.Beta.IMPRESSIONS_delta_pct).toMatchObject({ value: -20 });
 
-    // NewCo only in base — prev is null, delta_pct empty
+    // NewCo only in base — prev is missing (a null input): delta_pct.value
+    // is null, and the row is counted in the null-input warning.
     expect(byAdv.NewCo.IMPRESSIONS).toBe('50');
     expect(byAdv.NewCo.IMPRESSIONS_prev).toBe('');
-    expect(byAdv.NewCo.IMPRESSIONS_delta_pct).toBe('');
+    expect(byAdv.NewCo.IMPRESSIONS_delta_pct).toMatchObject({
+      value: null,
+      inputs: { IMPRESSIONS_now: 50, IMPRESSIONS_prev: null },
+    });
 
-    // Gone only in prev — base is null
+    // Gone only in prev — base is missing (a null input) too.
     expect(byAdv.Gone.IMPRESSIONS).toBe('');
     expect(byAdv.Gone.IMPRESSIONS_prev).toBe('99');
-    expect(byAdv.Gone.IMPRESSIONS_delta_pct).toBe('');
+    expect(byAdv.Gone.IMPRESSIONS_delta_pct).toMatchObject({ value: null });
+
+    // Two rows (NewCo, Gone) had a metric missing on one side.
+    expect(r.warnings.join(' ')).toMatch(/2 row\(s\) had a null input/);
 
     // Sorted by primary metric (IMPRESSIONS) descending — Acme first
     expect(r.rows![0].ADVERTISER_NAME).toBe('Acme');
+  });
+
+  it('prev === 0: both periods zero yields value 0 (not a null input); prev 0 with a nonzero base yields ' +
+     'value null (undefined change) but is NOT counted as a null-input row', async () => {
+    const query = { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-23', end: '2026-04-29' },
+          rows: [
+            { ADVERTISER_NAME: 'BothZero', IMPRESSIONS: 0 },
+            { ADVERTISER_NAME: 'GrewFromZero', IMPRESSIONS: 100 },
+          ],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-16', end: '2026-04-22' },
+          rows: [
+            { ADVERTISER_NAME: 'BothZero', IMPRESSIONS: 0 },
+            { ADVERTISER_NAME: 'GrewFromZero', IMPRESSIONS: 0 },
+          ],
+        },
+      ],
+    }, { timezone: 'UTC' });
+
+    const args = comparePeriodsTool.input.parse({
+      dimensions: ['ADVERTISER_NAME'],
+      metrics: ['IMPRESSIONS'],
+      base_range: { start: '2026-04-23', end: '2026-04-29' },
+      comparison: 'previous_period',
+    });
+    const r = await comparePeriodsTool.handler(args, ctx);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const byAdv = Object.fromEntries(r.rows!.map((row) => [row.ADVERTISER_NAME, row]));
+
+    expect(byAdv.BothZero.IMPRESSIONS_delta_pct).toMatchObject({ value: 0 });
+    expect(byAdv.GrewFromZero.IMPRESSIONS_delta_pct).toMatchObject({ value: null });
+
+    // Neither row is a null-input row: both metrics were reported on both
+    // sides (0 is a known value, not a missing one), so no warning fires.
+    expect(r.warnings.join(' ')).not.toMatch(/null input/);
   });
 
   it('rejects unknown metrics with an actionable hint', async () => {
