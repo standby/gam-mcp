@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
 import { gamError, type GamErrorCode } from '../errors.js';
+import { GamHttpError } from '../gam-client.js';
 
 const inputSchema = z.object({}).strict();
 
@@ -21,7 +22,9 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
       return listEnvelope(
         [{
           status: 'ok',
-          latency_ms: String(latency_ms),
+          // A number, like error.details.latency_ms below -- both name the
+          // same duration and should read the same way.
+          latency_ms,
           companies_visible: String(entities.length > 0),
           timezone: ctx.timezone,
         }],
@@ -29,8 +32,7 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
       );
     } catch (e) {
       const latency_ms = Date.now() - start;
-      const message = e instanceof Error ? e.message : String(e);
-      const { cause, code } = attributeFailure(message);
+      const { cause, code, message } = attributeFailure(e);
       // The whole point of this tool is to report the failure it exists to
       // catch, so it must fail on the wire (isError: true) like any other
       // broken call. The diagnosis attributeFailure() produces is not lost
@@ -46,10 +48,36 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
   },
 };
 
-// Classifies a failure message into a human-readable cause and the
-// GamErrorCode that best fits it. Both come from the same read of the
-// message so the code and the diagnosis can never disagree.
-function attributeFailure(message: string): { cause: string; code: GamErrorCode } {
+type Diagnosis = { cause: string; code: GamErrorCode; message: string };
+
+// Classifies a failure into a human-readable cause and the GamErrorCode that
+// best fits it. The REST client's listEntities throws a typed GamHttpError
+// with a real HTTP status for anything the network answered (root cause of
+// the old string-only heuristic; see gam-client-rest.ts's httpError()), so
+// that status is read first -- it is GAM's own answer, not a guess. The
+// substring read of the message is the fallback for failures that never got
+// an HTTP status at all, such as ENOTFOUND/ECONNREFUSED/ETIMEDOUT before any
+// response existed, or a plain Error from somewhere else in the call chain.
+function attributeFailure(e: unknown): Diagnosis {
+  const message = e instanceof Error ? e.message : String(e);
+  if (e instanceof GamHttpError) {
+    const byStatus = attributeStatus(e.status);
+    if (byStatus) return { ...byStatus, message };
+  }
+  return { ...attributeMessage(message), message };
+}
+
+function attributeStatus(status: number): { cause: string; code: GamErrorCode } | null {
+  switch (status) {
+    case 401: return { cause: 'auth (token mint failed or wrong service account)', code: 'AUTH_FAILED' };
+    case 403: return { cause: 'permission (service account lacks Ad Manager API access or wrong network)', code: 'AUTH_FAILED' };
+    case 404: return { cause: 'wrong network code (GAM_NETWORK_CODE does not match any accessible network)', code: 'INTERNAL_ERROR' };
+    case 429: return { cause: 'quota (GAM API rate limited — wait and retry)', code: 'QUOTA_EXCEEDED' };
+    default: return null;
+  }
+}
+
+function attributeMessage(message: string): { cause: string; code: GamErrorCode } {
   const m = message.toLowerCase();
   if (m.includes('401') || m.includes('unauthorized') || m.includes('invalid_grant')) {
     return { cause: 'auth (token mint failed or wrong service account)', code: 'AUTH_FAILED' };

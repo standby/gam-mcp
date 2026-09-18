@@ -109,6 +109,40 @@ describe('kv_report', () => {
     ]);
   });
 
+  // report-exec.ts's pageEnvelope appends a generic "(filtered by ...)"
+  // clause to every report summary (spec §4.7). kv_report's own summary
+  // already names its filters in friendlier terms (the human key name, not
+  // CUSTOM_DIMENSION_0_VALUE) -- without describesFilters this tool doubled
+  // up, e.g. "kv_report (kv=..., ad_unit=...) ... (filtered by
+  // CUSTOM_DIMENSION_0_VALUE = ..., AD_UNIT_ID = ...)": two adjacent groups
+  // describing the same filters twice, the exact anti-pattern top_line_items
+  // was fixed for in this same task.
+  it('summary names its filters once, not twice (regression: adjacent parentheticals)', async () => {
+    const mock = createMockGamClient({
+      entities: {
+        custom_targeting_key: [{ id: 12345, name: 'channel_id', displayName: 'Channel ID' }],
+        ad_unit: [{ id: 777, name: 'homepage_top', displayName: 'Homepage Top' }],
+      },
+      reports: [{
+        query: { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['AD_REQUESTS'] },
+        rows: [{ CUSTOM_DIMENSION_0_VALUE: '479', AD_REQUESTS: 500 }],
+      }],
+    });
+    const args = kvReportTool.input.parse({
+      kv: 'channel_id=479',
+      ad_unit_name: 'homepage_top',
+      date_range: { start: '2026-05-01', end: '2026-05-07' },
+      metrics: ['AD_REQUESTS'],
+    });
+    const r = await kvReportTool.handler(args, makeCtx({}, { client: mock, timezone: 'America/Los_Angeles' }));
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    // Exactly one parenthetical group in the whole summary.
+    expect(r.summary.match(/\(/g)?.length).toBe(1);
+    expect(r.summary).toContain('kv=channel_id=479');
+    expect(r.summary).toContain('ad_unit=777');
+    expect(r.summary).not.toMatch(/filtered by/);
+  });
+
   describe('names that match more than one entity (spec §3.3)', () => {
     const range = { start: '2026-05-01', end: '2026-05-07' };
     const query = { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['AD_REQUESTS'] };

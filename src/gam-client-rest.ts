@@ -167,7 +167,7 @@ export function createRestGamClient(opts: {
           const url = `${networkPath}/${meta.collection}/${id}`;
           const res = await fetchImpl(url);
           if (res.status === 404) return null;
-          if (!res.ok) throw new Error(`listEntities(getById) ${res.status}: ${await res.text()}`);
+          if (!res.ok) throw await httpError('listEntities(getById)', res);
           const json = await res.json() as Record<string, unknown>;
           return toEntity(json);
         }));
@@ -221,7 +221,7 @@ export function createRestGamClient(opts: {
           effectiveMode = 'exact';
           res = await fetchPage(effectiveMode, pageToken, pageSize);
         }
-        if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
+        if (!res.ok) throw await httpError('listEntities', res);
         const json = await res.json() as Record<string, unknown>;
         const list = (json[meta.collection] as any[] | undefined) ?? [];
         for (const e of list) out.push(toEntity(e));
@@ -236,7 +236,7 @@ export function createRestGamClient(opts: {
       const url = path.startsWith('networks/') ? `${BASE}/${path}` : `${networkPath}/${path}`;
       const res = await fetchImpl(url);
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`getResource ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('getResource', res);
       return await res.json() as Record<string, unknown>;
     },
 

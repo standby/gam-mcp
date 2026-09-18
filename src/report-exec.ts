@@ -41,6 +41,16 @@ export type ReportRequest = {
   // see the comment on ReportToolConfig.topN in report-tool-builder.ts for
   // why it must not reach the report definition.
   topN?: number;
+  // True when `summary` already names the query's filters in the tool's own
+  // language (e.g. kv_report's `kv=channel_id=479`, which carries the
+  // human-readable key name a generic filter clause cannot: the slot→key
+  // mapping is per-query, not part of the filter's wire dimension name —
+  // see filterText() below). Set this to stop pageEnvelope adding a second,
+  // generic "(filtered by ...)" clause describing the same filters twice.
+  // Only the first page a tool builds honors this: a later page fetched by
+  // cursor (fetchReportPage) builds its own generic summary with no bespoke
+  // filter text to duplicate, so it always gets the generic clause.
+  describesFilters?: boolean;
 };
 
 export type ReportRows = {
@@ -349,6 +359,9 @@ type PageArgs = {
   // request deliberately stopped short of the rest of the result, so that is
   // not "truncated" and there is no cursor to resume it with.
   topN?: number;
+  // See ReportRequest.describesFilters. Only executeReport's first page sets
+  // this; fetchReportPage never does.
+  describesFilters?: boolean;
 };
 
 // The clause(s) a top_n cap appends to `summary`, naming the true row count
@@ -439,7 +452,7 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
     warnings.push(`GAM reported ${a.total} rows but returned ${a.offset + returned} and no further page.`);
   }
   const clauses = [
-    ...filterClauses(a.definition.filters),
+    ...(a.describesFilters ? [] : filterClauses(a.definition.filters)),
     ...(capped ? topNClauses(returned, a.total, a.definition) : []),
   ];
   const summary = withClauses(a.summary, clauses);
@@ -507,6 +520,7 @@ export async function executeReport(
       runTime: first.facts.run_time,
       dateRange: first.facts.date_range,
       cacheHit: first.cacheHit,
+      describesFilters: req.describesFilters,
       topN: req.topN,
     });
   } catch (e) {

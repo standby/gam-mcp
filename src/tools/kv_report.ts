@@ -123,6 +123,13 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       `Resolved '${parsed.key}' to custom_targeting_key_id=${keyId}; filtering on CUSTOM_DIMENSION_0_VALUE='${parsed.value}'.`,
     ];
 
-    return executeReport(ctx, { tool: 'kv_report', query, dateRange, summary, warnings });
+    // The summary above already names every filter in friendlier terms than
+    // a generic clause could: `kv=channel_id=479` carries the human key name
+    // (channel_id) the CUSTOM_DIMENSION_0_VALUE filter's wire dimension name
+    // does not, since the slot→key mapping is per-query. describesFilters
+    // stops pageEnvelope adding a second "(filtered by ...)" describing the
+    // same filters again, less legibly (spec §4.7's own precedent in
+    // top_line_items: one clause, not two adjacent ones).
+    return executeReport(ctx, { tool: 'kv_report', query, dateRange, summary, warnings, describesFilters: true });
   },
 };
