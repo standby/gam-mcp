@@ -2,7 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cacheDirFor, chooseDateTimeZone, checkNetworkIdentity, openReportCache, readSettings } from '../src/startup.js';
+import {
+  cacheDirFor,
+  chooseDateTimeZone,
+  checkNetworkIdentity,
+  ignoredInStdio,
+  openReportCache,
+  readHttpSettings,
+  readSettings,
+} from '../src/startup.js';
 import { createRestGamClient } from '../src/gam-client-rest.js';
 import { CredentialError, gamError } from '../src/errors.js';
 import { createLogger } from '../src/log.js';
@@ -66,10 +74,74 @@ describe('readSettings', () => {
     ['GAM_REPORT_TIMEOUT_MS', 'soon'],
     ['GAM_REPORT_CACHE_TTL_MS', '-1'],
     ['GAM_REPORT_CACHE_TTL_MS', '1.5'],
+    ['GAM_REPORT_TIMEOUT_MS', '1e3'],
+    ['GAM_REPORT_TIMEOUT_MS', ' 5000'],
+    ['GAM_REPORT_CACHE_TTL_MS', '0x10'],
+    ['GAM_REPORT_CACHE_TTL_MS', '60000.0'],
   ])('rejects %s=%s', (name, value) => {
     const r = readSettings({ ...CODE, [name]: value });
     if (!('error' in r)) throw new Error('expected an error');
     expect(r.error).toContain(name);
+  });
+});
+
+describe('readHttpSettings (spec §2.7)', () => {
+  const PORT = { GAM_HTTP_PORT: '8080' };
+
+  it('is null in stdio mode', () => {
+    expect(readHttpSettings({})).toBeNull();
+    expect(readHttpSettings({ GAM_HTTP_PORT: '', GAM_HTTP_BEARER_TOKEN: 'x' })).toBeNull();
+  });
+
+  it('reads the port, the token and the host list', () => {
+    expect(readHttpSettings(PORT)).toEqual({ port: 8080, bearerToken: undefined, allowedHosts: undefined });
+    expect(readHttpSettings({
+      ...PORT,
+      GAM_HTTP_BEARER_TOKEN: 'abc.DEF-123_~+/=',
+      GAM_HTTP_ALLOWED_HOSTS: ' GAM-MCP.internal, localhost ,,[::1]',
+    })).toEqual({ port: 8080, bearerToken: 'abc.DEF-123_~+/=', allowedHosts: ['gam-mcp.internal', 'localhost', '[::1]'] });
+  });
+
+  it('treats empty token and host values as unset', () => {
+    expect(readHttpSettings({ ...PORT, GAM_HTTP_BEARER_TOKEN: '', GAM_HTTP_ALLOWED_HOSTS: '  ' }))
+      .toEqual({ port: 8080, bearerToken: undefined, allowedHosts: undefined });
+  });
+
+  it.each(['0', '65536', '80.5', '1e3', ' 80', 'http'])('refuses GAM_HTTP_PORT=%j, quoting it', (port) => {
+    expect(readHttpSettings({ GAM_HTTP_PORT: port })).toEqual({
+      error: `GAM_HTTP_PORT must be a valid port number, got ${JSON.stringify(port)}`,
+    });
+  });
+
+  // A tab and an accented letter, built from their codes.
+  const TAB = String.fromCharCode(9);
+  const E_ACUTE = String.fromCharCode(233);
+  it.each(['has space', `tab${TAB}here`, `caf${E_ACUTE}`])('refuses a token that is not printable ASCII, without quoting it', (token) => {
+    const r = readHttpSettings({ ...PORT, GAM_HTTP_BEARER_TOKEN: token });
+    expect(r).toEqual({ error: 'GAM_HTTP_BEARER_TOKEN must be printable ASCII with no spaces' });
+  });
+
+  it.each([
+    ['gam-mcp.internal:8080', 'gam-mcp.internal:8080'],
+    ['http://gam-mcp.internal', 'http://gam-mcp.internal'],
+    ['gam-mcp.internal/mcp', 'gam-mcp.internal/mcp'],
+    ['a.internal,bad host', 'bad host'],
+  ])('refuses GAM_HTTP_ALLOWED_HOSTS=%j, naming the entry', (hosts, entry) => {
+    expect(readHttpSettings({ ...PORT, GAM_HTTP_ALLOWED_HOSTS: hosts })).toEqual({
+      error: `GAM_HTTP_ALLOWED_HOSTS must list host names without ports, separated by commas; ${JSON.stringify(entry)} is not one`,
+    });
+  });
+
+  it('refuses a host list with no host in it', () => {
+    expect(readHttpSettings({ ...PORT, GAM_HTTP_ALLOWED_HOSTS: ' , ' })).toEqual({
+      error: 'GAM_HTTP_ALLOWED_HOSTS names no host: " , "',
+    });
+  });
+
+  it('names the HTTP settings a stdio process ignores', () => {
+    expect(ignoredInStdio({ GAM_HTTP_BEARER_TOKEN: 'x', GAM_HTTP_ALLOWED_HOSTS: 'h' }))
+      .toEqual(['GAM_HTTP_BEARER_TOKEN', 'GAM_HTTP_ALLOWED_HOSTS']);
+    expect(ignoredInStdio({ GAM_HTTP_BEARER_TOKEN: '' })).toEqual([]);
   });
 });
 

@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 import { buildMcpServer, connectStdio, installStdoutGuard } from './server.js';
-import { connectHttp } from './http-transport.js';
+import { connectHttp, HttpListenError } from './http-transport.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js';
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
 import { createLogger, levelFromEnv } from './log.js';
 import { resolvePageRows } from './report-exec.js';
 import { createSavedQueryStore, defaultSavedQueriesPath } from './saved-queries.js';
-import { checkNetworkIdentity, chooseDateTimeZone, openReportCache, readSettings } from './startup.js';
+import {
+  checkNetworkIdentity,
+  chooseDateTimeZone,
+  ignoredInStdio,
+  openReportCache,
+  readHttpSettings,
+  readSettings,
+} from './startup.js';
 import { createUsageCounters, instrumentGamClient } from './usage.js';
 
 function stop(message: string): never {
@@ -17,11 +24,9 @@ function stop(message: string): never {
 async function main(): Promise<void> {
   // Only install the stdout guard for stdio mode — in HTTP mode stdout is
   // free for normal logging since MCP frames go over HTTP, not stdout.
-  const httpPort = process.env.GAM_HTTP_PORT ? Number(process.env.GAM_HTTP_PORT) : null;
-  if (httpPort === null) installStdoutGuard();
-  if (httpPort !== null && (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535)) {
-    stop(`GAM_HTTP_PORT must be a valid port number, got ${JSON.stringify(process.env.GAM_HTTP_PORT)}`);
-  }
+  const http = readHttpSettings(process.env);
+  if (http === null) installStdoutGuard();
+  if (http !== null && 'error' in http) stop(http.error);
 
   // Everything that can be checked without the network is checked first.
   const settings = readSettings(process.env);
@@ -30,6 +35,11 @@ async function main(): Promise<void> {
   const logger = createLogger({ level: levelFromEnv(process.env) });
   const pageRows = resolvePageRows(process.env.GAM_PAGE_ROWS, logger);
   if (typeof pageRows !== 'number') stop(pageRows.error);
+  if (http === null) {
+    for (const variable of ignoredInStdio(process.env)) {
+      logger.warn('config.ignored', { variable, reason: 'only HTTP mode (GAM_HTTP_PORT) reads it' });
+    }
+  }
   if (process.env.GAM_INLINE_ROW_THRESHOLD !== undefined) {
     logger.warn('config.ignored', {
       variable: 'GAM_INLINE_ROW_THRESHOLD',
@@ -69,11 +79,21 @@ async function main(): Promise<void> {
     savedQueries,
     usageCounters,
   };
-  if (httpPort !== null) {
-    // A factory: stateless HTTP needs a fresh server per request, not one shared.
-    await connectHttp(() => buildMcpServer(ctx, { mode: 'http' }), { port: httpPort, logger });
-  } else {
+  if (http === null) {
     await connectStdio(ctx);
+    return;
+  }
+  try {
+    // A factory: stateless HTTP needs a fresh server per request, not one shared.
+    await connectHttp(() => buildMcpServer(ctx, { mode: 'http' }), {
+      port: http.port,
+      logger,
+      bearerToken: http.bearerToken,
+      allowedHosts: http.allowedHosts,
+    });
+  } catch (e) {
+    if (e instanceof HttpListenError) stop(e.message);
+    throw e;
   }
 }
 

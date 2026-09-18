@@ -4,6 +4,7 @@ import { CredentialError, gamError } from './errors.js';
 import { GamHttpError, NetworkFieldMissingError, type GAMClient, type NetworkInfo } from './gam-client.js';
 import type { Logger } from './log.js';
 import { canonicalTimeZone } from './zones.js';
+import { hostnameOf, wholeNumber } from './parse.js';
 
 export const DEFAULT_REPORT_TIMEOUT_MS = 300_000;
 export const DEFAULT_REPORT_CACHE_TTL_MS = 3_600_000;
@@ -27,8 +28,8 @@ function integerSetting(
 ): number | { error: string } {
   const raw = env[name];
   if (raw === undefined || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isSafeInteger(n) || n < min) {
+  const n = wholeNumber(raw);
+  if (n === null || n < min) {
     return { error: `${name} must be a whole number of milliseconds, at least ${min}; got ${JSON.stringify(raw)}` };
   }
   return n;
@@ -56,6 +57,53 @@ export function readSettings(env: NodeJS.ProcessEnv): Settings | { error: string
   const cacheTtlMs = integerSetting(env, 'GAM_REPORT_CACHE_TTL_MS', DEFAULT_REPORT_CACHE_TTL_MS, 0);
   if (typeof cacheTtlMs !== 'number') return cacheTtlMs;
   return { networkCode, dateTimeZone, reportTimeoutMs, cacheTtlMs, cacheDir: env.GAM_REPORT_CACHE_DIR || undefined };
+}
+
+export type HttpSettings = {
+  port: number;
+  // GAM_HTTP_BEARER_TOKEN. Never logged or quoted.
+  bearerToken: string | undefined;
+  // GAM_HTTP_ALLOWED_HOSTS: lower-case host names; undefined means no Host check.
+  allowedHosts: string[] | undefined;
+};
+
+const HTTP_ONLY = ['GAM_HTTP_BEARER_TOKEN', 'GAM_HTTP_ALLOWED_HOSTS'] as const;
+
+// The HTTP settings (spec §2.7), or null when GAM_HTTP_PORT is unset or empty
+// (stdio mode). Each error names its variable; none quotes the token.
+export function readHttpSettings(env: NodeJS.ProcessEnv): HttpSettings | null | { error: string } {
+  const rawPort = env.GAM_HTTP_PORT;
+  if (rawPort === undefined || rawPort === '') return null;
+  const port = wholeNumber(rawPort);
+  if (port === null || port < 1 || port > 65_535) {
+    return { error: `GAM_HTTP_PORT must be a valid port number, got ${JSON.stringify(rawPort)}` };
+  }
+  const bearerToken = env.GAM_HTTP_BEARER_TOKEN || undefined;
+  if (bearerToken !== undefined && ![...bearerToken].every((c) => c > ' ' && c <= '~')) {
+    return { error: 'GAM_HTTP_BEARER_TOKEN must be printable ASCII with no spaces' };
+  }
+  const allowedHosts = hostList(env.GAM_HTTP_ALLOWED_HOSTS);
+  if (allowedHosts !== undefined && 'error' in allowedHosts) return allowedHosts;
+  return { port, bearerToken, allowedHosts };
+}
+
+function hostList(raw: string | undefined): string[] | undefined | { error: string } {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const hosts = raw.split(',').map((h) => h.trim()).filter((h) => h !== '');
+  if (hosts.length === 0) return { error: `GAM_HTTP_ALLOWED_HOSTS names no host: ${JSON.stringify(raw)}` };
+  for (const host of hosts) {
+    if (hostnameOf(host) !== host.toLowerCase()) {
+      return {
+        error: `GAM_HTTP_ALLOWED_HOSTS must list host names without ports, separated by commas; ${JSON.stringify(host)} is not one`,
+      };
+    }
+  }
+  return hosts.map((h) => h.toLowerCase());
+}
+
+// Settings that only HTTP mode reads, set in stdio mode.
+export function ignoredInStdio(env: NodeJS.ProcessEnv): string[] {
+  return HTTP_ONLY.filter((name) => env[name]);
 }
 
 // networks.get with the configured credential, before anything is served

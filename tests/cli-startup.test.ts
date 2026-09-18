@@ -140,4 +140,22 @@ describe('startup (real process)', () => {
       expect(r.stderr).not.toContain(MALFORMED.slice(i, i + 8));
     }
   }, 30_000);
+
+  it('HTTP settings are checked before the credential, and the token is never quoted', () => {
+    const noKey = { GAM_SERVICE_ACCOUNT_KEY_FILE: '/nonexistent/key.json' };
+    const port = start({ ...noKey, GAM_HTTP_PORT: '1e3' });
+    expect(port.status).toBe(2);
+    expect(port.stderr).toContain('GAM_HTTP_PORT must be a valid port number, got "1e3"');
+
+    const hosts = start({ ...noKey, GAM_HTTP_PORT: '38182', GAM_HTTP_ALLOWED_HOSTS: 'gam-mcp.internal:8080' });
+    expect(hosts.status).toBe(2);
+    expect(hosts.stderr).toContain('GAM_HTTP_ALLOWED_HOSTS must list host names without ports');
+
+    const token = start({ ...noKey, GAM_HTTP_PORT: '38183', GAM_HTTP_BEARER_TOKEN: `${SECRET} with spaces` });
+    expect(token.status).toBe(2);
+    expect(token.stderr).toContain('GAM_HTTP_BEARER_TOKEN must be printable ASCII with no spaces');
+    expect(token.stderr).not.toContain('KEYMAT');
+
+    for (const r of [port, hosts, token]) expect(r.stderr).not.toContain('auth.source_resolved');
+  }, 30_000);
 });

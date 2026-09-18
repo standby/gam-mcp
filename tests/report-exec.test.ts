@@ -91,6 +91,9 @@ describe('executeReport', () => {
     expect(lines.filter((l) => l.includes('config.page_rows_clamped'))).toHaveLength(1);
     expect(resolvePageRows('0', logger)).toHaveProperty('error');
     expect(resolvePageRows('ten', logger)).toHaveProperty('error');
+    for (const raw of ['1e3', '0x10', ' 200', '200.0']) {
+      expect(resolvePageRows(raw, logger)).toEqual({ error: `GAM_PAGE_ROWS must be a positive integer, got ${JSON.stringify(raw)}` });
+    }
   });
 
   it('later pages carry a reminder that caveats live on the first page, not the caveats themselves', async () => {

@@ -20,6 +20,7 @@ import { reportZoneOf, unknownZoneWarning, zoneWarning } from './zones.js';
 import { definitionHash } from './report-key.js';
 import { findOrCreateReport, forgetReport } from './report-reuse.js';
 import { checkReportQuery } from './schema.js';
+import { wholeNumber } from './parse.js';
 import { names, type DoneEntry, type PendingEntry, type ResultRef } from './cache.js';
 
 export const GAM_MAX_PAGE_ROWS = 10_000;
@@ -47,8 +48,8 @@ export type ReportRows = {
 
 export function resolvePageRows(raw: string | undefined, logger: Logger): number | { error: string } {
   if (raw === undefined) return DEFAULT_PAGE_ROWS;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) return { error: `GAM_PAGE_ROWS must be a positive integer, got ${raw}` };
+  const n = wholeNumber(raw);
+  if (n === null || n < 1) return { error: `GAM_PAGE_ROWS must be a positive integer, got ${JSON.stringify(raw)}` };
   if (n > GAM_MAX_PAGE_ROWS) {
     logger.info('config.page_rows_clamped', { requested: n, used: GAM_MAX_PAGE_ROWS });
     return GAM_MAX_PAGE_ROWS;
