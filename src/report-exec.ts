@@ -11,7 +11,7 @@ import {
 import type { Logger } from './log.js';
 import type { ToolContext } from './report-tool-builder.js';
 import { definitionRange, reportDefinition, type ReportDefinition } from './report-definition.js';
-import { buildTable, type Cell, type Column } from './values.js';
+import { buildTable, convertValue, type Cell, type Column, type ReportValue } from './values.js';
 import { encodeCursor, decodeCursor } from './cursor.js';
 import { envelope, inferSchema, type DateSpan, type InputReport, type ResultEnvelope } from './envelope.js';
 import { Lru } from './lru.js';
@@ -362,6 +362,50 @@ function topNClauses(returned: number, total: number | null, definition: ReportD
   return [`${returned} of ${total ?? returned}`, `sorted by ${sort.field.metric} ${direction}`];
 }
 
+// GAM's wire shape for one filter, built by toReportFilters()
+// (report-definition.ts): { fieldFilter: { field: { dimension }, operation,
+// values } }. Read back here rather than threading the tool-language
+// ReportQuery.filters through, so this also covers a page fetched by cursor,
+// which only carries the stored definition (fetchReportPage below).
+type WireFilter = {
+  fieldFilter?: { field?: { dimension?: string }; operation?: string; values?: ReportValue[] };
+};
+
+const FILTER_OPERATOR_TEXT: Record<string, string> = {
+  IN: '=',
+  NOT_IN: '!=',
+  CONTAINS: 'contains',
+  NOT_CONTAINS: 'does not contain',
+};
+
+// One filter rendered as "FIELD op value", or "FIELD op [v1, v2]" for a
+// multi-value IN/NOT_IN. null for anything unrecognized, so a shape this
+// server didn't build (e.g. read back from a report created elsewhere)
+// degrades by omission rather than printing "undefined".
+function filterText(f: unknown): string | null {
+  const ff = (f as WireFilter).fieldFilter;
+  const dimension = ff?.field?.dimension;
+  if (!dimension) return null;
+  const values = (ff?.values ?? []).map((v) => convertValue(v, false).value);
+  if (values.length === 0) return null;
+  const op = FILTER_OPERATOR_TEXT[ff?.operation ?? ''] ?? (ff?.operation ?? 'filtered on');
+  const rendered = values.length > 1 ? `[${values.join(', ')}]` : String(values[0]);
+  return `${dimension} ${op} ${rendered}`;
+}
+
+// The clause naming which fields a report was filtered on (spec §4.7:
+// "Report summaries list the filters and sort"). One clause for the whole
+// filter set, so a filtered + capped result reads as one sentence: see
+// topNClauses() above and withClauses() below, which join this into the
+// same parenthetical rather than appending a second one. A query with no
+// filters returns no clause — absence is not permission to print "()" or
+// "filtered by undefined".
+function filterClauses(filters: unknown[] | undefined): string[] {
+  if (!filters?.length) return [];
+  const parts = filters.map(filterText).filter((t): t is string => t !== null);
+  return parts.length ? [`filtered by ${parts.join(', ')}`] : [];
+}
+
 function withClauses(summary: string, clauses: string[]): string {
   return clauses.length ? `${summary} (${clauses.join(', ')})` : summary;
 }
@@ -394,7 +438,11 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
   } else if (!capped && !nextCursor && a.offset + returned < a.total) {
     warnings.push(`GAM reported ${a.total} rows but returned ${a.offset + returned} and no further page.`);
   }
-  const summary = capped ? withClauses(a.summary, topNClauses(returned, a.total, a.definition)) : a.summary;
+  const clauses = [
+    ...filterClauses(a.definition.filters),
+    ...(capped ? topNClauses(returned, a.total, a.definition) : []),
+  ];
+  const summary = withClauses(a.summary, clauses);
   return envelope({
     summary,
     provenance: {

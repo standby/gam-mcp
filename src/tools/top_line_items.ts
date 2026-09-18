@@ -28,9 +28,12 @@ export const topLineItemsTool = buildReportTool({
       ? [{ field: 'LINE_ITEM_TYPE', op: '=', value: input.line_item_type }]
       : undefined,
   }),
+  // No line_item_type parenthetical here: report-exec's summary path already
+  // appends a "filtered by LINE_ITEM_TYPE = ..." clause from the definition's
+  // filters, in the same parenthetical as the top_n/sort clause (spec §4.7).
+  // A second one here would read as two appendages instead of one sentence.
   summary: (input, range) =>
-    `Top line items by ${input.metric}, ${range.start}..${range.end}` +
-    (input.line_item_type ? ` (type=${input.line_item_type})` : ''),
+    `Top line items by ${input.metric}, ${range.start}..${range.end}`,
   topN: (input) => input.top_n,
   sort: (input) => ({ metric: METRIC_MAP[input.metric], descending: true }),
 });

@@ -6,7 +6,8 @@ import { buildMcpServer } from '../src/server.js';
 import { gamError, GAM_ERROR_CODES, type GamErrorCode } from '../src/errors.js';
 import { READS_GAM, type ToolDefinition } from '../src/report-tool-builder.js';
 import { createLogger } from '../src/log.js';
-import { connectClient, makeCtx } from './helpers.js';
+import { GamHttpError } from '../src/gam-client.js';
+import { connectClient, makeCtx, payloadOf } from './helpers.js';
 
 // Read from the catalogue, not hand-copied: a fourth copy of the code list
 // would not have complained when DUPLICATE_JOIN_KEY was added, because tests
@@ -115,6 +116,29 @@ describe('every error reaches the client flagged', () => {
     const wrong = await client.callTool({ name: 'fine', arguments: { n: 'x' } });
     expect(JSON.parse((wrong.content as { text: string }[])[0].text).error.message)
       .toBe('Invalid input: n: Expected number, received string.');
+  });
+
+  // I12 (spec §4.7, F15): health_check caught its own failure and returned a
+  // success envelope with status: 'failed' buried inside it, so a dead
+  // credential looked like a passing call on the wire. This is asserted
+  // through a real server, over the real transport -- isError is a
+  // property of what the client receives, not of what a handler returns.
+  it('I12: a failed health check arrives with isError and names the failing check', async () => {
+    const ctx = makeCtx({}, {
+      client: {
+        ...makeCtx().client,
+        listEntities: async () => { throw new GamHttpError('listEntities', 401, 'UNAUTHENTICATED', 'bad credentials'); },
+      },
+    });
+    const server = buildMcpServer(ctx, { mode: 'stdio' });
+    const client = await connectClient(server);
+    const r = await client.callTool({ name: 'health_check', arguments: {} });
+    expect(r.isError).toBe(true);
+    const body = payloadOf(r);
+    expect(body.error.code).toBe('AUTH_FAILED');
+    // The diagnosis the old shape got right must survive into the error body.
+    expect(JSON.stringify(body.error.details)).toMatch(/check/i);
+    expect(body.error.details.check).toBe('listEntities');
   });
 
   it('advertises a strict input as closed', async () => {

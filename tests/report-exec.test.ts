@@ -55,6 +55,38 @@ describe('executeReport', () => {
     ]);
   });
 
+  // spec §4.7: "Report summaries list the filters and sort." Absence is not
+  // permission (no filters -> no clause, not an empty "()"); one filter reads
+  // as one clause; several filters join into that same clause rather than
+  // stacking a parenthetical per filter.
+  describe('summary names the filters (spec §4.7)', () => {
+    it('no filters: the summary is unchanged', async () => {
+      const ctx = makeCtx({ reports: [{ query, rows: rows(1) }] });
+      const r = ok(await executeReport(ctx, { query, dateRange: RANGE, summary: 'S' }));
+      expect(r.summary).toBe('S');
+    });
+
+    it('one filter: names the field and value', async () => {
+      const q = { ...query, filters: [{ field: 'AD_UNIT_ID', op: '=' as const, value: 1 }] };
+      const ctx = makeCtx({ reports: [{ query: q, rows: rows(1) }] });
+      const r = ok(await executeReport(ctx, { query: q, dateRange: RANGE, summary: 'S' }));
+      expect(r.summary).toBe('S (filtered by AD_UNIT_ID = 1)');
+    });
+
+    it('several filters: one clause, comma-joined, including a multi-value IN', async () => {
+      const q = {
+        ...query,
+        filters: [
+          { field: 'AD_UNIT_ID', op: 'IN' as const, value: [1, 2] },
+          { field: 'LINE_ITEM_TYPE', op: '=' as const, value: 'STANDARD' },
+        ],
+      };
+      const ctx = makeCtx({ reports: [{ query: q, rows: rows(1) }] });
+      const r = ok(await executeReport(ctx, { query: q, dateRange: RANGE, summary: 'S' }));
+      expect(r.summary).toBe('S (filtered by AD_UNIT_ID = [1, 2], LINE_ITEM_TYPE = STANDARD)');
+    });
+  });
+
   it('A2: pages through the whole result with no gap or overlap', async () => {
     const all = rows(12_000);
     const ctx = makeCtx({ reports: [{ query, rows: all }] }, { pageRows: 5_000 });

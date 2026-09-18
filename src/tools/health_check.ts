@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
+import { gamError, type GamErrorCode } from '../errors.js';
 
 const inputSchema = z.object({}).strict();
 
@@ -29,30 +30,41 @@ export const healthCheckTool: ToolDefinition<typeof inputSchema> = {
     } catch (e) {
       const latency_ms = Date.now() - start;
       const message = e instanceof Error ? e.message : String(e);
-      const cause = attributeFailure(message);
-      // Return a SUCCESS envelope (not an error envelope) so the LLM sees the
-      // diagnostic detail rather than a generic INTERNAL_ERROR. The whole
-      // point of this tool is to surface the failure, not to fail itself.
-      return listEnvelope(
-        [{
-          status: 'failed',
-          latency_ms: String(latency_ms),
-          attributed_cause: cause,
-          error_message: message,
-          timezone: ctx.timezone,
-        }],
-        `Health check FAILED after ${latency_ms}ms — likely ${cause}.`,
-      );
+      const { cause, code } = attributeFailure(message);
+      // The whole point of this tool is to report the failure it exists to
+      // catch, so it must fail on the wire (isError: true) like any other
+      // broken call. The diagnosis attributeFailure() produces is not lost
+      // for that -- it travels in details, named by the check that failed.
+      return gamError(code, {
+        check: 'listEntities',
+        latency_ms,
+        attributed_cause: cause,
+        error_message: message,
+        timezone: ctx.timezone,
+      });
     }
   },
 };
 
-function attributeFailure(message: string): string {
+// Classifies a failure message into a human-readable cause and the
+// GamErrorCode that best fits it. Both come from the same read of the
+// message so the code and the diagnosis can never disagree.
+function attributeFailure(message: string): { cause: string; code: GamErrorCode } {
   const m = message.toLowerCase();
-  if (m.includes('401') || m.includes('unauthorized') || m.includes('invalid_grant')) return 'auth (token mint failed or wrong service account)';
-  if (m.includes('403') || m.includes('permission')) return 'permission (service account lacks Ad Manager API access or wrong network)';
-  if (m.includes('404')) return 'wrong network code (GAM_NETWORK_CODE does not match any accessible network)';
-  if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('etimedout')) return 'network (cannot reach admanager.googleapis.com)';
-  if (m.includes('429') || m.includes('quota')) return 'quota (GAM API rate limited — wait and retry)';
-  return 'unknown — see error_message';
+  if (m.includes('401') || m.includes('unauthorized') || m.includes('invalid_grant')) {
+    return { cause: 'auth (token mint failed or wrong service account)', code: 'AUTH_FAILED' };
+  }
+  if (m.includes('403') || m.includes('permission')) {
+    return { cause: 'permission (service account lacks Ad Manager API access or wrong network)', code: 'AUTH_FAILED' };
+  }
+  if (m.includes('404')) {
+    return { cause: 'wrong network code (GAM_NETWORK_CODE does not match any accessible network)', code: 'INTERNAL_ERROR' };
+  }
+  if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('etimedout')) {
+    return { cause: 'network (cannot reach admanager.googleapis.com)', code: 'INTERNAL_ERROR' };
+  }
+  if (m.includes('429') || m.includes('quota')) {
+    return { cause: 'quota (GAM API rate limited — wait and retry)', code: 'QUOTA_EXCEEDED' };
+  }
+  return { cause: 'unknown — see error_message', code: 'INTERNAL_ERROR' };
 }
