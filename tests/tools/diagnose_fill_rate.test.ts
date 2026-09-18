@@ -218,6 +218,6 @@ describe('diagnose_fill_rate', () => {
     // GAM sent nothing for.
     expect(d.inputs.IMPRESSIONS).toBe(9000);
     expect(d.inputs.AD_EXCHANGE_TOTAL_REQUESTS).toBe(9000);
-    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field; such a row may appear in the results with a null value, or be excluded from the results entirely, depending on the tool.');
   });
 });

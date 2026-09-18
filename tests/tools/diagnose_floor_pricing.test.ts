@@ -95,7 +95,7 @@ describe('diagnose_floor_pricing', () => {
     expect(d.value).toBeNull();
     expect(d.heuristic).toBe(true);
     expect(gappy.adx_match_rate_pct).toBeNull();
-    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field; such a row may appear in the results with a null value, or be excluded from the results entirely, depending on the tool.');
   });
 
   // Fix round 1, Important 1: a row can reach a real (non-null) verdict --
@@ -127,7 +127,7 @@ describe('diagnose_floor_pricing', () => {
     expect(d.value).toBeNull();
     expect(d.heuristic).toBe(true);
     expect(gappy.adx_impressions).toBeNull();
-    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field; such a row may appear in the results with a null value, or be excluded from the results entirely, depending on the tool.');
   });
 
   it('names the single input report in provenance', async () => {

@@ -224,7 +224,7 @@ describe('find_anomalies', () => {
     const r = await findAnomaliesTool.handler(args, ctx);
     if (!('rows' in r)) throw new Error(JSON.stringify(r));
     expect(r.rows).toHaveLength(0);
-    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field; such a row may appear in the results with a null value, or be excluded from the results entirely, depending on the tool.');
   });
 
   // Fix round 1, Important 2: ecpm_regression's null guard (find_anomalies.ts
@@ -257,7 +257,7 @@ describe('find_anomalies', () => {
     const r = await findAnomaliesTool.handler(args, ctx);
     if (!('rows' in r)) throw new Error(JSON.stringify(r));
     expect(r.rows).toHaveLength(0);
-    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field; such a row may appear in the results with a null value, or be excluded from the results entirely, depending on the tool.');
   });
 
   // Fix round 1, Important 2: viewability_drops' null guard
@@ -290,7 +290,7 @@ describe('find_anomalies', () => {
     const r = await findAnomaliesTool.handler(args, ctx);
     if (!('rows' in r)) throw new Error(JSON.stringify(r));
     expect(r.rows).toHaveLength(0);
-    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field; such a row may appear in the results with a null value, or be excluded from the results entirely, depending on the tool.');
   });
 
   it('names the single input report in provenance', async () => {

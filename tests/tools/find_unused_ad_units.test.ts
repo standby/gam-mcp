@@ -175,10 +175,12 @@ describe('find_unused_ad_units', () => {
     const r = await findUnusedAdUnitsTool.handler(findUnusedAdUnitsTool.input.parse({}), ctx);
     if ('error' in r) throw new Error(JSON.stringify(r));
     // 5 listed; candidates are Child and Healthy (2); Parent/Archived/NoStatus
-    // excluded (3); only Child (no report row) is flagged (1).
+    // excluded (3); only Child (no report row) is flagged (1). NoStatus is
+    // neither archived nor non-leaf -- it has no status field at all -- so
+    // the label must name that third reason too, not just the first two.
     expect(r.rows!.map((x) => x.AD_UNIT_NAME)).toEqual(['Child']);
     expect(r.summary).toContain(
-      '1 of 2 active, leaf ad units flagged (5 listed; 3 excluded as archived or non-leaf).',
+      '1 of 2 active, leaf ad units flagged (5 listed; 3 excluded as archived, non-leaf, or missing a status).',
     );
   });
 });

@@ -98,7 +98,7 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
       const summary =
         `Unused ad units (${actualRange.start}..${actualRange.end}, threshold ≤${input.min_requests} requests): ` +
         `${unused.length} of ${candidates.length} active, leaf ad units flagged ` +
-        `(${allUnits.length} listed; ${excluded} excluded as archived or non-leaf). ` +
+        `(${allUnits.length} listed; ${excluded} excluded as archived, non-leaf, or missing a status). ` +
         (allUnits.length === input.max_units
           ? `Hit max_units cap (${input.max_units}) — raise it to scan more.`
           : '');

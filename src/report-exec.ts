@@ -695,7 +695,16 @@ export function derivedEnvelope(
   if (d.rows.length > limit) return tooLarge(d.rows.length, limit, 'output');
   const warnings = [...(d.warnings ?? [])];
   if (d.null_input_rows !== undefined && d.null_input_rows > 0) {
-    warnings.push(`${d.null_input_rows} row(s) had a null input to a computed field.`);
+    // Deliberately non-committal about whether the row still appears: some
+    // callers (pacing_status, diagnose_*, compare_periods) keep the row with
+    // a null derived value; find_anomalies excludes it from its rows
+    // entirely (a filtered anomaly, not a computed null), so `rows: []` plus
+    // this warning must not read as "nothing to report" -- it can mean "N
+    // rows could not be evaluated at all."
+    warnings.push(
+      `${d.null_input_rows} row(s) had a null input to a computed field; such a row may appear in the results ` +
+      'with a null value, or be excluded from the results entirely, depending on the tool.',
+    );
   }
   return envelope({
     summary: d.summary,
