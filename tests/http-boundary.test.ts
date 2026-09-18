@@ -159,7 +159,13 @@ describe('every refusal gives the connection back (spec §2.7)', () => {
 describe('request size (spec §2.7)', () => {
   const big = JSON.stringify({ padding: 'x'.repeat(1.1 * 1024 * 1024) });
 
-  it('G4: a 1.1 MB body is 413, and the next request on the server succeeds', async () => {
+  // 20s like the declared-length case below: pushing 1.1 MB through a socket
+  // and then completing a fresh handshake can outrun the 10s default when the
+  // whole suite is running. Nothing here asserts elapsed time -- the teeth are
+  // the 413, its message, and the 200 that follows -- so the bound is a harness
+  // guard, not part of what is being proved. The 4s bounds above ARE part of it
+  // and stay where they are.
+  it('G4: a 1.1 MB body is 413, and the next request on the server succeeds', { timeout: 20_000 }, async () => {
     await withServer({ bearerToken: TOKEN }, async (port) => {
       const auth = { authorization: `Bearer ${TOKEN}` };
       const refused = await send(port, { body: big, headers: auth });
@@ -191,7 +197,7 @@ describe('request size (spec §2.7)', () => {
     });
   });
 
-  it('G4: a body sent without a length is refused where it passes the limit', async () => {
+  it('G4: a body sent without a length is refused where it passes the limit', { timeout: 20_000 }, async () => {
     await withServer({}, async (port) => {
       const refused = await send(port, { body: big, chunked: true });
       expect(refused.status).toBe(413);
