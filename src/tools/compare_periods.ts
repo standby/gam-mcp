@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { gamError, type GamErrorEnvelope } from '../errors.js';
 import { previousPeriod, previousYear, resolveDateRange, type ResolvedRange } from '../dates.js';
-import { validateCombo } from '../schema.js';
+import { canonicalizeQuery, validateCombo } from '../schema.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
 import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
@@ -38,7 +38,16 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
   input: inputSchema,
   annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
-    const comboError = validateCombo({ dimensions: input.dimensions, metrics: input.metrics });
+    // canonicalizeQuery resolves familiar names (e.g. CREATIVE_SIZE) in both
+    // dimensions and filter fields before validating, the same as run_report.
+    const canonical = canonicalizeQuery({
+      dimensions: input.dimensions,
+      metrics: input.metrics,
+      filters: input.filters,
+    });
+    const { dimensions, filters } = canonical.query;
+
+    const comboError = validateCombo({ dimensions, metrics: input.metrics });
     if (comboError) {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
@@ -50,11 +59,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
       ? resolveDateRange(input.comparison, { ...dates, field: 'comparison' })
       : comparisonRange(baseRange, input.comparison);
     if ('error' in prevRange) return prevRange;
-    const query: ReportQuery = {
-      dimensions: input.dimensions,
-      metrics: input.metrics,
-      filters: input.filters,
-    };
+    const query: ReportQuery = { dimensions, metrics: input.metrics, filters };
 
     try {
       // Run both reports in parallel — they're independent createReport calls.
@@ -64,12 +69,12 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
       ]);
       if ('error' in base) return base;
       if ('error' in prev) return prev;
-      const joined = joinAndCompare(base.rows, prev.rows, input.dimensions, input.metrics);
+      const joined = joinAndCompare(base.rows, prev.rows, dimensions, input.metrics);
       if ('error' in joined) return joined;
       const sorted = sortByPrimaryMetric(joined, input.metrics[0]);
       const top = sorted.slice(0, input.top_n);
       const summary =
-        `Compare: dims=[${input.dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
+        `Compare: dims=[${dimensions.join(',')}] metrics=[${input.metrics.join(',')}] ` +
         `base=${baseRange.start}..${baseRange.end} vs prev=${prevRange.start}..${prevRange.end} ` +
         `(${joined.length} keys, top_n=${input.top_n})`;
       return derivedEnvelope(ctx, {
@@ -77,7 +82,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
         inputs: [base.input, prev.input],
         rows: top,
         total_row_count: joined.length,
-        warnings: [...base.warnings, ...prev.warnings],
+        warnings: [...canonical.warnings, ...base.warnings, ...prev.warnings],
       });
     } catch (e) {
       return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });

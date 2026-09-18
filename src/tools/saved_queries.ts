@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { validateCombo } from '../schema.js';
+import { canonicalizeQuery, validateCombo } from '../schema.js';
 import { runReportTool } from './run_report.js';
 import { READS_GAM, READS_LOCAL, WRITES_LOCAL, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import { listEnvelope } from '../envelope.js';
@@ -46,7 +46,16 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
     }
-    const comboError = validateCombo({ dimensions: input.dimensions, metrics: input.metrics });
+    // Resolve familiar names (e.g. CREATIVE_SIZE) the same way run_report does,
+    // so a template saved with an alias replays correctly and isn't refused
+    // up front the way it used to be.
+    const canonical = canonicalizeQuery({
+      dimensions: input.dimensions,
+      metrics: input.metrics,
+      filters: input.filters,
+    });
+    const { dimensions, filters } = canonical.query;
+    const comboError = validateCombo({ dimensions, metrics: input.metrics });
     if (comboError) {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
@@ -60,9 +69,9 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
     const entry = ctx.savedQueries.save(
       input.name,
       {
-        dimensions: input.dimensions,
+        dimensions,
         metrics: input.metrics,
-        ...(input.filters && { filters: input.filters }),
+        ...(filters && { filters }),
         ...(input.custom_dimension_key_ids && { custom_dimension_key_ids: input.custom_dimension_key_ids }),
       },
       input.description,

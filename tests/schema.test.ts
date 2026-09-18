@@ -7,6 +7,7 @@ import {
   incompatibleWith,
   findIncompatibilities,
   resolveDimensionAlias,
+  canonicalizeQuery,
   resolveReportType,
 } from '../src/schema.js';
 import { GENERATED_DIMENSIONS, GENERATED_METRICS } from '../src/schema-generated.js';
@@ -127,6 +128,39 @@ describe('GAM schema catalog', () => {
     expect(isValidDimension('CREATIVE_SIZE')).toBe(false);
     expect(resolveDimensionAlias('CREATIVE_SIZE')).toBe('RENDERED_CREATIVE_SIZE');
     expect(resolveDimensionAlias('AD_UNIT_NAME')).toBe('AD_UNIT_NAME');
+  });
+
+  it('canonicalizeQuery resolves an alias in dimensions AND filter fields, with one warning each', () => {
+    const { query, warnings } = canonicalizeQuery({
+      dimensions: ['CREATIVE_SIZE', 'AD_UNIT_NAME'],
+      metrics: ['IMPRESSIONS'],
+      filters: [{ field: 'CREATIVE_SIZE', op: '=', value: '300x250' }],
+    });
+    expect(query.dimensions).toEqual(['RENDERED_CREATIVE_SIZE', 'AD_UNIT_NAME']);
+    expect(query.filters).toEqual([{ field: 'RENDERED_CREATIVE_SIZE', op: '=', value: '300x250' }]);
+    expect(warnings).toHaveLength(2);
+    for (const w of warnings) expect(w).toMatch(/CREATIVE_SIZE.*RENDERED_CREATIVE_SIZE/);
+  });
+
+  it('canonicalizeQuery produces no warning when nothing is an alias', () => {
+    const { query, warnings } = canonicalizeQuery({
+      dimensions: ['AD_UNIT_NAME'],
+      metrics: ['IMPRESSIONS'],
+      filters: [{ field: 'AD_UNIT_NAME', op: '=', value: 'Homepage' }],
+    });
+    expect(query.dimensions).toEqual(['AD_UNIT_NAME']);
+    expect(query.filters).toEqual([{ field: 'AD_UNIT_NAME', op: '=', value: 'Homepage' }]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('canonicalizeQuery leaves a genuinely unknown filter field alone, for checkReportQuery to refuse', () => {
+    const { query, warnings } = canonicalizeQuery({
+      dimensions: ['AD_UNIT_NAME'],
+      metrics: ['IMPRESSIONS'],
+      filters: [{ field: 'NOT_A_REAL_DIMENSION', op: '=', value: 'x' }],
+    });
+    expect(query.filters).toEqual([{ field: 'NOT_A_REAL_DIMENSION', op: '=', value: 'x' }]);
+    expect(warnings).toEqual([]);
   });
 
   it('exposes key-value and per-slot custom-dimension dimensions', () => {

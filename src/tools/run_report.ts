@@ -3,7 +3,7 @@ import { gamError } from '../errors.js';
 import { rangeRuleFor, resolveDateRange } from '../dates.js';
 import {
   validateCombo,
-  resolveDimensionAlias,
+  canonicalizeQuery,
   resolveReportType,
   SUPPORTED_REPORT_TYPES,
 } from '../schema.js';
@@ -44,17 +44,18 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
   input: inputSchema,
   annotations: READS_GAM,
   async handler(input, ctx) {
-    // Rewrite alias dimension names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE)
-    // to their canonical REST names before validating, so familiar names don't
-    // trip the unknown-dimension check or get rejected by GAM.
-    const aliasWarnings: string[] = [];
-    const dimensions = input.dimensions.map((d) => {
-      const canonical = resolveDimensionAlias(d);
-      if (canonical !== d) {
-        aliasWarnings.push(`Dimension '${d}' is not a GAM REST dimension; queried as '${canonical}'.`);
-      }
-      return canonical;
+    // Rewrite alias names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE) in both
+    // dimensions and filter fields to their canonical REST names before
+    // validating, so a familiar name doesn't trip the unknown-name check or
+    // get rejected by GAM -- and a filter spelled the same as its dimension
+    // resolves too, not just the dimension.
+    const canonical = canonicalizeQuery({
+      dimensions: input.dimensions,
+      metrics: input.metrics,
+      filters: input.filters,
+      custom_dimension_key_ids: input.custom_dimension_key_ids,
     });
+    const { dimensions, filters } = canonical.query;
 
     const comboError = validateCombo({ dimensions, metrics: input.metrics });
     if (comboError) {
@@ -82,11 +83,11 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
     let query: ReportQuery = {
       dimensions,
       metrics: input.metrics,
-      filters: input.filters,
+      filters,
       custom_dimension_key_ids: input.custom_dimension_key_ids,
       report_type: reportType,
     };
-    const warnings: string[] = [...aliasWarnings];
+    const warnings: string[] = [...canonical.warnings];
     // The whitelist covers every metric GAM declares, including families whose
     // report type this server has no purpose-built tool for. Those requests are
     // forwarded as-is — GAM may still reject them for reasons we can't predict.

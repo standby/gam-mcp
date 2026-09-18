@@ -138,4 +138,34 @@ describe('compare_periods', () => {
     expect(byKey['12|3'].IMPRESSIONS).toBe('200');
     expect(byKey['12|3'].IMPRESSIONS_prev).toBe('20');
   });
+
+  it('accepts the CREATIVE_SIZE alias in dimensions and a same-named filter (refused before canonicalizeQuery)', async () => {
+    const query = { dimensions: ['RENDERED_CREATIVE_SIZE'], metrics: ['IMPRESSIONS'] };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-23', end: '2026-04-29' },
+          rows: [{ RENDERED_CREATIVE_SIZE: '300x250', IMPRESSIONS: 100 }],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-16', end: '2026-04-22' },
+          rows: [{ RENDERED_CREATIVE_SIZE: '300x250', IMPRESSIONS: 80 }],
+        },
+      ],
+    }, { timezone: 'UTC' });
+
+    const args = comparePeriodsTool.input.parse({
+      dimensions: ['CREATIVE_SIZE'],
+      metrics: ['IMPRESSIONS'],
+      base_range: { start: '2026-04-23', end: '2026-04-29' },
+      comparison: 'previous_period',
+      filters: [{ field: 'CREATIVE_SIZE', op: '=', value: '300x250' }],
+    });
+    const r = await comparePeriodsTool.handler(args, ctx);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.rows![0].RENDERED_CREATIVE_SIZE).toBe('300x250');
+    expect(r.warnings.join(' ')).toMatch(/CREATIVE_SIZE.*RENDERED_CREATIVE_SIZE/);
+  });
 });

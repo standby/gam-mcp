@@ -74,6 +74,38 @@ describe('run_report', () => {
     expect(r.warnings.some((w) => w.includes('RENDERED_CREATIVE_SIZE'))).toBe(true);
   });
 
+  it('rewrites a filter field spelled the same as its aliased dimension, and warns', async () => {
+    let captured: ReportDefinition | null = null;
+    const mock = createMockGamClient({
+      reports: [{
+        query: { dimensions: ['RENDERED_CREATIVE_SIZE'], metrics: ['IMPRESSIONS'] },
+        rows: [{ RENDERED_CREATIVE_SIZE: '300x250', IMPRESSIONS: 42 }],
+      }],
+    });
+    const client: GAMClient = {
+      ...mock,
+      defineReport: (definition) => {
+        captured = definition;
+        return mock.defineReport(definition);
+      },
+    };
+
+    const r = await runReportTool.handler(
+      {
+        dimensions: ['CREATIVE_SIZE'],
+        metrics: ['IMPRESSIONS'],
+        date_range: { start: '2026-09-01', end: '2026-09-07' },
+        filters: [{ field: 'CREATIVE_SIZE', op: '=', value: '300x250' }],
+      },
+      makeCtx({}, { client, timezone: 'America/Los_Angeles', now: new Date('2026-09-17T04:00:00Z') }),
+    );
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(captured).not.toBeNull();
+    expect(captured!.dimensions).toEqual(['RENDERED_CREATIVE_SIZE']);
+    expect(JSON.stringify(captured!.filters)).toContain('RENDERED_CREATIVE_SIZE');
+    expect(r.warnings.join(' ')).toMatch(/CREATIVE_SIZE.*RENDERED_CREATIVE_SIZE/);
+  });
+
   it('auto-rewrites KEY_VALUES_NAME filter + AD_REQUESTS to CUSTOM_DIMENSION_0_VALUE', async () => {
     let captured: ReportDefinition | null = null;
     const mock = createMockGamClient({

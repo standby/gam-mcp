@@ -31,6 +31,24 @@ describe('saved_queries tools', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('save_query accepts the CREATIVE_SIZE alias in dimensions and a same-named filter, and stores it canonicalized', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx({}, { savedQueries });
+    const args = saveQueryTool.input.parse({
+      name: 'by_creative_size',
+      dimensions: ['CREATIVE_SIZE'],
+      metrics: ['IMPRESSIONS'],
+      filters: [{ field: 'CREATIVE_SIZE', op: '=', value: '300x250' }],
+    });
+    const r = await saveQueryTool.handler(args, ctx);
+    expect('rows' in r).toBe(true);
+    const entry = savedQueries.get('by_creative_size');
+    expect(entry?.body.dimensions).toEqual(['RENDERED_CREATIVE_SIZE']);
+    expect(entry?.body.filters).toEqual([{ field: 'RENDERED_CREATIVE_SIZE', op: '=', value: '300x250' }]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('list_saved_queries returns saved entries', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
     const savedQueries = createSavedQueryStore(join(dir, 'q.json'));

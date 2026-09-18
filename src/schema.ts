@@ -5,6 +5,7 @@ import {
   type GeneratedEntry,
 } from './schema-generated.js';
 import { CURATED_DIMENSIONS, CURATED_METRICS, type Override } from './schema-overrides.js';
+import type { ReportQuery } from './gam-client.js';
 
 export type ReportType = (typeof REPORT_TYPES)[number];
 
@@ -73,6 +74,31 @@ export const DIMENSION_ALIASES: Record<string, string> = {
 // Map a dimension name to its canonical REST name, or return it unchanged.
 export function resolveDimensionAlias(name: string): string {
   return DIMENSION_ALIASES[name] ?? name;
+}
+
+// Resolve every familiar name in a query -- dimensions AND filter fields --
+// returning the canonical query plus one warning per rewrite. Alias
+// resolution lives here, with the alias table, rather than in one tool: a
+// filter spelled the same as its dimension used to be refused with "Unknown
+// filter dimension" because only the dimension list was rewritten. A query
+// with no aliases produces no warnings, and a filter field that is neither
+// an alias nor a real dimension is left as-is for validateCombo /
+// checkReportQuery to refuse downstream -- this only widens what resolves,
+// it does not relax what is accepted.
+export function canonicalizeQuery(query: ReportQuery): { query: ReportQuery; warnings: string[] } {
+  const warnings: string[] = [];
+  const rewrite = (name: string): string => {
+    const canonical = resolveDimensionAlias(name);
+    if (canonical !== name) {
+      warnings.push(`'${name}' is not a GAM REST dimension; queried as '${canonical}'.`);
+    }
+    return canonical;
+  };
+  const canonicalQuery: ReportQuery = { ...query, dimensions: query.dimensions.map(rewrite) };
+  if (query.filters) {
+    canonicalQuery.filters = query.filters.map((f) => ({ ...f, field: rewrite(f.field) }));
+  }
+  return { query: canonicalQuery, warnings };
 }
 
 const DIMS = new Set(GAM_SCHEMA.dimensions.map((d) => d.name));
