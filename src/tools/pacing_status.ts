@@ -35,6 +35,22 @@ export const PACING_LIVE_VALUE_WARNING =
 
 export type PacingRow = Record<string, unknown>;
 
+// LINE_ITEM_UNLIMITED_END is declared `type: "string"` in the generated
+// schema (src/schema-generated.ts:347), same as LINE_ITEM_DELIVERY_INDICATOR
+// -- which the live probe proved arrives as a doubleValue despite that same
+// declaration (spec line 79). The spec's evidence table never records
+// UNLIMITED_END's own wire kind, so the declared type cannot be trusted for
+// it either: GAM may send a real boolValue, or a stringValue "true"/"false".
+// A bare `=== true` would silently miss the string form and leak the
+// 2037-01-01 sentinel -- exactly the bug §1.2 exists to prevent. Accept both
+// wire forms; anything else (false, absent, an unrecognized string) is false,
+// which is the conservative outcome -- the real end date still passes through.
+function isUnlimitedEnd(cell: Cell): boolean {
+  if (cell === true) return true;
+  if (typeof cell === 'string') return cell.trim().toLowerCase() === 'true';
+  return false;
+}
+
 // Reads LINE_ITEM_DELIVERY_INDICATOR through num(), never Number(cellText()):
 // the field is declared `string` in the generated schema but arrives as a
 // `doubleValue`; convertValue types a row from the value it actually holds,
@@ -51,7 +67,7 @@ function mapPacingRow(r: Record<string, Cell>): { row: PacingRow; nullInput: boo
   const nullInput = isLifetime && indicator === null;
   // §1.2's last paragraph: an open-ended line item's end date is null, never
   // the 2037-01-01 sentinel GAM sends, when LINE_ITEM_UNLIMITED_END is true.
-  const unlimitedEnd = r.LINE_ITEM_UNLIMITED_END === true;
+  const unlimitedEnd = isUnlimitedEnd(r.LINE_ITEM_UNLIMITED_END);
   const endDate = unlimitedEnd ? null : (r.LINE_ITEM_END_DATE ?? null);
   const derivedBlock = isLifetime
     ? derived({

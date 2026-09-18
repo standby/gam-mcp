@@ -47,6 +47,31 @@ function dailyRow(over: { id?: number; name?: string; indicator?: number } = {})
   };
 }
 
+// A LIFETIME row with LINE_ITEM_UNLIMITED_END sent as a specific raw wire
+// value (or omitted, when `cell` is undefined) -- the declared schema type
+// ("string") cannot be trusted for this field any more than it can for
+// LINE_ITEM_DELIVERY_INDICATOR (spec line 79), so both a real boolValue and a
+// stringValue form must be exercised.
+function unlimitedEndRow(id: number, cell: ReportValue | undefined): Record<string, ReportValue> {
+  const row = lifetimeRow({ id, endDate: '20370101' });
+  if (cell === undefined) {
+    const { LINE_ITEM_UNLIMITED_END: _drop, ...rest } = row;
+    return rest;
+  }
+  return { ...row, LINE_ITEM_UNLIMITED_END: cell };
+}
+
+// A LIFETIME-shaped row (real, non-null indicator, so a gating bug would leak
+// it) with LINE_ITEM_PRIMARY_GOAL_TYPE overridden or omitted entirely.
+function goalTypeRow(id: number, cell: ReportValue | undefined): Record<string, ReportValue> {
+  const row = lifetimeRow({ id, indicator: 0.5 });
+  if (cell === undefined) {
+    const { LINE_ITEM_PRIMARY_GOAL_TYPE: _drop, ...rest } = row;
+    return rest;
+  }
+  return { ...row, LINE_ITEM_PRIMARY_GOAL_TYPE: cell };
+}
+
 describe('pacing_status', () => {
   it('I6: with no date_range it defaults to last_7_days and works on the 1st', async () => {
     const gam = createFakeGam();
@@ -94,14 +119,51 @@ describe('pacing_status', () => {
     expect(limited.LINE_ITEM_END_DATE).toBe('2037-01-01');
   });
 
-  it('filters by line_item_ids and order_ids', async () => {
+  it('LINE_ITEM_UNLIMITED_END is read from either wire form GAM might send, case-insensitively', async () => {
+    const gam = createFakeGam();
+    gam.setRows({ byColumn: [
+      unlimitedEndRow(1, { boolValue: true }),
+      unlimitedEndRow(2, { stringValue: 'true' }),
+      unlimitedEndRow(3, { stringValue: ' True ' }), // trimmed, case-insensitive
+      unlimitedEndRow(4, { stringValue: 'false' }),
+      unlimitedEndRow(5, undefined), // absent -> conservative: real date survives
+    ] });
+    const r = await pacingStatusTool.handler({} as never, restCtx(gam)) as Record<string, any>;
+    const [boolTrue, strTrue, strTrueSpaced, strFalse, absent] = r.rows;
+    expect(boolTrue.LINE_ITEM_END_DATE).toBeNull();
+    expect(strTrue.LINE_ITEM_END_DATE).toBeNull();
+    expect(strTrueSpaced.LINE_ITEM_END_DATE).toBeNull();
+    expect(strFalse.LINE_ITEM_END_DATE).toBe('2037-01-01');
+    expect(absent.LINE_ITEM_END_DATE).toBe('2037-01-01');
+  });
+
+  it('a missing or unrecognized primary goal type is never LIFETIME: null indicator, real reason, no leak', async () => {
+    const gam = createFakeGam();
+    gam.setRows({ byColumn: [
+      goalTypeRow(1, undefined), // absent entirely
+      goalTypeRow(2, str('SOMETHING_UNEXPECTED')),
+    ] });
+    const r = await pacingStatusTool.handler({} as never, restCtx(gam)) as Record<string, any>;
+    for (const row of r.rows) {
+      expect(row.delivery_indicator).toBeNull();
+      expect(row.derived.reason).toBe('no lifetime goal');
+    }
+  });
+
+  it('filters by line_item_ids and order_ids, and the filters reach the report definition', async () => {
     const gam = createFakeGam();
     gam.setRows({ byColumn: [lifetimeRow({ id: 1, indicator: 0.5 })] });
     const r = await pacingStatusTool.handler(
-      { date_range: { relative: 'last_7_days' }, line_item_ids: [1], order_ids: [2] } as never,
+      { date_range: { relative: 'last_7_days' }, line_item_ids: [1, 2], order_ids: [3] } as never,
       restCtx(gam),
     ) as Record<string, any>;
     expect(r.error).toBeUndefined();
     expect(r.rows).toHaveLength(1);
+
+    const def = gam.lastDefinition() as { filters?: { fieldFilter: { field: { dimension: string }; values: { intValue: string }[] } }[] };
+    const filters = def.filters ?? [];
+    expect(filters.map((f) => f.fieldFilter.field.dimension)).toEqual(['LINE_ITEM_ID', 'ORDER_ID']);
+    expect(filters[0].fieldFilter.values.map((v) => v.intValue)).toEqual(['1', '2']);
+    expect(filters[1].fieldFilter.values.map((v) => v.intValue)).toEqual(['3']);
   });
 });
