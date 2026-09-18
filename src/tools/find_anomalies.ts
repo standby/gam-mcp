@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { lastDays, previousPeriod, resolveDateRange } from '../dates.js';
+import { lastDays, previousPeriod, type ResolvedRange } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
+import { pacingRows, PACING_LIVE_VALUE_WARNING } from './pacing_status.js';
 import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
+
+const TOOL = 'find_anomalies';
 
 const inputSchema = z.object({
   kind: z.enum([
@@ -20,11 +23,12 @@ const inputSchema = z.object({
 }).strict();
 
 export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
-  name: 'find_anomalies',
+  name: TOOL,
   description:
     "Surface decision-relevant anomalies. Each kind owns its own threshold unit — read carefully. " +
-    "kind='pacing_underdelivery': line items whose month-to-date impressions are below their pro-rated goal. " +
-    "threshold_pct = how far below pro-rated pace counts as 'at risk' (default 80 → flag <80% of expected). " +
+    "kind='pacing_underdelivery': LIFETIME-goal line items (last_7_days) whose GAM delivery_indicator is below " +
+    "threshold_pct / 100 (default 80 → flag an indicator below 0.80). Line items with another primary goal type are " +
+    "never flagged, because the indicator is only meaningful for a LIFETIME goal. " +
     "kind='fill_rate_drops': ad units whose fill rate dropped week-over-week by more than threshold_pct *percentage points* " +
     "(default 10pp). " +
     "kind='ecpm_regression': buyer networks (DSPs / AdX / AdSense) whose AdX average eCPM dropped week-over-week by more " +
@@ -52,62 +56,48 @@ export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
   },
 };
 
+// find_anomalies' one and only pacing kind: line items whose GAM
+// delivery_indicator (live, over last_7_days) says they are under threshold.
+// Shares pacingRows() with pacing_status rather than writing the eleven
+// dimensions a second time (spec §4.3).
 async function pacingUnderdelivery(
   ctx: ToolContext,
   thresholdPct: number,
   topN: number,
 ) {
-  // ponytail: month_to_date fails on the 1st of a month; PR 4 moves pacing to last_7_days (spec §4.3).
-  const range = resolveDateRange({ relative: 'month_to_date' }, { timezone: ctx.timezone, now: ctx.now, rule: 'historical' });
-  if ('error' in range) return range;
-  // Pro-rated expected delivery: today's day-of-month / total days in month.
-  // Pacing % = (impressions / goal) / expected_progress.
-  const { daysElapsed, daysInMonth } = monthProgress(range, ctx.timezone, ctx.now);
-  const expectedProgress = daysElapsed / daysInMonth;
-
-  const query: ReportQuery = {
-    dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE', 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE'],
-    metrics: ['IMPRESSIONS'],
-    // Restrict to line-item types that have meaningful goals (skip backfill).
-    filters: [{
-      field: 'LINE_ITEM_TYPE',
-      op: 'IN',
-      value: ['STANDARD', 'SPONSORSHIP', 'NETWORK', 'BULK', 'PRICE_PRIORITY'],
-    }],
-  };
-  const result = await executeReportRows(ctx, query, range, 'find_anomalies');
+  const range = lastDays(7, ctx.timezone, ctx.now);
+  const result = await pacingRows(ctx, range, [], TOOL);
   if ('error' in result) return result;
 
-  const annotated: Record<string, string>[] = [];
-  for (const r of result.rows) {
-    const goal = Number(r.LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE) || 0;
-    const imps = Number(r.IMPRESSIONS) || 0;
-    if (goal < 1000) continue; // skip tiny / non-goaled line items
-    const actualProgress = imps / goal;
-    const pacing = expectedProgress === 0 ? 0 : (actualProgress / expectedProgress) * 100;
-    if (pacing >= thresholdPct) continue;
-    const expectedImps = goal * expectedProgress;
-    const shortfall = Math.max(0, Math.round(expectedImps - imps));
-    annotated.push({
-      LINE_ITEM_ID: cellText(r.LINE_ITEM_ID),
-      LINE_ITEM_NAME: cellText(r.LINE_ITEM_NAME),
-      LINE_ITEM_TYPE: cellText(r.LINE_ITEM_TYPE),
-      goal: String(goal),
-      impressions_mtd: String(imps),
-      expected_mtd: String(Math.round(expectedImps)),
-      shortfall: String(shortfall),
-      pacing_pct: pacing.toFixed(1),
-    });
-  }
-  annotated.sort((a, b) => Number(b.shortfall) - Number(a.shortfall));
-  const top = annotated.slice(0, topN);
-  const summary =
-    `Pacing underdelivery (MTD ${range.start}..${range.end}, day ${daysElapsed}/${daysInMonth}, ` +
-    `expected ${(expectedProgress * 100).toFixed(0)}%, threshold ${thresholdPct}%): ` +
-    `${annotated.length} line items at risk, top ${top.length} returned.`;
-  return derivedEnvelope(ctx, {
-    summary, inputs: [result.input], rows: top, total_row_count: annotated.length, warnings: result.warnings,
+  const threshold = thresholdPct / 100;
+  const flagged = result.rows.filter((r) => {
+    const indicator = r.delivery_indicator;
+    // Only a LIFETIME primary goal has a meaningful indicator; a null
+    // indicator (absent from GAM) cannot be compared against the threshold.
+    return r.LINE_ITEM_PRIMARY_GOAL_TYPE === 'LIFETIME' && typeof indicator === 'number' && indicator < threshold;
   });
+  // Worst first: the lowest indicator is the furthest under pace.
+  flagged.sort((a, b) => (a.delivery_indicator as number) - (b.delivery_indicator as number));
+  const top = flagged.slice(0, topN);
+  const summary =
+    `Pacing underdelivery (last 7 days ${range.start}..${range.end}, LIFETIME-goal items with delivery_indicator ` +
+    `below ${threshold.toFixed(2)} [threshold_pct=${thresholdPct}]): ${flagged.length} line items at risk, ` +
+    `top ${top.length} returned, worst first.`;
+  return derivedEnvelope(ctx, {
+    summary,
+    inputs: [result.input],
+    rows: top,
+    total_row_count: flagged.length,
+    warnings: [...result.warnings, PACING_LIVE_VALUE_WARNING],
+    null_input_rows: result.nullInputRows,
+  });
+}
+
+// lastDays(7, ...) plus the equal-length window immediately before it, as
+// fillRateDrops, ecpmRegression and viewabilityDrops all compare.
+function weekOverWeek(ctx: ToolContext): { baseRange: ResolvedRange; prevRange: ResolvedRange } {
+  const baseRange = lastDays(7, ctx.timezone, ctx.now);
+  return { baseRange, prevRange: previousPeriod(baseRange) };
 }
 
 async function fillRateDrops(
@@ -115,15 +105,14 @@ async function fillRateDrops(
   thresholdPct: number,
   topN: number,
 ) {
-  const baseRange = lastDays(7, ctx.timezone, ctx.now);
-  const prevRange = previousPeriod(baseRange);
+  const { baseRange, prevRange } = weekOverWeek(ctx);
   const query: ReportQuery = {
     dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
     metrics: ['AD_REQUESTS', 'IMPRESSIONS'],
   };
   const [base, prev] = await Promise.all([
-    executeReportRows(ctx, query, baseRange, 'find_anomalies'),
-    executeReportRows(ctx, query, prevRange, 'find_anomalies'),
+    executeReportRows(ctx, query, baseRange, TOOL),
+    executeReportRows(ctx, query, prevRange, TOOL),
   ]);
   if ('error' in base) return base;
   if ('error' in prev) return prev;
@@ -168,8 +157,7 @@ async function ecpmRegression(
   thresholdPct: number,
   topN: number,
 ) {
-  const baseRange = lastDays(7, ctx.timezone, ctx.now);
-  const prevRange = previousPeriod(baseRange);
+  const { baseRange, prevRange } = weekOverWeek(ctx);
   // AdX-only metrics so we don't dilute named bidders' eCPM with direct-sold revenue.
   // BUYER_NETWORK_NAME slices by demand source (DSP, AdSense, open-auction AdX).
   const query: ReportQuery = {
@@ -177,8 +165,8 @@ async function ecpmRegression(
     metrics: ['AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM'],
   };
   const [base, prev] = await Promise.all([
-    executeReportRows(ctx, query, baseRange, 'find_anomalies'),
-    executeReportRows(ctx, query, prevRange, 'find_anomalies'),
+    executeReportRows(ctx, query, baseRange, TOOL),
+    executeReportRows(ctx, query, prevRange, TOOL),
   ]);
   if ('error' in base) return base;
   if ('error' in prev) return prev;
@@ -227,15 +215,14 @@ async function viewabilityDrops(
   thresholdPp: number,
   topN: number,
 ) {
-  const baseRange = lastDays(7, ctx.timezone, ctx.now);
-  const prevRange = previousPeriod(baseRange);
+  const { baseRange, prevRange } = weekOverWeek(ctx);
   const query: ReportQuery = {
     dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
     metrics: ['IMPRESSIONS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE'],
   };
   const [base, prev] = await Promise.all([
-    executeReportRows(ctx, query, baseRange, 'find_anomalies'),
-    executeReportRows(ctx, query, prevRange, 'find_anomalies'),
+    executeReportRows(ctx, query, baseRange, TOOL),
+    executeReportRows(ctx, query, prevRange, TOOL),
   ]);
   if ('error' in base) return base;
   if ('error' in prev) return prev;
@@ -282,16 +269,4 @@ function pctOrZero(num: string | undefined, denom: string | undefined): number {
   const n = Number(num) || 0;
   const d = Number(denom) || 0;
   return d === 0 ? 0 : (n / d) * 100;
-}
-
-function monthProgress(
-  range: { start: string; end: string },
-  _timezone: string,
-  now: Date | undefined,
-): { daysElapsed: number; daysInMonth: number } {
-  const today = (now ?? new Date()).toISOString().slice(0, 10);
-  const [y, m] = range.start.split('-').map(Number);
-  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const todayDay = Number((today >= range.start ? today : range.end).split('-')[2]);
-  return { daysElapsed: Math.max(1, todayDay), daysInMonth };
 }

@@ -38,7 +38,7 @@ export const VALID_ARGS: Record<string, Record<string, unknown>> = {
   revenue_summary: { date_range: PAST, group_by: 'day' },
   top_advertisers: { date_range: PAST, top_n: 5, metric: 'revenue' },
   top_line_items: { date_range: PAST, top_n: 5, metric: 'impressions', line_item_type: 'STANDARD' },
-  pacing_status: { line_item_ids: [1], order_ids: [2] },
+  pacing_status: { date_range: PAST, line_item_ids: [1], order_ids: [2] },
   fill_rate: { date_range: PAST, group_by: 'ad_unit' },
   inventory_breakdown: { date_range: PAST, group_by: 'order' },
   revenue_trend: { date_range: PAST, granularity: 'week', split_by: 'country' },

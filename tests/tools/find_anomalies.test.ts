@@ -1,42 +1,53 @@
 import { describe, it, expect } from 'vitest';
 import { findAnomaliesTool } from '../../src/tools/find_anomalies.js';
+import { PACING_DIMENSIONS } from '../../src/tools/pacing_status.js';
 import { makeCtx } from '../helpers.js';
 
 describe('find_anomalies', () => {
-  it('pacing_underdelivery flags line items below pro-rated pace and ranks by shortfall', async () => {
-    // mid-month: now = 2026-04-15 → expected progress = 15/30 = 50%
+  it('I7: pacing_underdelivery flags only lifetime-goal items under the threshold', async () => {
     const now = new Date('2026-04-15T12:00:00Z');
     const ctx = makeCtx({
       reports: [
         {
-          query: {
-            dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE', 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE'],
-            metrics: ['IMPRESSIONS'],
-          },
+          query: { dimensions: PACING_DIMENSIONS, metrics: ['IMPRESSIONS'] },
           rows: [
-            // On track: 50% delivered at 50% expected
-            { LINE_ITEM_ID: 1, LINE_ITEM_NAME: 'OnTrack', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE: 100000, IMPRESSIONS: 50000 },
-            // Under: 20% delivered → pacing 40% of expected (below default 80% threshold)
-            { LINE_ITEM_ID: 2, LINE_ITEM_NAME: 'Under', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE: 100000, IMPRESSIONS: 20000 },
-            // Way under: 10% delivered → pacing 20%
-            { LINE_ITEM_ID: 3, LINE_ITEM_NAME: 'WayUnder', LINE_ITEM_TYPE: 'SPONSORSHIP', LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE: 200000, IMPRESSIONS: 20000 },
-            // Tiny goal → filtered out (skip line items with goal < 1000)
-            { LINE_ITEM_ID: 4, LINE_ITEM_NAME: 'TinyGoal', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE: 500, IMPRESSIONS: 0 },
+            { LINE_ITEM_ID: 1, LINE_ITEM_NAME: 'HalfPaced', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_TYPE: 'LIFETIME', LINE_ITEM_DELIVERY_INDICATOR: 0.5 },
+            { LINE_ITEM_ID: 2, LINE_ITEM_NAME: 'OnTrack', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_TYPE: 'LIFETIME', LINE_ITEM_DELIVERY_INDICATOR: 0.95 },
+            // DAILY goal: never flagged, no matter how low its indicator is.
+            { LINE_ITEM_ID: 3, LINE_ITEM_NAME: 'DailyLow', LINE_ITEM_TYPE: 'SPONSORSHIP', LINE_ITEM_PRIMARY_GOAL_TYPE: 'DAILY', LINE_ITEM_DELIVERY_INDICATOR: 0.1 },
           ],
         },
       ],
     }, { timezone: 'UTC', now });
 
-    const args = findAnomaliesTool.input.parse({ kind: 'pacing_underdelivery' });
+    const args = findAnomaliesTool.input.parse({ kind: 'pacing_underdelivery', threshold_pct: 90 });
     const r = await findAnomaliesTool.handler(args, ctx);
     expect('rows' in r).toBe(true);
     if (!('rows' in r)) return;
 
-    // OnTrack and TinyGoal excluded; remaining sorted by shortfall (WayUnder first)
-    expect(r.rows!.map((x) => x.LINE_ITEM_NAME)).toEqual(['WayUnder', 'Under']);
-    expect(r.rows![0].pacing_pct).toBe('20.0');
-    expect(r.rows![1].pacing_pct).toBe('40.0');
-    expect(Number(r.rows![0].shortfall)).toBeGreaterThan(Number(r.rows![1].shortfall));
+    expect(r.rows!.map((x) => x.LINE_ITEM_NAME)).toEqual(['HalfPaced']);
+    expect(r.rows![0].delivery_indicator).toBe(0.5);
+  });
+
+  it('I7: sorts flagged items by indicator ascending, worst first', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const ctx = makeCtx({
+      reports: [
+        {
+          query: { dimensions: PACING_DIMENSIONS, metrics: ['IMPRESSIONS'] },
+          rows: [
+            { LINE_ITEM_ID: 1, LINE_ITEM_NAME: 'Worse', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_TYPE: 'LIFETIME', LINE_ITEM_DELIVERY_INDICATOR: 0.3 },
+            { LINE_ITEM_ID: 2, LINE_ITEM_NAME: 'Worst', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_TYPE: 'LIFETIME', LINE_ITEM_DELIVERY_INDICATOR: 0.1 },
+            { LINE_ITEM_ID: 3, LINE_ITEM_NAME: 'BarelyUnder', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_TYPE: 'LIFETIME', LINE_ITEM_DELIVERY_INDICATOR: 0.79 },
+          ],
+        },
+      ],
+    }, { timezone: 'UTC', now });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'pacing_underdelivery' }); // default threshold_pct 80
+    const r = await findAnomaliesTool.handler(args, ctx);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+    expect(r.rows!.map((x) => x.LINE_ITEM_NAME)).toEqual(['Worst', 'Worse', 'BarelyUnder']);
   });
 
   it('ecpm_regression flags buyer networks whose AdX eCPM dropped WoW past threshold', async () => {
@@ -129,15 +140,12 @@ describe('find_anomalies', () => {
 
   it('names the single input report in provenance', async () => {
     const now = new Date('2026-04-15T12:00:00Z');
-    const query = {
-      dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE', 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE'],
-      metrics: ['IMPRESSIONS'],
-    };
+    const query = { dimensions: PACING_DIMENSIONS, metrics: ['IMPRESSIONS'] };
     const ctx = makeCtx({
       reports: [{
         query,
         rows: [
-          { LINE_ITEM_ID: 1, LINE_ITEM_NAME: 'Under', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE: 100000, IMPRESSIONS: 20000 },
+          { LINE_ITEM_ID: 1, LINE_ITEM_NAME: 'Under', LINE_ITEM_TYPE: 'STANDARD', LINE_ITEM_PRIMARY_GOAL_TYPE: 'LIFETIME', LINE_ITEM_DELIVERY_INDICATOR: 0.5 },
         ],
       }],
     }, { timezone: 'UTC', now });

@@ -42,8 +42,9 @@ describe('every range-taking tool checks its dates (spec §3.2, I5)', () => {
     expect(CASES.map((c) => `${c.name}.${c.field}`)).toEqual(expect.arrayContaining([
       'run_report.date_range', 'revenue_summary.date_range', 'fill_rate.date_range',
       'compare_periods.base_range', 'sell_through.date_range', 'run_saved_query.date_range',
+      'pacing_status.date_range',
     ]));
-    expect(CASES.length).toBe(19);
+    expect(CASES.length).toBe(20);
   });
 
   describe.each(CASES)('$name', ({ name, tool, field }) => {
