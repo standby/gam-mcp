@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { kvReportTool } from '../../src/tools/kv_report.js';
 import { createMockGamClient } from '../../src/gam-client.js';
-import { counted, makeCtx } from '../helpers.js';
+import { counted, makeCtx, ok } from '../helpers.js';
 import type { GAMClient } from '../../src/gam-client.js';
 import { definitionRange, type ReportDefinition } from '../../src/report-definition.js';
 
@@ -141,6 +141,38 @@ describe('kv_report', () => {
     expect(r.summary).toContain('kv=channel_id=479');
     expect(r.summary).toContain('ad_unit=777');
     expect(r.summary).not.toMatch(/filtered by/);
+  });
+
+  it('resolves a relative range in the date zone (GAM_TIMEZONE), not the network report zone', async () => {
+    const mock = createMockGamClient({
+      entities: { custom_targeting_key: [{ id: 777, name: 'section' }] },
+      reports: [{
+        query: { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['IMPRESSIONS'] },
+        rows: [{ CUSTOM_DIMENSION_0_VALUE: 'news', IMPRESSIONS: 10 }],
+      }],
+    });
+    const args = kvReportTool.input.parse({
+      kv: 'section=news',
+      date_range: { relative: 'yesterday' },
+      metrics: ['IMPRESSIONS'],
+    });
+    // Pacific/Kiritimati (UTC+14) and Etc/GMT+12 (UTC-12) are two fixed-offset
+    // (no DST) zones 26 hours apart, picked only so "yesterday" falls on a
+    // different calendar day in each -- not because either has any bearing on
+    // a real publisher's configuration. GAM_TIMEZONE (ctx.timezone) is meant
+    // to pick the date; the network's own zone (ctx.reportTimeZone) is only
+    // what rows are counted in and must not decide "yesterday".
+    const ctx = makeCtx({}, {
+      client: mock,
+      timezone: 'Pacific/Kiritimati',
+      reportTimeZone: 'Etc/GMT+12',
+      now: new Date('2026-09-17T18:00:00Z'),
+    });
+    const r = ok(await kvReportTool.handler(args, ctx));
+    // Pacific/Kiritimati's "yesterday" for this instant is 2026-09-17;
+    // Etc/GMT+12's is 2026-09-16 -- a wrong implementation using the report
+    // zone would resolve to the latter.
+    expect(r.provenance.date_range).toEqual({ start: '2026-09-17', end: '2026-09-17' });
   });
 
   describe('names that match more than one entity (spec §3.3)', () => {

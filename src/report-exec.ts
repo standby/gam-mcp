@@ -137,7 +137,13 @@ type Obtained = { report: string; result: string; operation?: string; cached: Do
 // moment GAM accepts it, so a call that fails later (while polling or reading
 // the first page), or a process that stops, leaves it for the next identical
 // call to resume; a resumed entry keeps the start time it has. A wait that
-// ends because GAM says the run failed forgets it.
+// ends because GAM says the run failed forgets it -- and a poll 404 (GAM no
+// longer knows the operation, pollFailure) is bucketed under that same
+// REPORT_FAILED code, so it forgets the entry too, not restores it. Any other
+// ending (the poll timing out, or the poll request itself failing for some
+// other reason -- a network blip, 401/403/429) restores the same
+// report/operation as pending instead, so the run is not abandoned: the next
+// identical call resumes waiting on it rather than starting a duplicate.
 async function runOnce(
   ctx: ToolContext,
   definition: ReportDefinition,
