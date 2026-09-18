@@ -62,6 +62,8 @@ export const kvBreakdownTool = buildReportTool({
     custom_dimension_key_ids: [input.custom_targeting_key_id],
   }),
   summary: (input, range) =>
-    `Top ${input.top_n} values of custom_targeting_key=${input.custom_targeting_key_id} by ${input.metric}, ` +
+    `Top values of custom_targeting_key=${input.custom_targeting_key_id} by ${input.metric}, ` +
     `${range.start}..${range.end}${scopeLabel(input)}`,
+  topN: (input) => input.top_n,
+  sort: (input) => ({ metric: METRIC_MAP[input.metric], descending: true }),
 });

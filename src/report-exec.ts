@@ -37,6 +37,10 @@ export type ReportRequest = {
   dateRange: DateRange;
   summary: string;
   warnings?: string[];
+  // The row cap a top_n tool applies to its fetch. Never part of `query`:
+  // see the comment on ReportToolConfig.topN in report-tool-builder.ts for
+  // why it must not reach the report definition.
+  topN?: number;
 };
 
 export type ReportRows = {
@@ -341,12 +345,34 @@ type PageArgs = {
   runTime: string | null;
   dateRange: DateSpan | null;
   cacheHit: boolean;
+  // Set when this page was fetched under a top_n cap (spec §1.1, §4.2): the
+  // request deliberately stopped short of the rest of the result, so that is
+  // not "truncated" and there is no cursor to resume it with.
+  topN?: number;
 };
+
+// The clause(s) a top_n cap appends to `summary`, naming the true row count
+// and the sort GAM applied. Returned as a list — not a pre-joined string —
+// so a later clause (e.g. Task 7's filter description) can join this one
+// inside the same parenthetical instead of appending a second one.
+function topNClauses(returned: number, total: number | null, definition: ReportDefinition): string[] {
+  const sort = definition.sorts?.[0] as { field?: { metric?: string }; descending?: boolean } | undefined;
+  if (!sort?.field?.metric) return [];
+  const direction = sort.descending === false ? 'asc' : 'desc';
+  return [`${returned} of ${total ?? returned}`, `sorted by ${sort.field.metric} ${direction}`];
+}
+
+function withClauses(summary: string, clauses: string[]): string {
+  return clauses.length ? `${summary} (${clauses.join(', ')})` : summary;
+}
 
 function pageEnvelope(a: PageArgs): ResultEnvelope {
   const table = buildTable(a.definition.dimensions, a.definition.metrics, a.page.rows);
   const returned = table.rows.length;
-  const nextCursor = a.page.nextPageToken
+  const capped = a.topN !== undefined;
+  // A capped fetch never carries a cursor: there is no "next page" to hand
+  // back, only the rest of a result the request chose not to read.
+  const nextCursor = !capped && a.page.nextPageToken
     ? encodeCursor({
         result: a.result,
         page_token: a.page.nextPageToken,
@@ -365,11 +391,12 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
   if (a.dateRange === null) warnings.push('GAM did not report the computed date range for this result.');
   if (a.total === null) {
     warnings.push('GAM did not report how many rows this result has.');
-  } else if (!nextCursor && a.offset + returned < a.total) {
+  } else if (!capped && !nextCursor && a.offset + returned < a.total) {
     warnings.push(`GAM reported ${a.total} rows but returned ${a.offset + returned} and no further page.`);
   }
+  const summary = capped ? withClauses(a.summary, topNClauses(returned, a.total, a.definition)) : a.summary;
   return envelope({
-    summary: a.summary,
+    summary,
     provenance: {
       network_code: a.ctx.networkCode,
       report_type: a.definition.reportType,
@@ -387,7 +414,7 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
       cache: { hit: a.cacheHit },
     },
     total_row_count: a.total,
-    truncated: nextCursor !== null || (a.total !== null && a.offset + returned < a.total),
+    truncated: capped ? false : (nextCursor !== null || (a.total !== null && a.offset + returned < a.total)),
     next_cursor: nextCursor,
     warnings,
     schema: table.columns,
@@ -414,7 +441,10 @@ export async function executeReport(
   if (invalid) return invalid;
   try {
     const definition = reportDefinition(req.query, req.dateRange, ctx);
-    const first = await firstPage(ctx, definition, pageRows(ctx), req.tool);
+    // A schema cap of 1,000 on every top_n input keeps this under GAM's
+    // 10,000 pageSize limit, so one page always holds the whole request.
+    const size = req.topN ? Math.min(req.topN, pageRows(ctx)) : pageRows(ctx);
+    const first = await firstPage(ctx, definition, size, req.tool);
     if ('error' in first) return first;
     return pageEnvelope({
       ctx,
@@ -429,6 +459,7 @@ export async function executeReport(
       runTime: first.facts.run_time,
       dateRange: first.facts.date_range,
       cacheHit: first.cacheHit,
+      topN: req.topN,
     });
   } catch (e) {
     return toGamError(e);

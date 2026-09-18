@@ -44,6 +44,8 @@ export const bidderBreakdownTool = buildReportTool({
   },
   summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Open Bidding breakdown by bidder${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
+    return `Open Bidding breakdown by bidder${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'AD_EXCHANGE_REVENUE', descending: true }),
 });

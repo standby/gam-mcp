@@ -56,6 +56,9 @@ export type FakeGam = {
   setRows(rows: ReportRow[] | RowsByColumn, extra?: { runTime?: string; dateRanges?: Json[] }): void;
   inject(method: string, path: RegExp, outcome: Outcome): void;
   expire(result: string): void;
+  // The reportDefinition of the most recent `reports` POST (the definition a
+  // tool call actually sent GAM), for tests that assert on it directly.
+  lastDefinition(): Json;
 };
 
 export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?: number } = {}): FakeGam {
@@ -210,5 +213,9 @@ export function createFakeGam(opts: { networkCode?: string; completeAfterPolls?:
     setRows(next, more = {}) { rows = next; extra = more; },
     inject(method, path, outcome) { injections.push({ method, path, outcome }); },
     expire(result) { expired.add(result); },
+    lastDefinition() {
+      const all = [...reports.values()];
+      return all[all.length - 1]?.reportDefinition;
+    },
   };
 }

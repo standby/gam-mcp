@@ -58,6 +58,8 @@ export const viewabilityBreakdownTool = buildReportTool({
   },
   summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Viewability by ${input.by}${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
+    return `Viewability by ${input.by}${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS', descending: true }),
 });

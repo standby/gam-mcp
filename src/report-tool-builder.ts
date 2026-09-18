@@ -83,6 +83,15 @@ export type ReportToolConfig<I extends ReportToolInput> = {
   summary: (input: z.infer<I>, range: ResolvedRange) => string;
   /** Optional caveats about how the returned rows may (not) be read. */
   warnings?: (input: z.infer<I>) => string[] | undefined;
+  // The row cap a top_n tool applies. Deliberately NOT part of buildQuery:
+  // top_n must never enter the report definition, or the definition hash
+  // fragments per top_n and each distinct value defines another hidden,
+  // undeletable GAM report.
+  topN?: (input: z.infer<I>) => number | undefined;
+  // The sort a top_n tool applies. Unlike topN, this DOES belong in the
+  // definition (spec §4.2's last sentence), so it is merged into the query
+  // buildQuery returns rather than threaded separately through ReportRequest.
+  sort?: (input: z.infer<I>) => { metric: string; descending: boolean } | undefined;
 };
 
 // A tool that runs one report over its date_range. The range is resolved
@@ -100,6 +109,8 @@ export function buildReportTool<I extends ReportToolInput>(
     annotations: READS_GAM,
     async handler(input, ctx) {
       const query = cfg.buildQuery(input);
+      const sort = cfg.sort?.(input);
+      if (sort) query.sort = sort;
       const range = resolveDateRange(input.date_range, {
         timezone: ctx.timezone,
         now: ctx.now,
@@ -112,6 +123,7 @@ export function buildReportTool<I extends ReportToolInput>(
         dateRange: range,
         summary: cfg.summary(input, range),
         warnings: cfg.warnings?.(input) ?? [],
+        topN: cfg.topN?.(input),
       });
     },
   };

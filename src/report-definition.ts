@@ -57,6 +57,9 @@ export function reportDefinition(
     ...(query.custom_dimension_key_ids?.length && {
       customDimensionKeyIds: query.custom_dimension_key_ids.map(String),
     }),
+    ...(query.sort && {
+      sorts: [{ field: { metric: query.sort.metric }, descending: query.sort.descending }],
+    }),
     // GAM rejects a PROVIDED zone for ordinary reports (live probe,
     // 2026-09-17), so every report is computed in the network's own zone.
     timeZoneSource: 'PUBLISHER',

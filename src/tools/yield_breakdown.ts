@@ -62,6 +62,8 @@ export const yieldBreakdownTool = buildReportTool({
   },
   summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Yield group breakdown by ${input.by}${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
+    return `Yield group breakdown by ${input.by}${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'YIELD_GROUP_ESTIMATED_REVENUE', descending: true }),
 });

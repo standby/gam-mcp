@@ -16,9 +16,16 @@ const QUERY: ReportQuery = {
   ],
   custom_dimension_key_ids: [111, 222],
   report_type: 'HISTORICAL',
+  sort: { metric: 'IMPRESSIONS', descending: true },
 };
 const RANGE = { start: '2026-09-01', end: '2026-09-02' };
-const full = (): ReportDefinition => build(QUERY, RANGE);
+// reportDefinition only ever sets one sort from a query (a top_n tool asks
+// for exactly one). B1's positional test needs a second entry -- a primary
+// and a tiebreak -- to mean anything, so it is appended directly here.
+const full = (): ReportDefinition => {
+  const def = build(QUERY, RANGE);
+  return { ...def, sorts: [...(def.sorts ?? []), { field: { metric: 'REVENUE' }, descending: false }] };
+};
 
 // A different value of the same shape: strings gain a suffix, numbers grow,
 // lists gain a changed copy of their first element, objects change their
@@ -37,7 +44,7 @@ function mutate(v: unknown): unknown {
 describe('definitionHash (B1)', () => {
   it('uses a fixture that has every key a definition can carry', () => {
     expect(Object.keys(full()).sort()).toEqual([
-      'currencyCode', 'customDimensionKeyIds', 'dateRange', 'dimensions', 'filters', 'metrics', 'reportType', 'timeZoneSource',
+      'currencyCode', 'customDimensionKeyIds', 'dateRange', 'dimensions', 'filters', 'metrics', 'reportType', 'sorts', 'timeZoneSource',
     ]);
   });
 
@@ -99,6 +106,12 @@ describe('definitionHash (B1)', () => {
     const def = full();
     const swapped = { ...def, customDimensionKeyIds: [...def.customDimensionKeyIds!].reverse() };
     expect(definitionHash(swapped)).not.toBe(definitionHash(def));
+  });
+
+  it('B1: sort order is positional — reversing sorts changes the hash', () => {
+    const def = full();
+    const reversed = { ...def, sorts: [...(def.sorts as unknown[])].reverse() };
+    expect(definitionHash(reversed)).not.toBe(definitionHash(def));
   });
 
   it('ignores object key order and a missing empty list, as a definition read back from GAM has them', () => {

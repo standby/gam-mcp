@@ -58,6 +58,8 @@ export const videoBreakdownTool = buildReportTool({
   },
   summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Video funnel by ${input.by}${slice}, ${range.start}..${range.end} (top ${input.top_n})`;
+    return `Video funnel by ${input.by}${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'VIDEO_VIEWERSHIP_STARTS', descending: true }),
 });

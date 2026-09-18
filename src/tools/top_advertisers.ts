@@ -24,5 +24,7 @@ export const topAdvertisersTool = buildReportTool({
     metrics: [METRIC_MAP[input.metric]],
   }),
   summary: (input, range) =>
-    `Top ${input.top_n} advertisers by ${input.metric}, ${range.start}..${range.end}`,
+    `Top advertisers by ${input.metric}, ${range.start}..${range.end}`,
+  topN: (input) => input.top_n,
+  sort: (input) => ({ metric: METRIC_MAP[input.metric], descending: true }),
 });

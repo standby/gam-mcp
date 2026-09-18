@@ -39,6 +39,10 @@ export type ReportQuery = {
   // exist under REACH — see resolveReportType() in schema.ts, which derives
   // this from the metric list so callers never set it by hand.
   report_type?: ReportType;
+  // The single sort a top_n tool asks for. GAM's wire shape (sorts: [{ field:
+  // { metric } , descending }]) is built in report-definition.ts, the way
+  // toReportFilters already does for filters -- tools speak tool language.
+  sort?: { metric: string; descending: boolean };
 };
 
 export type OperationStatus =

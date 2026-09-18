@@ -29,6 +29,8 @@ export const topLineItemsTool = buildReportTool({
       : undefined,
   }),
   summary: (input, range) =>
-    `Top ${input.top_n} line items by ${input.metric}, ${range.start}..${range.end}` +
+    `Top line items by ${input.metric}, ${range.start}..${range.end}` +
     (input.line_item_type ? ` (type=${input.line_item_type})` : ''),
+  topN: (input) => input.top_n,
+  sort: (input) => ({ metric: METRIC_MAP[input.metric], descending: true }),
 });
