@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { healthCheckTool } from '../../src/tools/health_check.js';
-import { makeCtx } from '../helpers.js';
+import { makeCtx, restCtx } from '../helpers.js';
 import { GamHttpError } from '../../src/gam-client.js';
+import { createFakeGam } from '../fake-gam.js';
 
 describe('health_check', () => {
   it('reports ok when listEntities succeeds', async () => {
@@ -121,6 +122,27 @@ describe('health_check', () => {
         expect(r.error.code).toBe('INTERNAL_ERROR');
         expect(r.error.details.attributed_cause).toMatch(/unknown/i);
       });
+    });
+
+    // Drives the real REST client (gam-client-rest.ts) against a fake GAM
+    // answering 401 on the companies list, rather than a hand-mocked
+    // listEntities -- this is the path that actually throws GamHttpError
+    // (via httpError()) in production, and the one fix round 1's mutation
+    // check exercises: reverting any of the three listEntities/getResource
+    // throw sites to a bare Error must not produce a wrong code here, only
+    // fall back to classifying from the message.
+    it('via the real REST client: a 401 on the companies list is AUTH_FAILED', async () => {
+      const gam = createFakeGam();
+      gam.inject('GET', /^networks\/1234\/companies/, {
+        status: 401,
+        body: { error: { code: 401, status: 'UNAUTHENTICATED', message: 'bad credentials' } },
+      });
+      const ctx = restCtx(gam);
+      const r = await healthCheckTool.handler({}, ctx);
+      if (!('error' in r)) throw new Error(`expected an error envelope, got ${JSON.stringify(r)}`);
+      expect(r.error.code).toBe('AUTH_FAILED');
+      expect(r.error.details.attributed_cause).toMatch(/auth/i);
+      expect(r.error.details.error_message).toMatch(/401/);
     });
   });
 });
