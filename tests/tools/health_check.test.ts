@@ -51,14 +51,19 @@ describe('health_check', () => {
         expect(r.error.details.attributed_cause).toMatch(/permission/i);
       });
 
-      it('404 -> INTERNAL_ERROR, attributed to wrong network code', async () => {
+      // ENTITY_NOT_FOUND, not INTERNAL_ERROR: a real, GAM-confirmed 404 here
+      // means "your GAM_NETWORK_CODE is wrong" -- an actionable diagnosis,
+      // not a server-side breakage. The message-heuristic fallback path
+      // below keeps 404 -> INTERNAL_ERROR, because a substring match on an
+      // untyped error carries less certainty than a real HTTP status.
+      it('404 -> ENTITY_NOT_FOUND, attributed to wrong network code', async () => {
         const failingClient = {
           async listEntities() { throw new GamHttpError('listEntities', 404, 'NOT_FOUND', 'no such network'); },
         };
         const ctx = makeCtx({}, { client: failingClient as any });
         const r = await healthCheckTool.handler({}, ctx);
         if (!('error' in r)) throw new Error(`expected an error envelope, got ${JSON.stringify(r)}`);
-        expect(r.error.code).toBe('INTERNAL_ERROR');
+        expect(r.error.code).toBe('ENTITY_NOT_FOUND');
         expect(r.error.details.attributed_cause).toMatch(/wrong network code/i);
       });
 

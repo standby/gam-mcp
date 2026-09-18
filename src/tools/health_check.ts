@@ -71,7 +71,7 @@ function attributeStatus(status: number): { cause: string; code: GamErrorCode } 
   switch (status) {
     case 401: return { cause: 'auth (token mint failed or wrong service account)', code: 'AUTH_FAILED' };
     case 403: return { cause: 'permission (service account lacks Ad Manager API access or wrong network)', code: 'AUTH_FAILED' };
-    case 404: return { cause: 'wrong network code (GAM_NETWORK_CODE does not match any accessible network)', code: 'INTERNAL_ERROR' };
+    case 404: return { cause: 'wrong network code (GAM_NETWORK_CODE does not match any accessible network)', code: 'ENTITY_NOT_FOUND' };
     case 429: return { cause: 'quota (GAM API rate limited — wait and retry)', code: 'QUOTA_EXCEEDED' };
     default: return null;
   }
