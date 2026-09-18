@@ -29,6 +29,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "tsx scripts/smoke.ts",
+    "smoke:transports": "tsx scripts/smoke-transports.ts",
     "verify:pack": "tsx scripts/verify-pack.ts",
     "refresh-schema": "tsx scripts/refresh-schema.ts",
     "prepublishOnly": "npm run build && npm test && npm run verify:pack",
