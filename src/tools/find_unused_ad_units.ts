@@ -3,6 +3,7 @@ import { gamError } from '../errors.js';
 import { lastDays } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
+import { num } from '../derived.js';
 import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 import type { ReportQuery } from '../gam-client.js';
 
@@ -47,11 +48,42 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
       for (const r of report.rows) {
         const id = cellText(r.AD_UNIT_ID);
         if (!id) continue;
-        requestsById.set(id, Number(r.AD_REQUESTS) || 0);
+        // This row IS present, but GAM still omits a metric whose value is
+        // zero, so an absent AD_REQUESTS on a present row means zero, not
+        // unknown -- the ?? 0 is a deliberate read of GAM's wire behaviour,
+        // not a coercion artifact.
+        requestsById.set(id, num(r.AD_REQUESTS) ?? 0);
       }
 
-      const unused: Record<string, string>[] = [];
+      // §4.5: only ad units that could ever actually be "unused" are
+      // candidates -- ACTIVE, and with no child ad units, since a parent
+      // container never serves directly and so can never appear in the
+      // report at all. Leaf-ness is derived from parentAdUnit among the
+      // units actually listed (a unit named as another listed unit's parent
+      // has children), not from GAM's own hasChildren field: that field is
+      // undocumented in this repository and no probe has confirmed it, and
+      // this programme uses probes to settle API questions rather than
+      // guessing. The cost is that this derivation only sees the listed set,
+      // which the max_units warning below states.
+      const parentIds = new Set<string>();
       for (const u of allUnits) {
+        const parentAdUnit = u.parentAdUnit;
+        if (typeof parentAdUnit === 'string') {
+          const parentId = parentAdUnit.split('/').pop();
+          if (parentId) parentIds.add(parentId);
+        }
+      }
+      // Absence is not permission: a unit with no status field at all must
+      // not pass this check by default, so `status === 'ACTIVE'` (not a
+      // negated inactive check) treats missing status as not-active.
+      const candidates = allUnits.filter((u) => u.status === 'ACTIVE' && !parentIds.has(String(u.id)));
+
+      const unused: Record<string, string>[] = [];
+      for (const u of candidates) {
+        // §4.5: a unit absent from the report counts as zero ad requests,
+        // because GAM omits rows whose metrics are all zero. Do not remove
+        // this fallback -- it is the one case in this tool where absence
+        // genuinely means zero, not unknown.
         const reqs = requestsById.get(String(u.id)) ?? 0;
         if (reqs > input.min_requests) continue;
         unused.push({
@@ -62,16 +94,26 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
       }
       unused.sort((a, b) => Number(a.ad_requests) - Number(b.ad_requests) || a.AD_UNIT_NAME.localeCompare(b.AD_UNIT_NAME));
 
+      const excluded = allUnits.length - candidates.length;
       const summary =
         `Unused ad units (${actualRange.start}..${actualRange.end}, threshold ≤${input.min_requests} requests): ` +
-        `${unused.length} of ${allUnits.length} ad units flagged. ` +
+        `${unused.length} of ${candidates.length} active, leaf ad units flagged ` +
+        `(${allUnits.length} listed; ${excluded} excluded as archived or non-leaf). ` +
         (allUnits.length === input.max_units
           ? `Hit max_units cap (${input.max_units}) — raise it to scan more.`
           : '');
       const warnings = [...report.warnings];
+      warnings.push(
+        'Only ad units with status ACTIVE and no child ad units are considered; a unit with no status field ' +
+        'is treated as not active, so archived units and parent containers (which never serve directly) are excluded.',
+      );
+      warnings.push(
+        'A unit absent from the report counts as zero ad requests, because GAM omits rows whose metrics are all zero.',
+      );
       if (allUnits.length >= input.max_units) {
         warnings.push(
-          `Only the first ${input.max_units} ad units were checked; the network may have more. Raise max_units to check more.`,
+          `Only the first ${input.max_units} ad units were checked; the network may have more. Raise max_units to check more. ` +
+          'Leaf detection (no child ad units) only saw the listed units, so a unit that looks like a leaf here may have children outside the scan.',
         );
       }
       return derivedEnvelope(ctx, {

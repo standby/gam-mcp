@@ -143,6 +143,14 @@ export function createRestGamClient(opts: {
         if (gamDisplayName !== undefined && gamDisplayName !== primaryName) {
           entity.displayName = gamDisplayName;
         }
+        // find_unused_ad_units needs to tell an archived unit and a parent
+        // container (neither of which can be "unused" inventory) apart from
+        // a genuine leaf. Carried for ad_unit only -- every other entity type
+        // keeps the old id/name/displayName-only shape.
+        if (entity_type === 'ad_unit') {
+          if (typeof e.status === 'string') entity.status = e.status;
+          if (typeof e.parentAdUnit === 'string') entity.parentAdUnit = e.parentAdUnit;
+        }
         return entity;
       };
 

@@ -25,6 +25,41 @@ describe('REST GAM client', () => {
     ]);
   });
 
+  it('listEntities carries status and parentAdUnit for ad_unit only (find_unused_ad_units needs them)', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/adUnits')) {
+        return new Response(JSON.stringify({
+          adUnits: [
+            { adUnitId: '1', displayName: 'Parent', status: 'ACTIVE', name: 'networks/12345/adUnits/1' },
+            {
+              adUnitId: '2',
+              displayName: 'Child',
+              status: 'ACTIVE',
+              parentAdUnit: 'networks/12345/adUnits/1',
+              name: 'networks/12345/adUnits/2',
+            },
+          ],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        orders: [{ orderId: '1', displayName: 'Order A', status: 'ACTIVE' }],
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = createRestGamClient({ networkCode: '12345', fetchImpl });
+
+    const adUnits = await client.listEntities({ entity_type: 'ad_unit' });
+    expect(adUnits).toEqual([
+      { id: 1, name: 'Parent', status: 'ACTIVE' },
+      { id: 2, name: 'Child', status: 'ACTIVE', parentAdUnit: 'networks/12345/adUnits/1' },
+    ]);
+
+    // Other entity types keep the old id/name/displayName-only shape --
+    // `status` on the raw order is dropped, not carried through.
+    const orders = await client.listEntities({ entity_type: 'order' });
+    expect(orders).toEqual([{ id: 1, name: 'Order A' }]);
+  });
+
   it('defineReport POSTs exactly the definition it is given; runReport POSTs :run', async () => {
     const gam = createFakeGam();
     const client = createRestGamClient({ networkCode: '1234', fetchImpl: gam.fetch });
