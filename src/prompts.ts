@@ -73,7 +73,7 @@ export const PROMPTS: PromptDef[] = [
         `Investigate fill-rate drops over the last ${lookback} days.${scope}`,
         `1. Call find_anomalies({kind:"fill_rate_drops", top_n:30}) — get the worst-affected ad units.`,
         `2. For the top 5, call fill_rate with group_by="day" over the same window to see when the drop started.`,
-        `3. Call compare_periods on dimensions=["AD_UNIT_NAME"], metrics=["AD_REQUESTS","UNFILLED_IMPRESSIONS","REVENUE"], base_range covering the last ${lookback} days, comparison="previous_period" — quantify request volume change and lost revenue.`,
+        `3. Call compare_periods on dimensions=["AD_UNIT_ID","AD_UNIT_NAME"], metrics=["AD_REQUESTS","UNFILLED_IMPRESSIONS","REVENUE"], base_range covering the last ${lookback} days, comparison="previous_period" — quantify request volume change and lost revenue.`,
         `4. If unfilled impressions are the main driver, check AD_EXCHANGE_MATCH_RATE and AD_EXCHANGE_TOTAL_REQUESTS for those ad units to see whether AdX demand collapsed.`,
         '5. Summarize: which ad units regressed, when the drop started, the revenue and request-volume change from step 3, and the most likely cause (demand collapse vs. tag misconfiguration vs. seasonal traffic).',
       ].join('\n');
