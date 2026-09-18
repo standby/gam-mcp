@@ -51,8 +51,11 @@ export class HttpListenError extends Error {
   }
 }
 
+// How long a refused request may stall before its connection is closed.
+const REFUSED_DRAIN_MS = 1000;
+
 class BodyTooLargeError extends Error {
-  constructor(readonly whileReading: boolean) {
+  constructor() {
     super(`request body is over ${MAX_BODY_BYTES} bytes`);
     this.name = 'BodyTooLargeError';
   }
@@ -125,8 +128,22 @@ export async function connectHttp(
     } catch (e) {
       if (e instanceof BodyTooLargeError) {
         opts.logger.warn('http.refused', { status: 413, reason: e.message });
-        // A body cut off part-way cannot be drained, so that connection closes.
-        refuse(res, 413, `Request body is over ${MAX_BODY_BYTES} bytes`, e.whileReading ? { connection: 'close' } : {});
+        // This server has refused to read the body, so it must not wait for the
+        // rest of one: a client that declared more than it sends would otherwise
+        // hold the connection open until Node's request timeout. Closed once the
+        // refusal is on the wire, whether the body was cut off or never came.
+        res.once('finish', () => {
+          // Whatever else arrives is discarded, so a client that is still
+          // uploading can flush and read the refusal. One that declared more
+          // than it sends gets its connection back only by giving up.
+          req.resume();
+          if (req.readableEnded) return;
+          // Idle, not elapsed: a client still sending keeps its connection, a
+          // client that declared a body and stopped does not.
+          req.socket.setTimeout(REFUSED_DRAIN_MS, () => req.destroy());
+          req.once('end', () => req.socket.setTimeout(0));
+        });
+        refuse(res, 413, `Request body is over ${MAX_BODY_BYTES} bytes`, { connection: 'close' });
         return;
       }
       opts.logger.error('http.handle_error', { message: e instanceof Error ? e.message : String(e) });
@@ -139,8 +156,10 @@ export async function connectHttp(
       // Release this request's pair once the response is done. Closing earlier
       // would cut off a streaming (SSE) response mid-flight.
       const release = () => {
-        void transport?.close().catch(() => {});
-        void server?.close().catch(() => {});
+        const note = (what: string) => (e: unknown) =>
+          opts.logger.debug('http.close_failed', { what, message: e instanceof Error ? e.message : String(e) });
+        void transport?.close().catch(note('transport'));
+        void server?.close().catch(note('server'));
       };
       if (res.writableEnded) release();
       else res.once('close', release);
@@ -185,14 +204,14 @@ export async function connectHttp(
 }
 
 // Reads and parses a request body of at most MAX_BODY_BYTES. A declared
-// length over the limit is refused before reading, so Node discards the body
-// and the connection stays usable; a body that grows past the limit is
-// refused where it crosses it.
+// length over the limit is refused before a byte is read; a body that grows
+// past the limit is refused where it crosses it. Either way the caller closes
+// the connection, since the rest of the body is never read.
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   // GET requests have no body (SSE streams open on GET).
   if (req.method === 'GET' || req.method === 'HEAD') return Promise.resolve(undefined);
   if (Number(req.headers['content-length'] ?? 0) > MAX_BODY_BYTES) {
-    return Promise.reject(new BodyTooLargeError(false));
+    return Promise.reject(new BodyTooLargeError());
   }
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -203,7 +222,7 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
         req.off('data', onData);
         req.off('end', onEnd);
         req.pause();
-        reject(new BodyTooLargeError(true));
+        reject(new BodyTooLargeError());
         return;
       }
       chunks.push(chunk);

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { request } from 'node:http';
+import { connect } from 'node:net';
+import { once } from 'node:events';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { connectHttp, HttpListenError, MAX_BODY_BYTES, type HttpOptions } from '../src/http-transport.js';
 import { createLogger } from '../src/log.js';
@@ -121,6 +123,28 @@ describe('request size (spec §2.7)', () => {
       expect(refused.status).toBe(413);
       expect(JSON.parse(refused.body).error.message).toBe(`Request body is over ${MAX_BODY_BYTES} bytes`);
       expect((await send(port, { body: initialize, headers: auth })).status).toBe(200);
+    });
+  });
+
+  it('G4: a declared length over the limit closes the connection, even if the body never arrives', async () => {
+    await withServer({}, async (port) => {
+      const sock = connect(port, '127.0.0.1');
+      await once(sock, 'connect');
+      let reply = '';
+      sock.on('data', (c: Buffer) => { reply += c.toString('utf8'); });
+      // Declares far more than it sends, and then stops: the server has refused
+      // to read this body, so it must not wait for the rest of it.
+      sock.write(
+        'POST /mcp HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-type: application/json\r\n' +
+        `content-length: ${MAX_BODY_BYTES + 1000}\r\n\r\n` + 'x'.repeat(1000),
+      );
+      const closed = await Promise.race([
+        once(sock, 'close').then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 2000)),
+      ]);
+      sock.destroy();
+      expect(reply).toContain('413');
+      expect(closed, 'the refused connection was left open').toBe(true);
     });
   });
 
