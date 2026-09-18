@@ -98,6 +98,38 @@ describe('diagnose_floor_pricing', () => {
     expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
   });
 
+  // Fix round 1, Important 1: a row can reach a real (non-null) verdict --
+  // floor_likely_low needs only match rate/eCPM to classify -- while its
+  // est_opportunity still comes out null because the formula for THAT
+  // verdict needs a further input (AD_EXCHANGE_IMPRESSIONS) that wasn't
+  // reported. This must still be counted in null_input_rows: the counter
+  // reads the outcome (did derived.value come out null?), not a hand-written
+  // "which inputs are required for a verdict" list, so it can't miss a case
+  // like this one where the missing input only matters to the estimate.
+  it('a missing AD_EXCHANGE_IMPRESSIONS on a floor_likely_low row gives a real verdict but a null est_opportunity, counted as a null input', async () => {
+    const rows = [
+      // matchRate/ecpm present and real; AD_EXCHANGE_IMPRESSIONS omitted.
+      { AD_UNIT_ID: 1, AD_UNIT_NAME: 'Gappy', AD_EXCHANGE_TOTAL_REQUESTS: 1_000_000, AD_EXCHANGE_MATCH_RATE: 0.80, AD_EXCHANGE_AVERAGE_ECPM: 1.00, AD_EXCHANGE_REVENUE: 800 },
+      // Complete counterpart, sets the medians (match=0.65, eCPM=1.50) and
+      // itself lands on floor_likely_high, where impressions isn't needed.
+      { AD_UNIT_ID: 2, AD_UNIT_NAME: 'Complete', AD_EXCHANGE_TOTAL_REQUESTS: 1_000_000, AD_EXCHANGE_MATCH_RATE: 0.50, AD_EXCHANGE_AVERAGE_ECPM: 2.00, AD_EXCHANGE_IMPRESSIONS: 500_000, AD_EXCHANGE_REVENUE: 1000 },
+    ];
+    const r = await run(rows);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const gappy = r.rows!.find((row) => row.AD_UNIT_NAME === 'Gappy')!;
+    // Real verdict: match rate/eCPM were both known, so classification ran.
+    expect(gappy.verdict).toBe('floor_likely_low');
+    expect(gappy.adx_match_rate_pct).not.toBeNull();
+    expect(gappy.adx_ecpm).not.toBeNull();
+    // But the estimate itself is null -- it needed impressions, which GAM
+    // didn't report -- not a guessed or zeroed number.
+    const d = gappy.derived as Record<string, any>;
+    expect(d.value).toBeNull();
+    expect(d.heuristic).toBe(true);
+    expect(gappy.adx_impressions).toBeNull();
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+  });
+
   it('names the single input report in provenance', async () => {
     const rows = [row([1, 'Busy', 1000000, 0.50, 2.00, 500000, 1000])];
     const r = await run(rows);

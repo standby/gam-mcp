@@ -129,67 +129,54 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
       const medMatch = median(qualifying.map((r) => r.matchRate).filter((x): x is number => x !== null));
       const medEcpm = median(qualifying.map((r) => r.ecpm).filter((x): x is number => x !== null));
 
-      let nullInputRows = 0;
+      // Every row's outcome (verdict, opportunity, method) is decided first,
+      // in one place, then turned into a row and counted from that outcome --
+      // not from a second, separately-maintained list of "which inputs are
+      // required" predicates. Two different formulas need different inputs
+      // (floor_likely_low alone needs AD_EXCHANGE_IMPRESSIONS on top of match
+      // rate/eCPM), so a hand-maintained predicate list drifts the moment a
+      // new way to produce a null value is added; reading the count off
+      // opportunity === null cannot drift, because that's the same value the
+      // row's own derived.value is built from.
       const items = qualifying.map((r) => {
-        if (r.matchRate === null || r.ecpm === null) {
-          nullInputRows++;
-          return {
-            opp: null as number | null,
-            row: {
-              AD_UNIT_ID: r.id,
-              AD_UNIT_NAME: r.name,
-              verdict: null,
-              derived: derived({
-                value: null,
-                method: FLOOR_METHOD_MISSING,
-                heuristic: true,
-                inputs: {
-                  AD_EXCHANGE_MATCH_RATE: r.matchRate,
-                  AD_EXCHANGE_AVERAGE_ECPM: r.ecpm,
-                  network_median_match_rate: medMatch,
-                  network_median_ecpm: medEcpm,
-                },
-              }),
-              adx_match_rate_pct: r.matchRate === null ? null : pct(r.matchRate),
-              adx_ecpm: r.ecpm === null ? null : r.ecpm.toFixed(2),
-              adx_requests: String(r.requests),
-              adx_impressions: r.impressions === null ? null : String(r.impressions),
-              adx_revenue: r.revenue === null ? null : r.revenue.toFixed(2),
-            },
-          };
-        }
-
-        const matchRate = r.matchRate;
-        const ecpm = r.ecpm;
-        const highMatch = matchRate >= medMatch;
-        const highEcpm = ecpm >= medEcpm;
-        let verdict: Verdict;
+        let verdict: Verdict | null;
         let opportunity: number | null;
         let method: string;
-        if (!highMatch && highEcpm) {
-          verdict = 'floor_likely_high';
-          method = FLOOR_METHOD_HIGH;
-          // Revenue from the fills you're not getting, valued conservatively
-          // at the network median eCPM (they'd likely clear below this unit's
-          // above-median eCPM).
-          const unmatched = r.requests * (1 - matchRate);
-          opportunity = (unmatched / 1000) * medEcpm;
-        } else if (highMatch && !highEcpm) {
-          verdict = 'floor_likely_low';
-          method = FLOOR_METHOD_LOW;
-          // Upper bound: lifting eCPM to the network median on current
-          // impressions (ignores the fill you'd lose by raising the floor).
-          // Needs AD_EXCHANGE_IMPRESSIONS, which -- unlike match rate/eCPM --
-          // isn't required to reach a verdict, only to size this estimate.
-          opportunity = r.impressions === null ? null : (r.impressions / 1000) * Math.max(0, medEcpm - ecpm);
-        } else if (!highMatch && !highEcpm) {
-          verdict = 'weak_demand';
-          method = FLOOR_METHOD_NEUTRAL;
-          opportunity = 0;
+
+        if (r.matchRate === null || r.ecpm === null) {
+          verdict = null;
+          opportunity = null;
+          method = FLOOR_METHOD_MISSING;
         } else {
-          verdict = 'balanced';
-          method = FLOOR_METHOD_NEUTRAL;
-          opportunity = 0;
+          const matchRate = r.matchRate;
+          const ecpm = r.ecpm;
+          const highMatch = matchRate >= medMatch;
+          const highEcpm = ecpm >= medEcpm;
+          if (!highMatch && highEcpm) {
+            verdict = 'floor_likely_high';
+            method = FLOOR_METHOD_HIGH;
+            // Revenue from the fills you're not getting, valued conservatively
+            // at the network median eCPM (they'd likely clear below this unit's
+            // above-median eCPM).
+            const unmatched = r.requests * (1 - matchRate);
+            opportunity = (unmatched / 1000) * medEcpm;
+          } else if (highMatch && !highEcpm) {
+            verdict = 'floor_likely_low';
+            method = FLOOR_METHOD_LOW;
+            // Upper bound: lifting eCPM to the network median on current
+            // impressions (ignores the fill you'd lose by raising the floor).
+            // Needs AD_EXCHANGE_IMPRESSIONS, which -- unlike match rate/eCPM --
+            // isn't required to reach a verdict, only to size this estimate.
+            opportunity = r.impressions === null ? null : (r.impressions / 1000) * Math.max(0, medEcpm - ecpm);
+          } else if (!highMatch && !highEcpm) {
+            verdict = 'weak_demand';
+            method = FLOOR_METHOD_NEUTRAL;
+            opportunity = 0;
+          } else {
+            verdict = 'balanced';
+            method = FLOOR_METHOD_NEUTRAL;
+            opportunity = 0;
+          }
         }
 
         return {
@@ -204,21 +191,24 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
               heuristic: true,
               inputs: {
                 AD_EXCHANGE_TOTAL_REQUESTS: r.requests,
-                AD_EXCHANGE_MATCH_RATE: matchRate,
-                AD_EXCHANGE_AVERAGE_ECPM: ecpm,
+                AD_EXCHANGE_MATCH_RATE: r.matchRate,
+                AD_EXCHANGE_AVERAGE_ECPM: r.ecpm,
                 AD_EXCHANGE_IMPRESSIONS: r.impressions,
                 network_median_match_rate: medMatch,
                 network_median_ecpm: medEcpm,
               },
             }),
-            adx_match_rate_pct: pct(matchRate),
-            adx_ecpm: ecpm.toFixed(2),
+            adx_match_rate_pct: r.matchRate === null ? null : pct(r.matchRate),
+            adx_ecpm: r.ecpm === null ? null : r.ecpm.toFixed(2),
             adx_requests: String(r.requests),
             adx_impressions: r.impressions === null ? null : String(r.impressions),
             adx_revenue: r.revenue === null ? null : r.revenue.toFixed(2),
           },
         };
       });
+      // Counted from the outcome, once per row: exactly the rows whose
+      // derived.value came out null because an input was missing.
+      const nullInputRows = items.filter((i) => i.opp === null).length;
 
       // Rank by estimated opportunity so the biggest mispricings surface
       // first; balanced/weak_demand rows (opportunity 0) sink, and rows

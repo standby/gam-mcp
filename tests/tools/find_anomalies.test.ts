@@ -227,6 +227,72 @@ describe('find_anomalies', () => {
     expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
   });
 
+  // Fix round 1, Important 2: ecpm_regression's null guard (find_anomalies.ts
+  // ~211-214) had zero test coverage before this. Real AD_EXCHANGE_IMPRESSIONS
+  // on both sides (and well above the 10k noise floor) so a gating bug would
+  // read as a concrete, wrong regression instead of nothing.
+  it('a missing AD_EXCHANGE_AVERAGE_ECPM in either period is never flagged as an eCPM regression', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const query = {
+      dimensions: ['BUYER_NETWORK_NAME'],
+      metrics: ['AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM'],
+    };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          // AD_EXCHANGE_AVERAGE_ECPM omitted -- GAM did not report it.
+          rows: [{ BUYER_NETWORK_NAME: 'DSP_Gappy', AD_EXCHANGE_IMPRESSIONS: 1_000_000, AD_EXCHANGE_REVENUE: 1000 }],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          rows: [{ BUYER_NETWORK_NAME: 'DSP_Gappy', AD_EXCHANGE_IMPRESSIONS: 1_200_000, AD_EXCHANGE_REVENUE: 2400, AD_EXCHANGE_AVERAGE_ECPM: 2.0 }],
+        },
+      ],
+    }, { timezone: 'UTC', now });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'ecpm_regression' });
+    const r = await findAnomaliesTool.handler(args, ctx);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+    expect(r.rows).toHaveLength(0);
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+  });
+
+  // Fix round 1, Important 2: viewability_drops' null guard
+  // (find_anomalies.ts ~291-294) had zero test coverage before this. Real
+  // IMPRESSIONS on both sides, well above the 10k noise floor, so a gating
+  // bug would read as a concrete, wrong drop instead of nothing.
+  it('a missing ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE in either period is never flagged as a viewability drop', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const query = {
+      dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+      metrics: ['IMPRESSIONS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE'],
+    };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          // ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE omitted -- GAM did not report it.
+          rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: 'Gappy', IMPRESSIONS: 500_000 }],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: 'Gappy', IMPRESSIONS: 600_000, ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE: 0.80 }],
+        },
+      ],
+    }, { timezone: 'UTC', now });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'viewability_drops' });
+    const r = await findAnomaliesTool.handler(args, ctx);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+    expect(r.rows).toHaveLength(0);
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
+  });
+
   it('names the single input report in provenance', async () => {
     const now = new Date('2026-04-15T12:00:00Z');
     const query = { dimensions: PACING_DIMENSIONS, metrics: ['IMPRESSIONS'] };
