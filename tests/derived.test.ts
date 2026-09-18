@@ -31,4 +31,19 @@ describe('derived', () => {
     const d = derived({ method: 'x over y', heuristic: false, inputs: { x: 1, y: 2 }, value: 0.5 });
     expect(Object.keys(d)).toEqual(['value', 'method', 'heuristic', 'inputs']);
   });
+
+  it('inserts reason right after value, and leaves the other four keys in the same relative order either way', () => {
+    const withoutReason = derived({ method: 'x over y', heuristic: false, inputs: { x: 1, y: 2 }, value: 0.5 });
+    const withReason = derived({
+      method: 'x over y', heuristic: false, inputs: { x: 1, y: 2 }, value: null, reason: 'y is 0',
+    });
+    expect(Object.keys(withoutReason)).toEqual(['value', 'method', 'heuristic', 'inputs']);
+    expect(Object.keys(withReason)).toEqual(['value', 'reason', 'method', 'heuristic', 'inputs']);
+    // Same call order (method, heuristic, inputs) regardless of field order
+    // in the input object, and regardless of whether reason was supplied.
+    const reordered = derived({
+      inputs: { x: 1, y: 2 }, value: null, reason: 'y is 0', heuristic: false, method: 'x over y',
+    });
+    expect(Object.keys(reordered)).toEqual(['value', 'reason', 'method', 'heuristic', 'inputs']);
+  });
 });

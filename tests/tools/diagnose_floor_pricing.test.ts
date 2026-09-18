@@ -72,7 +72,30 @@ describe('diagnose_floor_pricing', () => {
     if ('error' in r) throw new Error(JSON.stringify(r));
     expect(r.rows![0].AD_UNIT_NAME).toBe('HighFloor');
     expect(r.rows![0].verdict).toBe('floor_likely_high');
-    expect(Number(r.rows![0].est_opportunity)).toBeGreaterThan(0);
+    const d = r.rows![0].derived as Record<string, any>;
+    expect(d.heuristic).toBe(true);
+    expect(typeof d.method).toBe('string');
+    expect(d.method).toContain('floor_likely_high');
+    expect(Number(d.value)).toBeGreaterThan(0);
+  });
+
+  it('a missing AD_EXCHANGE_MATCH_RATE gives a null verdict and a null est_opportunity, not a guess', async () => {
+    // Real, present values everywhere except AD_EXCHANGE_MATCH_RATE, so a
+    // gating bug (treating the missing rate as 0) would be observable as a
+    // concrete wrong verdict instead of null.
+    const rows = [
+      { AD_UNIT_ID: 1, AD_UNIT_NAME: 'Gappy', AD_EXCHANGE_TOTAL_REQUESTS: 1_000_000, AD_EXCHANGE_AVERAGE_ECPM: 3.0, AD_EXCHANGE_IMPRESSIONS: 300_000, AD_EXCHANGE_REVENUE: 900 },
+      { AD_UNIT_ID: 2, AD_UNIT_NAME: 'Complete', AD_EXCHANGE_TOTAL_REQUESTS: 1_000_000, AD_EXCHANGE_MATCH_RATE: 0.5, AD_EXCHANGE_AVERAGE_ECPM: 2.0, AD_EXCHANGE_IMPRESSIONS: 500_000, AD_EXCHANGE_REVENUE: 1000 },
+    ];
+    const r = await run(rows);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const gappy = r.rows!.find((row) => row.AD_UNIT_NAME === 'Gappy')!;
+    expect(gappy.verdict).toBeNull();
+    const d = gappy.derived as Record<string, any>;
+    expect(d.value).toBeNull();
+    expect(d.heuristic).toBe(true);
+    expect(gappy.adx_match_rate_pct).toBeNull();
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
   });
 
   it('names the single input report in provenance', async () => {

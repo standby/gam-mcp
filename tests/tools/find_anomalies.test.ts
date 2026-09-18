@@ -92,7 +92,14 @@ describe('find_anomalies', () => {
     expect(r.rows!.map((x) => x.BUYER_NETWORK_NAME)).toEqual(['DSP_A']);
     expect(r.rows![0].ecpm_now).toBe('1.00');
     expect(r.rows![0].ecpm_prev).toBe('2.00');
-    expect(Number(r.rows![0].drop_pct)).toBeCloseTo(50.0, 1);
+    const d = r.rows![0].derived as Record<string, any>;
+    expect(d.heuristic).toBe(true);
+    expect(typeof d.method).toBe('string');
+    expect(d.inputs).toMatchObject({
+      AD_EXCHANGE_AVERAGE_ECPM_now: 1.0,
+      AD_EXCHANGE_AVERAGE_ECPM_prev: 2.0,
+    });
+    expect(Number(d.value)).toBeCloseTo(50.0, 1);
   });
 
   it('viewability_drops flags ad units whose viewable-impression rate fell WoW', async () => {
@@ -135,7 +142,89 @@ describe('find_anomalies', () => {
     expect(r.rows!.map((x) => x.AD_UNIT_NAME)).toEqual(['TopBanner']);
     expect(r.rows![0].viewability_now_pct).toBe('60.00');
     expect(r.rows![0].viewability_prev_pct).toBe('80.00');
-    expect(Number(r.rows![0].drop_pp)).toBeCloseTo(20.0, 1);
+    const d = r.rows![0].derived as Record<string, any>;
+    expect(d.heuristic).toBe(true);
+    expect(typeof d.method).toBe('string');
+    expect(d.inputs).toMatchObject({
+      ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE_now: 0.60,
+      ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE_prev: 0.80,
+    });
+    expect(Number(d.value)).toBeCloseTo(20.0, 1);
+  });
+
+  it('fill_rate_drops flags an ad unit whose IMPRESSIONS/AD_REQUESTS fill rate dropped WoW, and publishes it under derived', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const query = {
+      dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+      metrics: ['AD_REQUESTS', 'IMPRESSIONS'],
+    };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          rows: [
+            // fill rate dropped from 80% to 60% -- 20pp drop, past the 10pp default
+            { AD_UNIT_ID: 100, AD_UNIT_NAME: 'Dropped', AD_REQUESTS: 10000, IMPRESSIONS: 6000 },
+            // flat, not flagged
+            { AD_UNIT_ID: 200, AD_UNIT_NAME: 'Flat', AD_REQUESTS: 10000, IMPRESSIONS: 8000 },
+            // below the 1000-request noise floor, not flagged even though it "dropped" to 0
+            { AD_UNIT_ID: 300, AD_UNIT_NAME: 'TooSmall', AD_REQUESTS: 50, IMPRESSIONS: 0 },
+          ],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          rows: [
+            { AD_UNIT_ID: 100, AD_UNIT_NAME: 'Dropped', AD_REQUESTS: 10000, IMPRESSIONS: 8000 },
+            { AD_UNIT_ID: 200, AD_UNIT_NAME: 'Flat', AD_REQUESTS: 10000, IMPRESSIONS: 8000 },
+            { AD_UNIT_ID: 300, AD_UNIT_NAME: 'TooSmall', AD_REQUESTS: 50, IMPRESSIONS: 40 },
+          ],
+        },
+      ],
+    }, { timezone: 'UTC', now });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'fill_rate_drops' });
+    const r = await findAnomaliesTool.handler(args, ctx);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+
+    expect(r.rows!.map((x) => x.AD_UNIT_NAME)).toEqual(['Dropped']);
+    const d = r.rows![0].derived as Record<string, any>;
+    expect(d.heuristic).toBe(true);
+    expect(typeof d.method).toBe('string');
+    expect(d.inputs).toMatchObject({
+      AD_REQUESTS_now: 10000, IMPRESSIONS_now: 6000, AD_REQUESTS_prev: 10000, IMPRESSIONS_prev: 8000,
+    });
+    expect(Number(d.value)).toBeCloseTo(20.0, 1);
+  });
+
+  it('a missing AD_REQUESTS in either period is never flagged as a fill-rate drop', async () => {
+    const now = new Date('2026-04-15T12:00:00Z');
+    const query = {
+      dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+      metrics: ['AD_REQUESTS', 'IMPRESSIONS'],
+    };
+    const ctx = makeCtx({
+      reports: [
+        {
+          query,
+          dateRange: { start: '2026-04-08', end: '2026-04-14' },
+          // AD_REQUESTS omitted -- GAM did not report it for this ad unit.
+          rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: 'Gappy', IMPRESSIONS: 6000 }],
+        },
+        {
+          query,
+          dateRange: { start: '2026-04-01', end: '2026-04-07' },
+          rows: [{ AD_UNIT_ID: 1, AD_UNIT_NAME: 'Gappy', AD_REQUESTS: 10000, IMPRESSIONS: 8000 }],
+        },
+      ],
+    }, { timezone: 'UTC', now });
+
+    const args = findAnomaliesTool.input.parse({ kind: 'fill_rate_drops' });
+    const r = await findAnomaliesTool.handler(args, ctx);
+    if (!('rows' in r)) throw new Error(JSON.stringify(r));
+    expect(r.rows).toHaveLength(0);
+    expect((r as { warnings: string[] }).warnings).toContain('1 row(s) had a null input to a computed field.');
   });
 
   it('names the single input report in provenance', async () => {

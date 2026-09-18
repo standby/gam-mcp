@@ -76,15 +76,13 @@ function mapPacingRow(r: Record<string, Cell>): { row: PacingRow; nullInput: boo
         heuristic: false,
         inputs: { LINE_ITEM_PRIMARY_GOAL_TYPE: goalType || null, LINE_ITEM_DELIVERY_INDICATOR: indicator },
       })
-    : {
-        ...derived({
-          value: null,
-          method: 'delivery_indicator is only meaningful for a LIFETIME primary goal.',
-          heuristic: false,
-          inputs: { LINE_ITEM_PRIMARY_GOAL_TYPE: goalType || null },
-        }),
+    : derived({
+        value: null,
+        method: 'delivery_indicator is only meaningful for a LIFETIME primary goal.',
+        heuristic: false,
+        inputs: { LINE_ITEM_PRIMARY_GOAL_TYPE: goalType || null },
         reason: 'no lifetime goal',
-      };
+      });
   return {
     nullInput,
     row: {

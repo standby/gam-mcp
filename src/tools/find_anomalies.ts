@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
+import { num, ratio, pct, derived } from '../derived.js';
 import { lastDays, previousPeriod, type ResolvedRange } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
@@ -100,6 +101,11 @@ function weekOverWeek(ctx: ToolContext): { baseRange: ResolvedRange; prevRange: 
   return { baseRange, prevRange: previousPeriod(baseRange) };
 }
 
+const FILL_RATE_DROP_METHOD =
+  'Week-over-week drop in fill rate (IMPRESSIONS / AD_REQUESTS), in percentage points, restricted to ad units with ' +
+  'at least 1,000 AD_REQUESTS in the current period; flagged when the drop is at least threshold_pct percentage ' +
+  'points (default 10). A period whose fill rate cannot be computed (a missing or zero AD_REQUESTS) is never flagged.';
+
 async function fillRateDrops(
   ctx: ToolContext,
   thresholdPct: number,
@@ -118,27 +124,41 @@ async function fillRateDrops(
   if ('error' in prev) return prev;
   const prevByKey = new Map(prev.rows.map((r) => [cellText(r.AD_UNIT_ID), r]));
 
-  const drops: Record<string, string>[] = [];
+  const drops: { dropPp: number; row: Record<string, unknown> }[] = [];
+  let nullInputRows = 0;
   for (const b of base.rows) {
     const p = prevByKey.get(cellText(b.AD_UNIT_ID));
     if (!p) continue;
-    const baseFr = pctOrZero(cellText(b.IMPRESSIONS), cellText(b.AD_REQUESTS));
-    const prevFr = pctOrZero(cellText(p.IMPRESSIONS), cellText(p.AD_REQUESTS));
-    const dropPp = prevFr - baseFr; // positive = fill rate decreased
+    const reqNow = num(b.AD_REQUESTS);
+    const reqPrev = num(p.AD_REQUESTS);
+    const impNow = num(b.IMPRESSIONS);
+    const impPrev = num(p.IMPRESSIONS);
+    const frNow = ratio(impNow, reqNow);
+    const frPrev = ratio(impPrev, reqPrev);
+    if (frNow === null || frPrev === null) { nullInputRows++; continue; } // can't compute a drop without both fill rates
+    if (reqNow === null || reqNow < 1000) continue; // low-volume noise, not a missing-input case (frNow proved reqNow is a known, nonzero number)
+    const dropPp = frPrev * 100 - frNow * 100; // positive = fill rate decreased
     if (dropPp < thresholdPct) continue;
-    if (Number(b.AD_REQUESTS) < 1000) continue; // skip noise
     drops.push({
-      AD_UNIT_ID: cellText(b.AD_UNIT_ID),
-      AD_UNIT_NAME: cellText(b.AD_UNIT_NAME),
-      fill_rate_now_pct: baseFr.toFixed(2),
-      fill_rate_prev_pct: prevFr.toFixed(2),
-      drop_pp: dropPp.toFixed(2),
-      ad_requests_now: cellText(b.AD_REQUESTS),
-      ad_requests_prev: cellText(p.AD_REQUESTS),
+      dropPp,
+      row: {
+        AD_UNIT_ID: cellText(b.AD_UNIT_ID),
+        AD_UNIT_NAME: cellText(b.AD_UNIT_NAME),
+        derived: derived({
+          value: Number(dropPp.toFixed(2)),
+          method: FILL_RATE_DROP_METHOD,
+          heuristic: true,
+          inputs: { AD_REQUESTS_now: reqNow, IMPRESSIONS_now: impNow, AD_REQUESTS_prev: reqPrev, IMPRESSIONS_prev: impPrev },
+        }),
+        fill_rate_now_pct: pct(frNow),
+        fill_rate_prev_pct: pct(frPrev),
+        ad_requests_now: String(reqNow),
+        ad_requests_prev: reqPrev === null ? null : String(reqPrev),
+      },
     });
   }
-  drops.sort((a, b) => Number(b.drop_pp) - Number(a.drop_pp));
-  const top = drops.slice(0, topN);
+  drops.sort((a, b) => b.dropPp - a.dropPp);
+  const top = drops.slice(0, topN).map((d) => d.row);
   const summary =
     `Fill-rate drops (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPct}pp drop): ` +
@@ -149,8 +169,15 @@ async function fillRateDrops(
     rows: top,
     total_row_count: drops.length,
     warnings: [...base.warnings, ...prev.warnings],
+    null_input_rows: nullInputRows,
   });
 }
+
+const ECPM_REGRESSION_METHOD =
+  'Week-over-week drop in AD_EXCHANGE_AVERAGE_ECPM, as a percent of the prior period\'s eCPM, restricted to buyer ' +
+  'networks with at least 10,000 AD_EXCHANGE_IMPRESSIONS on both sides; flagged when the drop is at least ' +
+  'threshold_pct percent (default 15). A side whose eCPM or impression count is missing, or whose prior eCPM is ' +
+  'zero or negative, is never flagged.';
 
 async function ecpmRegression(
   ctx: ToolContext,
@@ -172,31 +199,49 @@ async function ecpmRegression(
   if ('error' in prev) return prev;
   const prevByKey = new Map(prev.rows.map((r) => [cellText(r.BUYER_NETWORK_NAME), r]));
 
-  const regressions: Record<string, string>[] = [];
+  const regressions: { dropPct: number; row: Record<string, unknown> }[] = [];
+  let nullInputRows = 0;
   for (const b of base.rows) {
     const p = prevByKey.get(cellText(b.BUYER_NETWORK_NAME));
     if (!p) continue;
-    const baseImps = Number(b.AD_EXCHANGE_IMPRESSIONS) || 0;
-    const prevImps = Number(p.AD_EXCHANGE_IMPRESSIONS) || 0;
+    const baseImps = num(b.AD_EXCHANGE_IMPRESSIONS);
+    const prevImps = num(p.AD_EXCHANGE_IMPRESSIONS);
+    const baseEcpm = num(b.AD_EXCHANGE_AVERAGE_ECPM);
+    const prevEcpm = num(p.AD_EXCHANGE_AVERAGE_ECPM);
+    if (baseImps === null || prevImps === null || baseEcpm === null || prevEcpm === null) {
+      nullInputRows++;
+      continue;
+    }
     if (baseImps < 10_000 || prevImps < 10_000) continue; // low-volume noise
-    const baseEcpm = Number(b.AD_EXCHANGE_AVERAGE_ECPM) || 0;
-    const prevEcpm = Number(p.AD_EXCHANGE_AVERAGE_ECPM) || 0;
     if (prevEcpm <= 0) continue;
     const dropPct = ((prevEcpm - baseEcpm) / prevEcpm) * 100;
     if (dropPct < thresholdPct) continue;
     regressions.push({
-      BUYER_NETWORK_NAME: cellText(b.BUYER_NETWORK_NAME),
-      ecpm_now: baseEcpm.toFixed(2),
-      ecpm_prev: prevEcpm.toFixed(2),
-      drop_pct: dropPct.toFixed(2),
-      adx_impressions_now: String(baseImps),
-      adx_impressions_prev: String(prevImps),
-      adx_revenue_now: cellText(b.AD_EXCHANGE_REVENUE),
-      adx_revenue_prev: cellText(p.AD_EXCHANGE_REVENUE),
+      dropPct,
+      row: {
+        BUYER_NETWORK_NAME: cellText(b.BUYER_NETWORK_NAME),
+        derived: derived({
+          value: Number(dropPct.toFixed(2)),
+          method: ECPM_REGRESSION_METHOD,
+          heuristic: true,
+          inputs: {
+            AD_EXCHANGE_AVERAGE_ECPM_now: baseEcpm,
+            AD_EXCHANGE_AVERAGE_ECPM_prev: prevEcpm,
+            AD_EXCHANGE_IMPRESSIONS_now: baseImps,
+            AD_EXCHANGE_IMPRESSIONS_prev: prevImps,
+          },
+        }),
+        ecpm_now: baseEcpm.toFixed(2),
+        ecpm_prev: prevEcpm.toFixed(2),
+        adx_impressions_now: String(baseImps),
+        adx_impressions_prev: String(prevImps),
+        adx_revenue_now: cellText(b.AD_EXCHANGE_REVENUE),
+        adx_revenue_prev: cellText(p.AD_EXCHANGE_REVENUE),
+      },
     });
   }
-  regressions.sort((a, b) => Number(b.drop_pct) - Number(a.drop_pct));
-  const top = regressions.slice(0, topN);
+  regressions.sort((a, b) => b.dropPct - a.dropPct);
+  const top = regressions.slice(0, topN).map((r) => r.row);
   const summary =
     `eCPM regression (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPct}% AdX-eCPM drop): ` +
@@ -207,8 +252,14 @@ async function ecpmRegression(
     rows: top,
     total_row_count: regressions.length,
     warnings: [...base.warnings, ...prev.warnings],
+    null_input_rows: nullInputRows,
   });
 }
+
+const VIEWABILITY_DROP_METHOD =
+  'Week-over-week drop in ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE, in percentage points, restricted to ad units with ' +
+  'at least 10,000 IMPRESSIONS on both sides; flagged when the drop is at least threshold_pct percentage points ' +
+  '(default 5). A side whose impressions or viewable rate is missing is never flagged.';
 
 async function viewabilityDrops(
   ctx: ToolContext,
@@ -228,30 +279,50 @@ async function viewabilityDrops(
   if ('error' in prev) return prev;
   const prevByKey = new Map(prev.rows.map((r) => [cellText(r.AD_UNIT_ID), r]));
 
-  const drops: Record<string, string>[] = [];
+  const drops: { dropPp: number; row: Record<string, unknown> }[] = [];
+  let nullInputRows = 0;
   for (const b of base.rows) {
     const p = prevByKey.get(cellText(b.AD_UNIT_ID));
     if (!p) continue;
-    const baseImps = Number(b.IMPRESSIONS) || 0;
-    const prevImps = Number(p.IMPRESSIONS) || 0;
+    const baseImps = num(b.IMPRESSIONS);
+    const prevImps = num(p.IMPRESSIONS);
+    const rateNow = num(b.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE);
+    const ratePrev = num(p.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE);
+    if (baseImps === null || prevImps === null || rateNow === null || ratePrev === null) {
+      nullInputRows++;
+      continue;
+    }
     if (baseImps < 10_000 || prevImps < 10_000) continue;
     // GAM returns viewable-rate as a 0..1 fraction; render in pp for humans.
-    const baseRate = (Number(b.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE) || 0) * 100;
-    const prevRate = (Number(p.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE) || 0) * 100;
+    const baseRate = rateNow * 100;
+    const prevRate = ratePrev * 100;
     const dropPp = prevRate - baseRate;
     if (dropPp < thresholdPp) continue;
     drops.push({
-      AD_UNIT_ID: cellText(b.AD_UNIT_ID),
-      AD_UNIT_NAME: cellText(b.AD_UNIT_NAME),
-      viewability_now_pct: baseRate.toFixed(2),
-      viewability_prev_pct: prevRate.toFixed(2),
-      drop_pp: dropPp.toFixed(2),
-      impressions_now: String(baseImps),
-      impressions_prev: String(prevImps),
+      dropPp,
+      row: {
+        AD_UNIT_ID: cellText(b.AD_UNIT_ID),
+        AD_UNIT_NAME: cellText(b.AD_UNIT_NAME),
+        derived: derived({
+          value: Number(dropPp.toFixed(2)),
+          method: VIEWABILITY_DROP_METHOD,
+          heuristic: true,
+          inputs: {
+            ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE_now: rateNow,
+            ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE_prev: ratePrev,
+            IMPRESSIONS_now: baseImps,
+            IMPRESSIONS_prev: prevImps,
+          },
+        }),
+        viewability_now_pct: baseRate.toFixed(2),
+        viewability_prev_pct: prevRate.toFixed(2),
+        impressions_now: String(baseImps),
+        impressions_prev: String(prevImps),
+      },
     });
   }
-  drops.sort((a, b) => Number(b.drop_pp) - Number(a.drop_pp));
-  const top = drops.slice(0, topN);
+  drops.sort((a, b) => b.dropPp - a.dropPp);
+  const top = drops.slice(0, topN).map((d) => d.row);
   const summary =
     `Viewability drops (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPp}pp viewable-rate drop): ` +
@@ -262,11 +333,6 @@ async function viewabilityDrops(
     rows: top,
     total_row_count: drops.length,
     warnings: [...base.warnings, ...prev.warnings],
+    null_input_rows: nullInputRows,
   });
-}
-
-function pctOrZero(num: string | undefined, denom: string | undefined): number {
-  const n = Number(num) || 0;
-  const d = Number(denom) || 0;
-  return d === 0 ? 0 : (n / d) * 100;
 }
