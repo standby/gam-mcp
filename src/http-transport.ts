@@ -51,9 +51,6 @@ export class HttpListenError extends Error {
   }
 }
 
-// How long a refused request may stall before its connection is closed.
-const REFUSED_DRAIN_MS = 1000;
-
 class BodyTooLargeError extends Error {
   constructor() {
     super(`request body is over ${MAX_BODY_BYTES} bytes`);
@@ -74,8 +71,24 @@ function tokenCheck(expected: string): (header: string | undefined) => boolean {
 }
 
 // A JSON-RPC error body, as the SDK writes its own refusals.
-function refuse(res: ServerResponse, status: number, message: string, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { 'content-type': 'application/json', ...headers });
+//
+// Every refusal closes its connection and discards whatever else the client
+// sends. A refused request is one this server never reads, so a client that
+// declared a body and then stopped would otherwise hold the socket until Node's
+// request timeout — five minutes in which a well-formed request on that same
+// connection is never answered, because the parser is still waiting for a body
+// nobody wants. Draining lets a client that is still uploading flush and read
+// the refusal, and Connection: close is what actually ends it: no timer, so a
+// slow upload is never mistaken for a stalled one.
+function refuse(
+  req: IncomingMessage,
+  res: ServerResponse,
+  status: number,
+  message: string,
+  headers: Record<string, string> = {},
+): void {
+  res.once('finish', () => req.resume());
+  res.writeHead(status, { 'content-type': 'application/json', connection: 'close', ...headers });
   res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }));
 }
 
@@ -99,7 +112,7 @@ export async function connectHttp(
       const name = host === undefined ? null : hostnameOf(host);
       if (name === null || !opts.allowedHosts.includes(name)) {
         opts.logger.warn('http.refused', { status: 403, reason: 'host not allowed', host: host ?? null });
-        refuse(res, 403, 'Host not allowed');
+        refuse(req, res, 403, 'Host not allowed');
         return;
       }
     }
@@ -107,12 +120,11 @@ export async function connectHttp(
       // Never log the header: it may hold a real token for something else.
       const reason = req.headers.authorization === undefined ? 'no bearer token' : 'wrong bearer token';
       opts.logger.warn('http.refused', { status: 401, reason });
-      refuse(res, 401, 'Unauthorized', { 'www-authenticate': 'Bearer' });
+      refuse(req, res, 401, 'Unauthorized', { 'www-authenticate': 'Bearer' });
       return;
     }
     if (req.url !== '/mcp' && req.url !== '/mcp/') {
-      res.statusCode = 404;
-      res.end('not found');
+      refuse(req, res, 404, 'Not found');
       return;
     }
     let server: Server | undefined;
@@ -128,22 +140,7 @@ export async function connectHttp(
     } catch (e) {
       if (e instanceof BodyTooLargeError) {
         opts.logger.warn('http.refused', { status: 413, reason: e.message });
-        // This server has refused to read the body, so it must not wait for the
-        // rest of one: a client that declared more than it sends would otherwise
-        // hold the connection open until Node's request timeout. Closed once the
-        // refusal is on the wire, whether the body was cut off or never came.
-        res.once('finish', () => {
-          // Whatever else arrives is discarded, so a client that is still
-          // uploading can flush and read the refusal. One that declared more
-          // than it sends gets its connection back only by giving up.
-          req.resume();
-          if (req.readableEnded) return;
-          // Idle, not elapsed: a client still sending keeps its connection, a
-          // client that declared a body and stopped does not.
-          req.socket.setTimeout(REFUSED_DRAIN_MS, () => req.destroy());
-          req.once('end', () => req.socket.setTimeout(0));
-        });
-        refuse(res, 413, `Request body is over ${MAX_BODY_BYTES} bytes`, { connection: 'close' });
+        refuse(req, res, 413, `Request body is over ${MAX_BODY_BYTES} bytes`);
         return;
       }
       opts.logger.error('http.handle_error', { message: e instanceof Error ? e.message : String(e) });

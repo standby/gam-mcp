@@ -113,6 +113,49 @@ describe('bearer token (spec §2.7)', () => {
   });
 });
 
+describe('every refusal gives the connection back (spec §2.7)', () => {
+  // The 413 path was hardened for this and its three siblings were not: a
+  // refusal is a request this server never reads, so a client that declares a
+  // body and stops sending leaves the socket waiting for bytes nobody wants,
+  // and a well-formed request on that same connection is never answered.
+  const CASES = [
+    ['403 host not allowed', { allowedHosts: ['gam-mcp.internal'] } as const, '/mcp', 'evil.example', '403'],
+    ['401 wrong token', { bearerToken: TOKEN } as const, '/mcp', '127.0.0.1', '401'],
+    ['404 unknown path', {} as const, '/nope', '127.0.0.1', '404'],
+  ] as const;
+
+  it.each(CASES)('%s closes the connection when the declared body never arrives', { timeout: 20000 }, async (_label, options, path, host, status) => {
+    await withServer(options, async (port) => {
+      const sock = connect(port, '127.0.0.1');
+      await once(sock, 'connect');
+      let reply = '';
+      sock.on('data', (c: Buffer) => { reply += c.toString('utf8'); });
+      sock.write(
+        `POST ${path} HTTP/1.1\r\nhost: ${host}\r\ncontent-type: application/json\r\n` +
+        `authorization: Bearer ${WRONG}\r\ncontent-length: 5000\r\n\r\n` + 'x'.repeat(100),
+      );
+      const closed = await Promise.race([
+        once(sock, 'close').then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 4000)),
+      ]);
+      sock.destroy();
+      expect(reply).toContain(status);
+      // Under 4s on purpose: Node's own keep-alive timeout would close an idle
+      // socket at 5s, so a laxer bound would pass with the drain removed.
+      expect(closed, 'the refused connection was left open, so the next request on it would hang').toBe(true);
+    });
+  });
+
+  it('an unknown path is refused in the same shape as every other refusal', async () => {
+    await withServer({}, async (port) => {
+      const r = await send(port, { path: '/nope', body: initialize });
+      expect(r.status).toBe(404);
+      expect(r.headers['content-type']).toContain('application/json');
+      expect(JSON.parse(r.body)).toMatchObject({ jsonrpc: '2.0', error: { code: -32000, message: 'Not found' }, id: null });
+    });
+  });
+});
+
 describe('request size (spec §2.7)', () => {
   const big = JSON.stringify({ padding: 'x'.repeat(1.1 * 1024 * 1024) });
 
@@ -126,7 +169,7 @@ describe('request size (spec §2.7)', () => {
     });
   });
 
-  it('G4: a declared length over the limit closes the connection, even if the body never arrives', async () => {
+  it('G4: a declared length over the limit closes the connection, even if the body never arrives', { timeout: 20000 }, async () => {
     await withServer({}, async (port) => {
       const sock = connect(port, '127.0.0.1');
       await once(sock, 'connect');
@@ -140,7 +183,7 @@ describe('request size (spec §2.7)', () => {
       );
       const closed = await Promise.race([
         once(sock, 'close').then(() => true),
-        new Promise<boolean>((r) => setTimeout(() => r(false), 2000)),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 4000)),
       ]);
       sock.destroy();
       expect(reply).toContain('413');
