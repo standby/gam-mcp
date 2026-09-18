@@ -3,33 +3,36 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '../src/server.js';
-import { gamError, type GamErrorCode } from '../src/errors.js';
-import type { ToolDefinition } from '../src/report-tool-builder.js';
+import { gamError, GAM_ERROR_CODES, type GamErrorCode } from '../src/errors.js';
+import { READS_GAM, type ToolDefinition } from '../src/report-tool-builder.js';
 import { createLogger } from '../src/log.js';
 import { connectClient, makeCtx } from './helpers.js';
 
-const CODES: GamErrorCode[] = [
-  'INVALID_DATE_RANGE', 'INVALID_INPUT', 'AUTH_FAILED', 'QUOTA_EXCEEDED', 'REPORT_FAILED',
-  'REPORT_TIMEOUT', 'ENTITY_NOT_FOUND', 'AMBIGUOUS_NAME', 'UNSUPPORTED_DIMENSION_COMBO',
-  'INTERNAL_ERROR', 'REPORT_RESULT_EXPIRED', 'RESULT_TOO_LARGE',
-];
+// Read from the catalogue, not hand-copied: a fourth copy of the code list
+// would not have complained when DUPLICATE_JOIN_KEY was added, because tests
+// are not typechecked (the same defect class as the stdio-only tool names in
+// PR 3 Task 8).
+const CODES: readonly GamErrorCode[] = GAM_ERROR_CODES;
 
 const returnsError: ToolDefinition<z.ZodTypeAny> = {
   name: 'returns_error',
   description: 'test',
   input: z.object({ code: z.string() }),
+  annotations: READS_GAM,
   handler: async (input) => gamError(input.code as GamErrorCode, {}),
 };
 const throws: ToolDefinition<z.ZodTypeAny> = {
   name: 'throws',
   description: 'test',
   input: z.object({}),
+  annotations: READS_GAM,
   handler: async () => { throw new Error('boom'); },
 };
 const strict: ToolDefinition<z.ZodTypeAny> = {
   name: 'strict',
   description: 'test',
   input: z.object({ n: z.number().describe('A number.') }).strict(),
+  annotations: READS_GAM,
   handler: async () => ({ summary: 'ok' }),
 };
 // A result the server cannot serialise: the failure happens after the handler
@@ -38,12 +41,14 @@ const unserializable: ToolDefinition<z.ZodTypeAny> = {
   name: 'unserializable',
   description: 'test',
   input: z.object({}),
+  annotations: READS_GAM,
   handler: async () => ({ summary: 'ok', n: 1n } as unknown as { summary: string }),
 };
 const fine: ToolDefinition<z.ZodTypeAny> = {
   name: 'fine',
   description: 'test',
   input: z.object({ n: z.number() }),
+  annotations: READS_GAM,
   handler: async () => ({ summary: 'ok' }),
 };
 

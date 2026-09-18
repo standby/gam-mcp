@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { numOr0, pct } from '../report-run.js';
+import { num, pct } from '../derived.js';
 import { lastDays } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText } from '../values.js';
@@ -75,11 +75,11 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         .map((r) => ({
           id: cellText(r.AD_UNIT_ID),
           name: cellText(r.AD_UNIT_NAME),
-          requests: numOr0(r.AD_EXCHANGE_TOTAL_REQUESTS),
-          matchRate: numOr0(r.AD_EXCHANGE_MATCH_RATE), // already 0..1
-          ecpm: numOr0(r.AD_EXCHANGE_AVERAGE_ECPM),
-          impressions: numOr0(r.AD_EXCHANGE_IMPRESSIONS),
-          revenue: numOr0(r.AD_EXCHANGE_REVENUE),
+          requests: num(r.AD_EXCHANGE_TOTAL_REQUESTS) ?? 0,
+          matchRate: num(r.AD_EXCHANGE_MATCH_RATE) ?? 0, // already 0..1
+          ecpm: num(r.AD_EXCHANGE_AVERAGE_ECPM) ?? 0,
+          impressions: num(r.AD_EXCHANGE_IMPRESSIONS) ?? 0,
+          revenue: num(r.AD_EXCHANGE_REVENUE) ?? 0,
         }))
         .filter((r) => r.requests >= input.min_requests);
 
@@ -88,6 +88,9 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
           summary: `Floor-pricing diagnosis (${range.start}..${range.end}): no ad units with >= ${input.min_requests} AdX requests.`,
           inputs: [result.input],
           rows: [],
+          // No slicing happened above: qualifying is empty, so the rows
+          // handed over already are the whole (empty) total.
+          total_row_count: 0,
           warnings: result.warnings,
         });
       }
@@ -144,6 +147,7 @@ export const diagnoseFloorPricingTool: ToolDefinition<typeof inputSchema> = {
         summary,
         inputs: [result.input],
         rows: top,
+        total_row_count: diagnosed.length,
         warnings: result.warnings,
       });
     } catch (e) {

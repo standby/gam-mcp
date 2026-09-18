@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { numOr0, pct } from '../report-run.js';
+import { num, pct } from '../derived.js';
 import { lastDays, previousPeriod } from '../dates.js';
 import { executeReportRows, derivedEnvelope } from '../report-exec.js';
 import { cellText, type Cell } from '../values.js';
@@ -87,7 +87,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
 
       const diagnosed: Record<string, string>[] = [];
       for (const r of base.rows) {
-        const requests = numOr0(r.AD_REQUESTS);
+        const requests = num(r.AD_REQUESTS) ?? 0;
         if (requests < input.min_requests) continue;
 
         const f = funnel(r);
@@ -110,7 +110,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
           direct_response_share_pct: pct(f.directResponseShare),
           unfilled_share_pct: pct(f.unfilledShare),
           ad_requests: String(requests),
-          unfilled_impressions: String(numOr0(r.UNFILLED_IMPRESSIONS)),
+          unfilled_impressions: String(num(r.UNFILLED_IMPRESSIONS) ?? 0),
         });
       }
 
@@ -126,6 +126,7 @@ export const diagnoseFillRateTool: ToolDefinition<typeof inputSchema> = {
         summary,
         inputs: prev ? [base.input, prev.input] : [base.input],
         rows: top,
+        total_row_count: diagnosed.length,
         warnings: [...base.warnings, ...(prev?.warnings ?? [])],
       });
     } catch (e) {
@@ -146,17 +147,17 @@ type Funnel = {
 };
 
 function funnel(r: Record<string, Cell>): Funnel {
-  const requests = numOr0(r.AD_REQUESTS);
-  const adxReq = numOr0(r.AD_EXCHANGE_TOTAL_REQUESTS);
-  const responses = numOr0(r.AD_SERVER_RESPONSES_SERVED);
-  const unfilled = numOr0(r.UNFILLED_IMPRESSIONS);
+  const requests = num(r.AD_REQUESTS) ?? 0;
+  const adxReq = num(r.AD_EXCHANGE_TOTAL_REQUESTS) ?? 0;
+  const responses = num(r.AD_SERVER_RESPONSES_SERVED) ?? 0;
+  const unfilled = num(r.UNFILLED_IMPRESSIONS) ?? 0;
   return {
     requests,
     adxRequestShare: requests === 0 ? 0 : adxReq / requests,
-    adxMatchRate: numOr0(r.AD_EXCHANGE_MATCH_RATE),
+    adxMatchRate: num(r.AD_EXCHANGE_MATCH_RATE) ?? 0,
     directResponseShare: requests === 0 ? 0 : responses / requests,
     unfilledShare: requests === 0 ? 0 : unfilled / requests,
-    fillRate: numOr0(r.FILL_RATE),
+    fillRate: num(r.FILL_RATE) ?? 0,
   };
 }
 

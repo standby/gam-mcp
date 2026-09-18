@@ -105,7 +105,9 @@ async function pacingUnderdelivery(
     `Pacing underdelivery (MTD ${range.start}..${range.end}, day ${daysElapsed}/${daysInMonth}, ` +
     `expected ${(expectedProgress * 100).toFixed(0)}%, threshold ${thresholdPct}%): ` +
     `${annotated.length} line items at risk, top ${top.length} returned.`;
-  return derivedEnvelope(ctx, { summary, inputs: [result.input], rows: top, warnings: result.warnings });
+  return derivedEnvelope(ctx, {
+    summary, inputs: [result.input], rows: top, total_row_count: annotated.length, warnings: result.warnings,
+  });
 }
 
 async function fillRateDrops(
@@ -156,6 +158,7 @@ async function fillRateDrops(
     summary,
     inputs: [base.input, prev.input],
     rows: top,
+    total_row_count: drops.length,
     warnings: [...base.warnings, ...prev.warnings],
   });
 }
@@ -214,6 +217,7 @@ async function ecpmRegression(
     summary,
     inputs: [base.input, prev.input],
     rows: top,
+    total_row_count: regressions.length,
     warnings: [...base.warnings, ...prev.warnings],
   });
 }
@@ -269,6 +273,7 @@ async function viewabilityDrops(
     summary,
     inputs: [base.input, prev.input],
     rows: top,
+    total_row_count: drops.length,
     warnings: [...base.warnings, ...prev.warnings],
   });
 }

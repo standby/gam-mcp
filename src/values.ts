@@ -20,7 +20,7 @@ export type ReportRow = {
 
 export type Scalar = string | number | boolean;
 export type Cell = Scalar | Scalar[] | null;
-export type ColumnType = 'integer' | 'number' | 'string' | 'boolean' | 'date' | 'array' | 'bytes';
+export type ColumnType = 'integer' | 'number' | 'string' | 'boolean' | 'date' | 'array' | 'bytes' | 'object';
 export type Column = { name: string; type: ColumnType };
 export type Table = { columns: Column[]; rows: Record<string, Cell>[]; warnings: string[] };
 

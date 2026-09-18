@@ -443,7 +443,7 @@ export async function executeReport(
     const definition = reportDefinition(req.query, req.dateRange, ctx);
     // A schema cap of 1,000 on every top_n input keeps this under GAM's
     // 10,000 pageSize limit, so one page always holds the whole request.
-    const size = req.topN ? Math.min(req.topN, pageRows(ctx)) : pageRows(ctx);
+    const size = req.topN !== undefined ? Math.min(req.topN, pageRows(ctx)) : pageRows(ctx);
     const first = await firstPage(ctx, definition, size, req.tool);
     if ('error' in first) return first;
     return pageEnvelope({
@@ -609,10 +609,26 @@ export async function executeReportRows(
 
 export function derivedEnvelope(
   ctx: ToolContext,
-  d: { summary: string; inputs: InputReport[]; rows: Record<string, unknown>[]; warnings?: string[] },
+  d: {
+    summary: string;
+    inputs: InputReport[];
+    rows: Record<string, unknown>[];
+    // The count before the caller's own top_n/slicing, not d.rows.length:
+    // every caller slices before calling this, so counting the rows handed
+    // over reports the slice size, not the true total (spec §1.1).
+    total_row_count: number;
+    warnings?: string[];
+    // How many of the pre-slice rows had a null input to a computed field
+    // (spec §1.4). Surfaced as a warning, not folded into the rows.
+    null_input_rows?: number;
+  },
 ): ResultEnvelope | GamErrorEnvelope {
   const limit = pageRows(ctx);
   if (d.rows.length > limit) return tooLarge(d.rows.length, limit, 'output');
+  const warnings = [...(d.warnings ?? [])];
+  if (d.null_input_rows !== undefined && d.null_input_rows > 0) {
+    warnings.push(`${d.null_input_rows} row(s) had a null input to a computed field.`);
+  }
   return envelope({
     summary: d.summary,
     provenance: {
@@ -622,10 +638,10 @@ export function derivedEnvelope(
       currency_code: ctx.currencyCode,
       inputs: d.inputs,
     },
-    total_row_count: d.rows.length,
+    total_row_count: d.total_row_count,
     truncated: false,
     next_cursor: null,
-    warnings: d.warnings ?? [],
+    warnings,
     schema: inferSchema(d.rows),
     rows: d.rows,
   });

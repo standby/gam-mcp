@@ -29,6 +29,26 @@ describe('envelope', () => {
   });
 });
 
+describe('inferSchema: typeOf object detection', () => {
+  // Locks in the decision behind a `derived` block's column type (spec
+  // §1.4): a computed block is an object, not a lying "string", but an
+  // array must keep typing as `array` and a column with no non-null value
+  // must keep typing as `string` -- neither should fall into `object`.
+  it('types an object-valued cell as object', () => {
+    expect(inferSchema([{ d: { method: 'x', heuristic: false, inputs: {} } }])).toEqual([
+      { name: 'd', type: 'object' },
+    ]);
+  });
+
+  it('still types an array as array, not object', () => {
+    expect(inferSchema([{ a: [1, 2, 3] }])).toEqual([{ name: 'a', type: 'array' }]);
+  });
+
+  it('still types an all-null column as string, not object', () => {
+    expect(inferSchema([{ a: null }, { a: null }])).toEqual([{ name: 'a', type: 'string' }]);
+  });
+});
+
 describe('listEnvelope', () => {
   it('wraps non-report rows with the same keys and no provenance', () => {
     const e = listEnvelope([{ name: 'x', n: 2, ok: true, gone: null }], 'Listed.');

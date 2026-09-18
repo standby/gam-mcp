@@ -32,7 +32,7 @@ describe('report time zone and currency (spec §2.4)', () => {
   });
 
   it('D5: a computed result names the zones and the currency too', () => {
-    const e = derivedEnvelope(makeCtx(), { summary: 'S', inputs: [], rows: [] });
+    const e = derivedEnvelope(makeCtx(), { summary: 'S', inputs: [], rows: [], total_row_count: 0 });
     expect((e as ResultEnvelope).provenance).toEqual({
       network_code: NETWORK,
       report_time_zone: 'Asia/Tokyo',

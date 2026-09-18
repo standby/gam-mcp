@@ -250,9 +250,9 @@ describe('executeReportRows and derivedEnvelope', () => {
   it('A4: refuses computed output over the page size instead of cutting it', () => {
     const ctx = makeCtx({}, { pageRows: 2 });
     const input = { report: 'r', result: 'r/results/1', run_time: null, date_range: null };
-    expect(derivedEnvelope(ctx, { summary: 'S', inputs: [input], rows: [{ a: 1 }, { a: 2 }, { a: 3 }] }))
+    expect(derivedEnvelope(ctx, { summary: 'S', inputs: [input], rows: [{ a: 1 }, { a: 2 }, { a: 3 }], total_row_count: 3 }))
       .toMatchObject({ error: { code: 'RESULT_TOO_LARGE', details: { rows: 3, limit: 2 } } });
-    const e = derivedEnvelope(ctx, { summary: 'S', inputs: [input], rows: [{ a: 1 }] });
+    const e = derivedEnvelope(ctx, { summary: 'S', inputs: [input], rows: [{ a: 1 }], total_row_count: 1 });
     expect(e).toMatchObject({
       provenance: { network_code: NETWORK, date_time_zone: 'Asia/Tokyo', inputs: [input] },
       total_row_count: 1, truncated: false, next_cursor: null,

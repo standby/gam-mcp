@@ -75,6 +75,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
         summary,
         inputs: [base.input, prev.input],
         rows: top,
+        total_row_count: joined.length,
         warnings: [...base.warnings, ...prev.warnings],
       });
     } catch (e) {

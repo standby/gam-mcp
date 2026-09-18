@@ -85,6 +85,7 @@ function typeOf(v: unknown): ColumnType {
   if (typeof v === 'number') return 'number';
   if (typeof v === 'boolean') return 'boolean';
   if (Array.isArray(v)) return 'array';
+  if (v !== null && typeof v === 'object') return 'object';
   return 'string';
 }
 

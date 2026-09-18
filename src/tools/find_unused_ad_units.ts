@@ -78,6 +78,9 @@ export const findUnusedAdUnitsTool: ToolDefinition<typeof inputSchema> = {
         summary: summary.trim(),
         inputs: [report.input],
         rows: unused,
+        // No slicing here: every unused ad unit is returned, so the rows
+        // handed over already are the whole total.
+        total_row_count: unused.length,
         warnings,
       });
     } catch (e) {

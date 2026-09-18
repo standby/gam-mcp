@@ -10,7 +10,8 @@ export type GamErrorCode =
   | 'UNSUPPORTED_DIMENSION_COMBO'
   | 'INTERNAL_ERROR'
   | 'REPORT_RESULT_EXPIRED'
-  | 'RESULT_TOO_LARGE';
+  | 'RESULT_TOO_LARGE'
+  | 'DUPLICATE_JOIN_KEY';
 
 export type GamErrorEnvelope = {
   error: {
@@ -79,7 +80,18 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
     message: `The ${d.what ?? 'result'} has ${d.rows} rows, over the limit of ${d.limit}.`,
     hint: 'Narrow the date range, add filters, or request fewer dimensions.',
   }),
+  // Two rows in the same period reduced to the same join key, so the join
+  // cannot tell which one the other period's row should be compared against.
+  DUPLICATE_JOIN_KEY: (d) => ({
+    message: `Multiple rows in the ${d.period ?? 'same'} period share the join key ${JSON.stringify(d.key)}.`,
+    hint: 'Add a dimension that separates these rows (e.g. a more granular ID) so each join key names exactly one row.',
+  }),
 };
+
+// The full set of error codes this server can return, derived from the
+// catalogue rather than hand-copied, so a code added above is covered here
+// without a second edit.
+export const GAM_ERROR_CODES = Object.keys(CATALOG) as readonly GamErrorCode[];
 
 export function gamError(
   code: GamErrorCode,
