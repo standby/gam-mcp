@@ -156,7 +156,8 @@ function memorySavedQueries(): SavedQueryStore {
 
 // A context in which every row of VALID_ARGS succeeds: the entities and
 // resources the rows name exist, a saved query is stored, and any report
-// definition is answered with two rows whose cells are all empty.
+// definition is answered with two rows, distinguished per-dimension so they
+// never collide as a join key (see defineReport below).
 export function toolWorld(over: Partial<ToolContext> = {}): ToolContext {
   const reports: ReportFixture[] = [];
   const ctx = makeCtx(
