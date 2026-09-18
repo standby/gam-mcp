@@ -158,4 +158,30 @@ describe('startup (real process)', () => {
 
     for (const r of [port, hosts, token]) expect(r.stderr).not.toContain('auth.source_resolved');
   }, 30_000);
+
+  // ignoredInStdio (Task 13) is unit-tested, but nothing before this asserted
+  // that a real stdio process actually emits the warning rather than silently
+  // dropping an HTTP-only setting. GAM_HTTP_PORT stays unset, so this is
+  // stdio mode; the credential still fails, confirming startup ran past the
+  // warning and never reached the HTTP-settings validation above.
+  it('a stdio run with HTTP-only settings set warns config.ignored for each, then still proceeds', () => {
+    const r = start({
+      GAM_HTTP_BEARER_TOKEN: 'stdio-run-ignored-token-9d41c7',
+      GAM_HTTP_ALLOWED_HOSTS: 'gam-mcp.internal',
+      GAM_SERVICE_ACCOUNT_KEY_FILE: '/nonexistent/key.json',
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('cannot read network 1234 with the file credential');
+
+    const ignoredVariables: unknown[] = [];
+    for (const line of (r.stderr ?? '').split('\n')) {
+      try {
+        const parsed = JSON.parse(line) as { msg?: unknown; variable?: unknown };
+        if (parsed.msg === 'config.ignored') ignoredVariables.push(parsed.variable);
+      } catch {
+        // not a JSON log line
+      }
+    }
+    expect(ignoredVariables).toEqual(['GAM_HTTP_BEARER_TOKEN', 'GAM_HTTP_ALLOWED_HOSTS']);
+  }, 30_000);
 });
