@@ -95,6 +95,7 @@ Setting `GAM_HTTP_PORT` switches the server from stdio to Streamable HTTP: reque
 | **Descriptive** | What's happening |
 | `revenue_summary` | Total revenue/impressions, optionally grouped by day/week/month/advertiser/order/line_item/ad_unit/country/device/line_item_type |
 | `top_advertisers`, `top_line_items` | Top-N by revenue or impressions, with context |
+| `kv_breakdown` | Top values of a publisher-configured custom-targeting key, by revenue or impressions, optionally narrowed to one ad unit / order / line item. Requires the key's ID — discover it via `lookup(entity_type="custom_targeting_key")`. |
 | `inventory_breakdown` | Programmatic vs direct vs house split by `line_item_type`, `advertiser`, or `order` |
 | `revenue_trend` | Time series at day/week granularity, optionally split by one dimension |
 | `fill_rate` | Fill-rate funnel by ad_unit / device_category / country / day |
@@ -116,8 +117,10 @@ Setting `GAM_HTTP_PORT` switches the server from stdio to Streamable HTTP: reque
 | `diagnose_fill_rate` | Explain **why** ad units have low fill. Runs the AdX funnel report (requests → routed to AdX → AdX match → ad-server response → unfilled) + WoW comparison, then attributes a single primary cause per row: `healthy`, `tag_integration`, `demand_collapse`, `low_match_rate`, `direct_underdelivery`, `no_demand`, or `mixed`. Ranks by unfilled-impression volume for impact-aware results. |
 | **Power tools** | The escape hatches |
 | `run_report` | Generic GAM Reports query — pick any dimensions/metrics from `describe_schema`, optional filters (`=`, `IN`, `!=`, `CONTAINS`, `NOT_CONTAINS`), optional `custom_dimension_key_ids` for KV reporting |
+| `fetch_report_page` | Fetch the next page of rows from a result any other report tool returned, by passing back its `next_cursor`. The cursor is not a credential of its own — it just names a result the same service account could reproduce by running the report again, so it grants nothing new. |
+| `kv_report` | High-level KV-narrowed report: give `kv="key=value"`, a date range, and metrics; resolves the key via lookup and runs a report scoped to that value, compatible with request-time and AdX/AdSense metrics GAM normally forbids alongside `KEY_VALUES_NAME`. Optionally narrows by ad_unit / order / line_item. Page 1 describes its filter as `kv=<key>=<value>`; a further page fetched with `fetch_report_page` describes the same filter generically as `CUSTOM_DIMENSION_N_VALUE = <value>` instead, since `fetch_report_page` only has the stored wire definition and can't recover the key name — both are correct. |
 | `lookup` | Name ↔ ID resolution for advertisers, orders, line items, ad units, placements, companies, **custom_targeting_keys**. Lists up to 1000 with transparent pagination. |
-| `describe_line_item` | Read a line item's **configuration** rather than its delivery — status, flight dates, type/priority, rate and goal, frequency caps, delivery and rotation settings, creative placeholders, and `targeting`. Custom targeting is flattened to readable clauses (`IS ANY OF` / `IS NONE OF`, clauses OR'd, literals within a clause AND'd) and every GAM resource path in the targeting — custom targeting keys and values, ad units, placements — is resolved to its API code and display name. No reporting dimension exposes a targeting expression, so this is the only way to see what a line item targets instead of inferring it from delivery. 1–50 ids per call. |
+| `describe_line_item` | Read a line item's **configuration** rather than its delivery — status, flight dates, type/priority, rate and goal, frequency caps, delivery and rotation settings, creative placeholders, and `targeting`. Custom targeting is flattened to readable clauses (`IS ANY OF` / `IS NONE OF`, clauses OR'd, literals within a clause AND'd) and every GAM resource path in the targeting — custom targeting keys and values, ad units, placements — is resolved to its API code and display name. No reporting dimension exposes a targeting expression, so this is the only way to see what a line item targets instead of inferring it from delivery. 1–50 ids per call. **Returns commercially sensitive fields verbatim — rate, cost type, and delivery goal among them — so an operator exposing this MCP to a shared or multi-tenant agent may want to gate or withhold this tool.** |
 | `describe_schema` | Browse the dimensions and metrics this MCP can query — **the complete GAM REST enum: 764 dimensions and 526 metrics.** Filter with `report_type` (what can legally appear in one request together), `family` (name prefix, e.g. `AD_EXCHANGE`), or `search` (substring of name or description). Unfiltered calls return names and types only; any filter turns on descriptions, report-type compatibility, and the curated `incompatible_with` hints |
 | **Saved queries** | Templates the analyst can stash and replay |
 | `save_query` | Persist a `run_report`-shaped template (dimensions + metrics + optional filters + custom_dimension_key_ids) under a name. Date range is deliberately not saved — supply it fresh at replay. |
@@ -137,7 +140,7 @@ The server also advertises an MCP `resources` capability so the LLM (or client U
 | `gam://schema` | Full curated dimension + metric catalog with descriptions. |
 | `gam://schema/dimensions` | Dimensions only. |
 | `gam://schema/metrics` | Metrics only. |
-| `gam://network` | Configured network code + timezone (only present when launched with `GAM_NETWORK_CODE`). |
+| `gam://network` | The configured network's identity: `network_code`, `currency_code`, `report_time_zone` (the zone GAM counts report days in), and `date_time_zone` (`GAM_TIMEZONE` — the zone dates are chosen in). |
 
 ## Prompts
 
@@ -173,7 +176,7 @@ Things an LLM with this MCP attached can answer directly. (No prompts engineerin
 6. **Specific ad units.** *"Revenue and impressions for our sports placements last week."* → `run_report` with `filters:[{field:"AD_UNIT_NAME", op:"CONTAINS", value:"sports"}]`.
 7. **AdX yield diagnosis.** *"AdX match rate and average eCPM per ad unit yesterday."* → `run_report({dimensions:["AD_UNIT_NAME"], metrics:["AD_EXCHANGE_TOTAL_REQUESTS","AD_EXCHANGE_MATCH_RATE","AD_EXCHANGE_AVERAGE_ECPM"], date_range:{relative:"yesterday"}})`.
 8. **Custom dimension breakdown.** *"Revenue by section."* → first `lookup({entity_type:"custom_targeting_key", query:"section"})` to find the key ID, then `run_report({dimensions:["CUSTOM_DIMENSION_0_VALUE"], metrics:["IMPRESSIONS","REVENUE"], date_range:{relative:"last_7_days"}, custom_dimension_key_ids:[<that_id>]})`.
-9. **YoY comparison.** *"How does this month's revenue compare to the same month last year?"* → `compare_periods({base_range:{relative:"month_to_date"}, comparison:"previous_year", dimensions:["DATE"], metrics:["REVENUE"]})`.
+9. **YoY comparison.** *"How does last month's revenue compare to the same month last year?"* → `compare_periods({base_range:{relative:"last_full_month"}, comparison:"previous_year", dimensions:["DATE"], metrics:["REVENUE"]})`. (`month_to_date` works too, except on the first day of a month, when there's no complete day yet to report — it returns `INVALID_DATE_RANGE`; `last_full_month` avoids that edge case entirely.)
 10. **Top advertisers in a country.** *"Top advertisers in Hong Kong this month."* → `top_advertisers` with a `COUNTRY_NAME` filter.
 
 ## Schema notes
@@ -211,9 +214,15 @@ GAM runs each report family as a distinct `reportType`, and a request is wholly 
 ## Troubleshooting
 
 - **"AUTH_FAILED"** — verify `GAM_SERVICE_ACCOUNT_KEY_FILE` path is readable and the service account has API access in the Ad Manager UI.
-- **"REPORT_TIMEOUT"** — narrow the date range, or set `GAM_REPORT_TIMEOUT_MS=900000` for 15 minutes.
+- **"REPORT_TIMEOUT"** — narrow the date range, or set `GAM_REPORT_TIMEOUT_MS=900000` for 15 minutes. GAM is still running the job: it is not abandoned on timeout, so calling the same tool with the same input again resumes waiting on that same operation instead of starting a second one.
 - **"REPORT_ERROR_CONSTRAINTS_INCOMPATIBILITY"** — some dimension/metric combos are forbidden by GAM (e.g., `AD_REQUESTS` × `LINE_ITEM_TYPE`). Split into separate queries.
 - **"REPORT_ERROR_MISSING_DYNAMIC_DIMENSION_ID_AT_INDEX"** — you queried `CUSTOM_DIMENSION_<N>_VALUE` without supplying `custom_dimension_key_ids[N]`. Look the key ID up via `lookup(entity_type="custom_targeting_key")`.
+- **"INVALID_DATE_RANGE"** on a period-to-date range (`month_to_date`, `quarter_to_date`, `year_to_date`) — on the first day of that period there is no complete day yet to report. Use an explicit `{start, end}` range, or a range that names a prior complete period (e.g. `last_full_month`), or retry after that day has ended.
+- **"AMBIGUOUS_NAME"** — a name-based lookup (an advertiser, order, line item, ad unit, or custom targeting key) matched more than one entity; 0.5.2 silently took the first match, 0.6.0 refuses. Inspect `details.candidates` in the error and re-run with a specific numeric ID instead of the name.
+- **"DUPLICATE_JOIN_KEY"** — `compare_periods` found two rows in the same period that reduce to the same join key, so it can't tell which one the other period's row should be compared against. Add a more granular dimension (e.g. an ID rather than just a name) so each row's key is unique.
+- **"RESULT_TOO_LARGE"** — the report has more rows than this call can return: over 50,000 rows for a tool that reads a whole report into memory (e.g. `find_anomalies`), or more than the configured page size for a paged result. Narrow the date range, add filters, or request fewer dimensions.
+- **"REPORT_RESULT_EXPIRED"** — GAM no longer serves the report result a `fetch_report_page` cursor (or a reused report) pointed at; GAM keeps report results for a limited time. Re-run the original tool call — not `fetch_report_page` — and it will run the report afresh.
+- **Startup stops with exit code 2** — several conditions do this, each named on stderr: a missing or non-numeric `GAM_NETWORK_CODE`; an unrecognized `GAM_TIMEZONE` (or a raw UTC offset instead of an IANA name); a non-numeric/out-of-range `GAM_REPORT_TIMEOUT_MS`, `GAM_REPORT_CACHE_TTL_MS`, or `GAM_PAGE_ROWS`; a `GAM_REPORT_CACHE_DIR` whose directory can't be created; an invalid `GAM_HTTP_PORT`, `GAM_HTTP_BEARER_TOKEN`, or `GAM_HTTP_ALLOWED_HOSTS`; a `GAM_HTTP_PORT` already in use by another process; or a credential that can't authenticate or read the configured network. Fix the named variable and restart.
 - **"`gam-mcp: GAM_NETWORK_CODE is required`"** — the env var didn't make it into the subprocess. Check your MCP client config's `env` block.
 - Logs go to **stderr**, not stdout. If your MCP client is hiding them, check its log file.
 
