@@ -85,13 +85,15 @@ zone name (for example `Asia/Seoul`, not `+09:00`) — the same example
 the mechanism; `feat: advertise each tool input in full and name what is wrong
 with an input` (`cf241aa`) added the per-field descriptions. Between the two, only
 `57f7fb5` carries a `BREAKING CHANGE:` footer, and it reads as "a tool" (singular)
-rather than stating the scope. In the shipped code this is universal: every one
-of the 37 `.strict()`-declared tool schemas in `src/tools/*.ts` is parsed through
-one shared path in `src/server.ts` (`tool.input.safeParse(...)`), and an
-undeclared key anywhere in the input — including inside a nested object such as
-`date_range` — is rejected as `INVALID_INPUT`, naming the offending key via
-`describeInputError()` in `src/tool-input.ts`. There is no tool that still drops
-unknown keys silently.
+rather than stating the scope. In the shipped code this is universal: **34** of
+the `.strict()`-declared schemas live in `src/tools/*.ts`, plus **3** more in the
+shared `filterInput`/`dateRangeInput` building blocks in `src/tool-input.ts`
+that tool schemas compose from, and every one of the **33** tools actually
+registered (`src/tools/index.ts`) is parsed through one shared path in
+`src/server.ts` (`tool.input.safeParse(...)`), which rejects an undeclared key
+anywhere in the input — including inside a nested object such as `date_range`
+— as `INVALID_INPUT`, naming the offending key via `describeInputError()` in
+`src/tool-input.ts`. There is no tool that still drops unknown keys silently.
 
 **What to do:** audit any caller that has been passing extra, previously-ignored
 fields (typos, deprecated aliases, speculative fields) to any `gam-mcp` tool —
