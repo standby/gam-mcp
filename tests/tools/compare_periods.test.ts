@@ -60,14 +60,16 @@ describe('compare_periods', () => {
     // NewCo only in base — prev is missing (a null input): delta_pct.value
     // is null, and the row is counted in the null-input warning.
     expect(byAdv.NewCo.IMPRESSIONS).toBe('50');
-    expect(byAdv.NewCo.IMPRESSIONS_prev).toBe('');
+    expect(byAdv.NewCo.IMPRESSIONS_prev).toBeNull();
+    expect(byAdv.NewCo.IMPRESSIONS_prev).not.toBe('');
     expect(byAdv.NewCo.IMPRESSIONS_delta_pct).toMatchObject({
       value: null,
       inputs: { IMPRESSIONS_now: 50, IMPRESSIONS_prev: null },
     });
 
     // Gone only in prev — base is missing (a null input) too.
-    expect(byAdv.Gone.IMPRESSIONS).toBe('');
+    expect(byAdv.Gone.IMPRESSIONS).toBeNull();
+    expect(byAdv.Gone.IMPRESSIONS).not.toBe('');
     expect(byAdv.Gone.IMPRESSIONS_prev).toBe('99');
     expect(byAdv.Gone.IMPRESSIONS_delta_pct).toMatchObject({ value: null });
 
@@ -76,6 +78,51 @@ describe('compare_periods', () => {
 
     // Sorted by primary metric (IMPRESSIONS) descending — Acme first
     expect(r.rows![0].ADVERTISER_NAME).toBe('Acme');
+  });
+
+  // Regression for the two-sentinels defect: <metric>/<metric>_prev used to
+  // emit '' for a missing side while <metric>_delta_pct.value emitted null
+  // for the same absence. Every other §1.4 tool uses null for "not
+  // reported" in a numeric column, so the raw fields must agree with the
+  // derived one beside them.
+  it('a metric missing on one side is null, not an empty string', async () => {
+    const query = { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] };
+    const ctx = makeCtx({
+      reports: [
+        // BASE period reports the metric.
+        {
+          query,
+          dateRange: { start: '2026-04-23', end: '2026-04-29' },
+          rows: [{ ADVERTISER_NAME: 'Acme', IMPRESSIONS: 1000 }],
+        },
+        // PREVIOUS period exists (dateRange matches) but never reports Acme.
+        {
+          query,
+          dateRange: { start: '2026-04-16', end: '2026-04-22' },
+          rows: [],
+        },
+      ],
+    }, { timezone: 'UTC' });
+
+    const args = comparePeriodsTool.input.parse({
+      dimensions: ['ADVERTISER_NAME'],
+      metrics: ['IMPRESSIONS'],
+      base_range: { start: '2026-04-23', end: '2026-04-29' },
+      comparison: 'previous_period',
+      top_n: 10,
+    });
+    const r = await comparePeriodsTool.handler(args, ctx);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const row = r.rows![0];
+
+    // Present side is still a numeric string (unchanged behaviour).
+    expect(row.IMPRESSIONS).toBe('1000');
+    // Absent side is null, not ''.
+    expect(row.IMPRESSIONS_prev).toBeNull();
+    expect(row.IMPRESSIONS_prev).not.toBe('');
+    // The computed field beside it already agreed (PR 4); this just confirms
+    // both sentinels now describe the same absence the same way.
+    expect(row.IMPRESSIONS_delta_pct).toMatchObject({ value: null });
   });
 
   it('prev === 0: both periods zero yields value 0 (not a null input); prev 0 with a nonzero base yields ' +

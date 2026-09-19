@@ -44,7 +44,7 @@ export const comparePeriodsTool: ToolDefinition<typeof inputSchema> = {
   description:
     "Run the same report over two date ranges and return per-row deltas. Useful for week-over-week, month-over-month, year-over-year decisions. " +
     "comparison can be 'previous_period' (same length, immediately preceding base_range), 'previous_year' (base shifted back 1 year), or explicit {start,end}. " +
-    "Output rows carry <metric> and <metric>_prev (each '' when that period didn't report the metric), plus " +
+    "Output rows carry <metric> and <metric>_prev (each null when that period didn't report the metric), plus " +
     "<metric>_delta_pct as a derived object ({value, method, heuristic: false, inputs}): value is the signed percent " +
     "change, null when the metric is missing in either period or when prev is exactly 0 and the metric isn't " +
     "(undefined change), and 0 when both periods report exactly 0. " +
@@ -194,8 +194,8 @@ function buildRow(
   for (const m of metrics) {
     const cur = base ? toNum(base[m]) : null;
     const old = prev ? toNum(prev[m]) : null;
-    row[m] = cur === null ? '' : String(cur);
-    row[`${m}_prev`] = old === null ? '' : String(old);
+    row[m] = cur === null ? null : String(cur);
+    row[`${m}_prev`] = old === null ? null : String(old);
     const delta = deltaPct(cur, old);
     if (delta.nullInput) nullInput = true;
     row[`${m}_delta_pct`] = derived({
