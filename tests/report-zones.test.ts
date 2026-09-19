@@ -124,9 +124,12 @@ describe('a later page names the zone its stored report was counted in (PR 2 rev
   it.each([{ timeZoneSource: 'AD_EXCHANGE' }, {}])('%j: a zone this server cannot name is null, with a warning', async (zone) => {
     const page = await laterPage(stored(zone));
     expect(page.provenance.report_time_zone).toBeNull();
+    const reason = zone.timeZoneSource
+      ? `no zone follows from its time zone source, ${zone.timeZoneSource}`
+      : 'the report states no time zone source';
     expect(page.warnings).toContain(
-      `GAM counted this report's days in a time zone this server cannot name (time zone source ${zone.timeZoneSource ?? 'not stated'}), ` +
-      'so they may not cover the same hours as dates chosen in Asia/Tokyo (GAM_TIMEZONE).',
+      `GAM counted this report's days in a time zone this server cannot name: ${reason}. ` +
+      'Those days may not cover the same hours as dates chosen in Asia/Tokyo (GAM_TIMEZONE).',
     );
   });
 });

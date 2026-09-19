@@ -5,6 +5,7 @@ import {
   offsetMinutes,
   offsetsDiffer,
   reportZoneOf,
+  unknownZoneWarning,
   zoneWarning,
 } from '../src/zones.js';
 
@@ -143,5 +144,28 @@ describe('reportZoneOf (PR 2 review)', () => {
     [{}, null],
   ])('%j is counted in %s', (definition, zone) => {
     expect(reportZoneOf(definition, 'Asia/Tokyo')).toBe(zone);
+  });
+});
+
+describe('unknownZoneWarning names the unusable part', () => {
+  it('PROVIDED with an unknown zone name blames the NAME, not the source', () => {
+    const w = unknownZoneWarning('Asia/Seoul', { timeZoneSource: 'PROVIDED', timeZone: 'Mars/Olympus' });
+    expect(w).toContain('Mars/Olympus');
+    expect(w).not.toMatch(/source PROVIDED/);
+  });
+  it('PROVIDED with no zone name says the report did not say which', () => {
+    const w = unknownZoneWarning('Asia/Seoul', { timeZoneSource: 'PROVIDED' });
+    expect(w).toMatch(/does not say which/);
+  });
+  it('PROVIDED with an empty-string zone name is treated as no name, not as an unresolvable name', () => {
+    const w = unknownZoneWarning('Asia/Seoul', { timeZoneSource: 'PROVIDED', timeZone: '' });
+    expect(w).toMatch(/does not say which/);
+    expect(w).not.toContain('gives its time zone as');
+  });
+  it('another source is correctly attributed to the source', () => {
+    expect(unknownZoneWarning('Asia/Seoul', { timeZoneSource: 'AD_EXCHANGE' })).toContain('AD_EXCHANGE');
+  });
+  it('no source at all says so', () => {
+    expect(unknownZoneWarning('Asia/Seoul', {})).toMatch(/states no time zone source/);
   });
 });

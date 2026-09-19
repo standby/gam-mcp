@@ -448,7 +448,7 @@ function pageEnvelope(a: PageArgs): ResultEnvelope {
   const warnings = unique([...a.warnings, ...definitionWarnings(a.definition), ...table.warnings]);
   const reportZone = reportZoneOf(a.definition, a.ctx.reportTimeZone);
   const zone = reportZone === null
-    ? unknownZoneWarning(a.ctx.timezone, a.definition.timeZoneSource)
+    ? unknownZoneWarning(a.ctx.timezone, a.definition)
     : zoneWarning(a.ctx.timezone, reportZone, definitionRange(a.definition) ?? a.dateRange);
   if (zone) warnings.push(zone);
   if (a.dateRange === null) warnings.push('GAM did not report the computed date range for this result.');

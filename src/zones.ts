@@ -132,8 +132,24 @@ export function reportZoneOf(definition: { timeZoneSource?: string; timeZone?: s
   }
 }
 
-// The warning for a result whose report zone this server cannot name.
-export function unknownZoneWarning(dateZone: string, source: string | undefined): string {
-  return `GAM counted this report's days in a time zone this server cannot name (time zone source ${source ?? 'not stated'}), ` +
-    `so they may not cover the same hours as dates chosen in ${dateZone} (GAM_TIMEZONE).`;
+// The warning for a result whose report zone this server cannot name. The
+// reason has to name what is actually unusable: PROVIDED is a source this
+// server understands -- it is the zone name beside it that it cannot use --
+// while any other source is one no zone follows from.
+export function unknownZoneWarning(
+  dateZone: string,
+  definition: { timeZoneSource?: string; timeZone?: string },
+): string {
+  let reason: string;
+  if (definition.timeZoneSource === 'PROVIDED') {
+    reason = definition.timeZone
+      ? `the report gives its time zone as ${JSON.stringify(definition.timeZone)}, which is not an IANA time zone name this runtime knows`
+      : 'the report says its time zone was provided but does not say which';
+  } else if (definition.timeZoneSource) {
+    reason = `no zone follows from its time zone source, ${definition.timeZoneSource}`;
+  } else {
+    reason = 'the report states no time zone source';
+  }
+  return `GAM counted this report's days in a time zone this server cannot name: ${reason}. ` +
+    `Those days may not cover the same hours as dates chosen in ${dateZone} (GAM_TIMEZONE).`;
 }
