@@ -55,10 +55,14 @@ not repeat them.
 
 ## Breaking changes release-please will miss
 
-These carry no `BREAKING CHANGE:` footer — either because the commit predates the
-footer convention taking hold, because the change is a config-time behaviour
-change rather than a code diff, or because two footers each cover only part of a
-wider change. A squash-merged changelog will not mention any of them.
+Some of these carry no `BREAKING CHANGE:` footer at all — either because the
+commit predates the footer convention taking hold, because the change is a
+config-time behaviour change rather than a code diff, or because two footers
+each cover only part of a wider change; a squash-merged changelog omits every
+one of those. The `health_check` and `compare_periods` entries below are
+different: their commits do carry a footer, and they're included here anyway
+because they're easy to miss or to conflate with the footerless changes
+around them.
 
 ### Offset-form `GAM_TIMEZONE` now refuses to start
 
