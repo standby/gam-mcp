@@ -260,6 +260,20 @@ permanently.
 A **merge commit** (not squash, not rebase) preserves every commit and its
 footers in history, and needs no special handling here.
 
-If this is squash-merged, copy every `BREAKING CHANGE:` footer listed under
-"Breaking changes release-please will show you" above, verbatim, into the PR
-body before merging.
+If this is squash-merged, the PR body must carry the full text of all 18
+footers — not only the two singled out above for their easy-to-misread
+wording. Don't retype them from memory; extract them directly from the stack:
+
+```
+git log main..HEAD --format='@@@%H%n%B' | awk '
+  /^@@@/ { sha=substr($0,4); p=0; next }
+  /^BREAKING CHANGE:/ { p=1; if (!printed[sha]) { print "--- " sha " ---"; printed[sha]=1 } }
+  p { if ($0 == "") { p=0 } else print }
+'
+```
+
+Verified against this stack: the command prints 18 `--- <sha> ---` blocks and
+18 `BREAKING CHANGE:` paragraphs, matching `git log main..HEAD --format=%B |
+grep -c '^BREAKING CHANGE:'` (also 18), with no footer truncated — including
+`fff1731`'s 12-line footer, which a naive `grep -A5` would cut short and lose
+most of. Paste the command's output into the PR body before merging.
