@@ -12,7 +12,7 @@ import {
 } from '../src/dates.js';
 
 const TZ = 'Asia/Tokyo';
-// 2026-09-17 12:00 in Hong Kong: today is the 17th, yesterday the 16th.
+// 2026-09-17 13:00 in Tokyo: today is the 17th, yesterday the 16th.
 const NOW = new Date('2026-09-17T04:00:00Z');
 
 function resolve(range: DateRangeInput, at: string | Date = NOW, rule: RangeRule = 'historical', timezone = TZ) {

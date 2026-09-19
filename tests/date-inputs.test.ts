@@ -7,7 +7,7 @@ import type { ToolDefinition } from '../src/report-tool-builder.js';
 import { makeCtx, ok } from './helpers.js';
 import { argsFor, toolWorld } from './tool-table.js';
 
-// makeCtx: Asia/Tokyo, 2026-09-17 12:00 local. Yesterday is 2026-09-16.
+// makeCtx: Asia/Tokyo, 2026-09-17 13:00 local. Yesterday is 2026-09-16.
 const TODAY = '2026-09-17';
 const FORECAST_TOOLS = new Set(['sell_through']);
 
