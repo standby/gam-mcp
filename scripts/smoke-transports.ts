@@ -205,6 +205,70 @@ async function exercise(client: Client, mode: 'stdio' | 'http'): Promise<string>
   return p.report;
 }
 
+// Pulled straight off find_unused_ad_units.ts's summary template — keep this
+// in sync with the literal text at that call site, not with a paraphrase of
+// it: "`${unused.length} of ${candidates.length} active, leaf ad units
+// flagged (${allUnits.length} listed; ${excluded} excluded as archived,
+// non-leaf, or missing a status).`". There is no structured field for these
+// two counts (the envelope only carries returned_row_count/total_row_count,
+// which is unused.length, not allUnits.length or excluded) so the summary
+// prose is the only place they exist; a change to that wording must update
+// this pattern too, which is why a non-match below is a hard failure rather
+// than a silent skip.
+const AD_UNIT_COUNTS = /\((\d+)\s+listed;\s+(\d+)\s+excluded/;
+
+// find_unused_ad_units filters ad units on AdUnit.status === 'ACTIVE' and
+// derives leaf-ness from AdUnit.parentAdUnit. Neither field name was ever
+// confirmed against the live API -- the 0.6.0 probe never fetched an ad
+// unit -- and because a missing status is treated as not-active (absence is
+// not permission), a wrong name fails totally, not partially: every unit
+// excluded, zero rows, on every call, with no error. No fixture can catch
+// this: a fixture is written by whoever wrote the code reading it. Stdio
+// only -- this is a field-name check, not a transport check.
+async function checkUnusedAdUnits(client: Client): Promise<void> {
+  const result = await withTimeout(
+    'stdio: find_unused_ad_units',
+    REPORT_MS,
+    client.callTool({ name: 'find_unused_ad_units', arguments: { max_units: 100 } }),
+  );
+  const payload = payloadOf(result);
+  if ((result as { isError?: boolean }).isError || payload.error) {
+    throw new Error(`stdio: find_unused_ad_units failed: ${JSON.stringify(payload.error ?? payload)}`);
+  }
+  if (typeof payload.summary !== 'string') {
+    throw new Error(`stdio: find_unused_ad_units returned no summary: ${JSON.stringify(payload).slice(0, 400)}`);
+  }
+  const match = AD_UNIT_COUNTS.exec(payload.summary);
+  if (!match) {
+    // A parse miss is itself the finding, not something to shrug past: it
+    // means this check can no longer see its signal (summary wording moved
+    // again, as it already has once before), so it must fail loudly rather
+    // than let the exclusion check silently pass on undefined counts.
+    throw new Error(
+      'stdio: find_unused_ad_units summary did not contain the expected "(N listed; M excluded" text -- ' +
+      `the wording moved and this check needs updating to match it: ${JSON.stringify(payload.summary)}`,
+    );
+  }
+  const adUnitsListed = Number(match[1]);
+  const adUnitsExcluded = Number(match[2]);
+  say(
+    `   stdio: find_unused_ad_units rows=${payload.returned_row_count}` +
+    ` listed=${adUnitsListed} excluded=${adUnitsExcluded}`,
+  );
+
+  // The wrong-field-name signature: every listed ad unit excluded. A
+  // genuinely empty network (adUnitsListed === 0) is a legitimate pass --
+  // absence is not permission here either, so "nothing was listed" must not
+  // be conflated with "the fields are fine".
+  if (adUnitsListed > 0 && adUnitsExcluded === adUnitsListed) {
+    throw new Error(
+      `find_unused_ad_units excluded every one of ${adUnitsListed} listed ad units. ` +
+      "That is the signature of a wrong field name: check that GAM's AdUnit resource " +
+      'really exposes `status` and `parentAdUnit` (neither was ever confirmed by probe).',
+    );
+  }
+}
+
 // Run 1. The client starts the binary itself, exactly as an MCP host does.
 async function overStdio(networkCode: string, scratch: string): Promise<Run> {
   const transport = new StdioClientTransport({
@@ -219,6 +283,7 @@ async function overStdio(networkCode: string, scratch: string): Promise<Run> {
   try {
     await withTimeout('stdio: initialize', STARTUP_MS, client.connect(transport));
     const report = await exercise(client, 'stdio');
+    await checkUnusedAdUnits(client);
     return { report, logs };
   } catch (e) {
     throw new Error(`${e instanceof Error ? e.message : String(e)}\n--- child stderr ---\n${logs.text()}`);

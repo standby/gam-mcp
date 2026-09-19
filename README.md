@@ -240,7 +240,9 @@ GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... \
   npm run smoke:transports -- --yes
                         # opt-in: drives the packaged dist/cli.js over BOTH
                         # stdio and HTTP, then repeats the run in a fresh
-                        # process to prove report reuse works across processes
+                        # process to prove report reuse works across processes;
+                        # also calls find_unused_ad_units once, over stdio, to
+                        # check its AdUnit field names against the live API
 GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... npm run verify:pack
                         # release gate: pack tarball, install in tempdir,
                         # exercise the bin as a real MCP client would
@@ -250,6 +252,15 @@ GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... npm run verify:pack
 object, which the Ad Manager API creates hidden and cannot delete**. It uses one fixed date range for every
 run so it only ever defines one such report — later runs find that report again instead of adding another.
 Override `GAM_SMOKE_DATE_START` / `GAM_SMOKE_DATE_END` if GAM has aged that window out of retention.
+
+It also exercises `find_unused_ad_units` once, on the stdio run only. That tool filters on
+`AdUnit.status === 'ACTIVE'` and derives leaf ad units from `AdUnit.parentAdUnit`, and neither field name
+was ever confirmed against the live API — no unit test can confirm a live API's field spelling, because
+every fixture is written by whoever wrote the code reading it. Because a missing `status` is treated as
+not-active, a wrong field name fails *totally*, not partially: every ad unit gets excluded and the tool
+returns zero rows on every call, silently, forever. The smoke script fails loudly on exactly that
+signature — ad units listed and every one excluded — while still passing on a network with genuinely no
+ad units.
 
 `npm publish` is gated by `prepublishOnly` which runs build + tests + verify:pack — a publish can't ship a broken artifact.
 
