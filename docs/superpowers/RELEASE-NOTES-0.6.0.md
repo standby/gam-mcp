@@ -228,10 +228,12 @@ Ranked most surprising first:
    that isn't a valid IANA zone name; a non-numeric `GAM_NETWORK_CODE`; a
    `GAM_REPORT_TIMEOUT_MS` that isn't a positive whole number; a
    `GAM_REPORT_CACHE_TTL_MS` that isn't a non-negative whole number; and a
-   `GAM_REPORT_CACHE_DIR` that can't be created. (HTTP mode adds more: a
-   non-digits `GAM_HTTP_PORT`/`GAM_PAGE_ROWS`, and a busy port now fails
-   cleanly instead of crashing.) All verified in `src/startup.ts` and
-   `src/cli.ts`'s `main()`.
+   `GAM_REPORT_CACHE_DIR` that can't be created. (HTTP mode adds one more: a
+   non-digits `GAM_HTTP_PORT`, and a busy port now fails cleanly instead of
+   crashing. `GAM_PAGE_ROWS` is checked unconditionally, before the stdio/HTTP
+   branch in `src/cli.ts`, so a bad value stops startup in stdio mode too —
+   it is not HTTP-only.) All verified in `src/startup.ts` and `src/cli.ts`'s
+   `main()`.
 3. **Unset `GAM_TIMEZONE` now means the network's zone, not UTC** — spec §6 item
    8. A caller that never set `GAM_TIMEZONE` and relied on "yesterday" meaning
    UTC-yesterday will see that date move if the network's zone differs from UTC.
