@@ -1,6 +1,6 @@
 # gam-mcp
 
-Read-only MCP server for **Google Ad Manager** analytics. Lets an LLM (Claude Desktop, Claude Code, any MCP client) answer real publisher questions — *what's revenue WoW, which line items are under-pacing, what's our fill rate by buyer network, where did sports ads land yesterday* — without writing report builders by hand.
+Read-only MCP server for **Google Ad Manager** analytics. Lets an LLM (Claude Desktop, Claude Code, any MCP client) answer real publisher questions — *what's revenue WoW, which line items are under-pacing, what's our fill rate by buyer network, which ad units drove yesterday's revenue* — without writing report builders by hand.
 
 29 tools over HTTP, 33 over stdio (stdio adds 4 saved-query tools that HTTP does not register) — descriptive ("what is happening"), comparative ("compared to what"), and diagnostic ("what's at risk") analytics. Generic across publishers — no per-network assumptions baked in.
 
@@ -25,9 +25,9 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
          "command": "npx",
          "args": ["-y", "gam-mcp"],
          "env": {
-           "GAM_NETWORK_CODE": "123456789",
+           "GAM_NETWORK_CODE": "1234",
            "GAM_SERVICE_ACCOUNT_KEY_FILE": "/Users/me/secrets/gam-sa.json",
-           "GAM_TIMEZONE": "America/Los_Angeles"
+           "GAM_TIMEZONE": "Asia/Tokyo"
          }
        }
      }
@@ -39,13 +39,13 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
    **Alternative credential sources** — if mounting a key file isn't convenient (containers, hosted MCP), use one of:
    ```jsonc
    // inline JSON (raw or base64-encoded)
-   "env": { "GAM_NETWORK_CODE": "123456789",
+   "env": { "GAM_NETWORK_CODE": "1234",
             "GAM_SERVICE_ACCOUNT_KEY_JSON": "eyJ0eXBlIjoic2VydmljZV9hY2NvdW50Ii4uLn0=" }
    ```
    ```jsonc
    // Application Default Credentials — no key vars needed
    // (works on GCE/Cloud Run, or locally after `gcloud auth application-default login`)
-   "env": { "GAM_NETWORK_CODE": "123456789" }
+   "env": { "GAM_NETWORK_CODE": "1234" }
    ```
 
 3. Restart your MCP client.
@@ -173,11 +173,11 @@ Things an LLM with this MCP attached can answer directly. (No prompts engineerin
 5k. **Can we take the booking?** *"An advertiser wants 5M impressions next month — do we have it?"* → `sell_through({date_range:{start:"2026-06-01", end:"2026-06-30"}, by:"ad_unit"})` and read `available impressions`.
 5l. **Cost of consent.** *"What share of EU users consent, and how does that vary by country?"* → `consent_messaging({date_range:{start:"2026-05-01", end:"2026-05-31"}, focus:"eu_consent", group_by:"country"})`.
 5h. **Floors set too high.** *"Where are my AdX floors costing me fills?"* → `diagnose_floor_pricing({lookback_days:7})` — surfaces `floor_likely_high` ad units ranked by recoverable revenue.
-6. **Specific ad units.** *"Revenue and impressions for our sports placements last week."* → `run_report` with `filters:[{field:"AD_UNIT_NAME", op:"CONTAINS", value:"sports"}]`.
+6. **Specific ad units.** *"Revenue and impressions for our Nimbus placements last week."* → `run_report` with `filters:[{field:"AD_UNIT_NAME", op:"CONTAINS", value:"Nimbus"}]`.
 7. **AdX yield diagnosis.** *"AdX match rate and average eCPM per ad unit yesterday."* → `run_report({dimensions:["AD_UNIT_NAME"], metrics:["AD_EXCHANGE_TOTAL_REQUESTS","AD_EXCHANGE_MATCH_RATE","AD_EXCHANGE_AVERAGE_ECPM"], date_range:{relative:"yesterday"}})`.
 8. **Custom dimension breakdown.** *"Revenue by section."* → first `lookup({entity_type:"custom_targeting_key", query:"section"})` to find the key ID, then `run_report({dimensions:["CUSTOM_DIMENSION_0_VALUE"], metrics:["IMPRESSIONS","REVENUE"], date_range:{relative:"last_7_days"}, custom_dimension_key_ids:[<that_id>]})`.
 9. **YoY comparison.** *"How does last month's revenue compare to the same month last year?"* → `compare_periods({base_range:{relative:"last_full_month"}, comparison:"previous_year", dimensions:["DATE"], metrics:["REVENUE"]})`. (`month_to_date` works too, except on the first day of a month, when there's no complete day yet to report — it returns `INVALID_DATE_RANGE`; `last_full_month` avoids that edge case entirely.)
-10. **Top advertisers in a country.** *"Top advertisers in Hong Kong this month."* → `top_advertisers` with a `COUNTRY_NAME` filter.
+10. **Top advertisers in a country.** *"Top advertisers in Germany this month."* → `top_advertisers` with a `COUNTRY_NAME` filter.
 
 ## Schema notes
 
