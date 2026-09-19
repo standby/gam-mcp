@@ -2,7 +2,7 @@
 
 Read-only MCP server for **Google Ad Manager** analytics. Lets an LLM (Claude Desktop, Claude Code, any MCP client) answer real publisher questions — *what's revenue WoW, which line items are under-pacing, what's our fill rate by buyer network, where did sports ads land yesterday* — without writing report builders by hand.
 
-12 tools cover descriptive ("what is happening"), comparative ("compared to what"), and diagnostic ("what's at risk") analytics. Generic across publishers — no per-network assumptions baked in.
+29 tools over HTTP, 33 over stdio (stdio adds 4 saved-query tools that HTTP does not register) — descriptive ("what is happening"), comparative ("compared to what"), and diagnostic ("what's at risk") analytics. Generic across publishers — no per-network assumptions baked in.
 
 ## Install
 
@@ -58,14 +58,16 @@ You don't. Add it to your MCP client config and let `npx` fetch it on first use.
 | `GAM_SERVICE_ACCOUNT_KEY_FILE` | one-of | — | Absolute path to service-account JSON. Wins over `GAM_SERVICE_ACCOUNT_KEY_JSON` if both are set. |
 | `GAM_SERVICE_ACCOUNT_KEY_JSON` | one-of | — | Service-account JSON inline, either as raw text or base64-encoded. Useful in hosted environments (Cloud Run, Fly, Render) where mounting a key file is awkward. Eagerly parsed at startup — a malformed value fails fast. |
 | _(none of the above)_ | one-of | — | Falls back to **Application Default Credentials**. Picks up `GOOGLE_APPLICATION_CREDENTIALS`, `gcloud auth application-default login` tokens, or the GCE/Cloud Run metadata server. |
-| `GAM_TIMEZONE` | no | UTC | IANA timezone for relative-date resolution |
-| `GAM_INLINE_ROW_THRESHOLD` | no | 200 | Rows ≤ this returned inline; above, spooled to a file (path returned in envelope) |
-| `GAM_REPORT_TIMEOUT_MS` | no | 300000 | Max polling time per report job |
+| `GAM_TIMEZONE` | no | the network's own time zone | IANA name choosing which calendar dates are requested. It does **not** change the zone GAM counts days in — every report is sent with `timeZoneSource: PUBLISHER`, so GAM always counts days in the network's zone. Both zones appear separately in every result's `provenance` and on `gam://network`. An unrecognized IANA name, or a raw UTC offset (e.g. `+08:00`), stops startup with exit code 2. |
+| `GAM_PAGE_ROWS` | no | 5000 | Rows returned per page of report results, clamped to 10000 (values above the cap are silently used as 10000 and logged once as `config.page_rows_clamped`). A value that isn't a positive integer stops startup. Replaces `GAM_INLINE_ROW_THRESHOLD`, which is no longer read — if set, startup logs `config.ignored` once (`reason: "results are paged; set GAM_PAGE_ROWS instead"`) and continues. |
+| `GAM_REPORT_TIMEOUT_MS` | no | 300000 | Max time to poll one report job, in milliseconds — digits only (`3e5`, `5.0`, `-1`, `" 5"` all stop startup). Set it below your MCP client's call timeout. On timeout the GAM job is **not** abandoned: the next identical call resumes the same operation instead of starting a new one. |
 | `GAM_LOG_LEVEL` | no | `info` | One of `error`, `warn`, `info`, `debug`. Logs are JSON-lines on stderr — tool calls, GAM retries, report-job lifecycle, cache hits. Credentials are never logged. |
-| `GAM_SAVED_QUERIES_FILE` | no | `${XDG_CONFIG_HOME:-$HOME/.config}/gam-mcp/saved-queries.json` | Path to the saved-query JSON store used by `save_query` / `run_saved_query`. Override when running multiple instances per machine or for testing. |
-| `GAM_REPORT_CACHE_DIR` | no | _(off — in-memory only)_ | When set, report results (parsed rows) persist as gzipped JSON in this directory. Survives MCP restarts. No size cap — clear the directory manually if it grows large. |
-| `GAM_REPORT_CACHE_TTL_MS` | no | 3600000 (1h) | Disk-cache TTL. Past TTL, entries are treated as misses and opportunistically deleted. Only meaningful when `GAM_REPORT_CACHE_DIR` is set. |
-| `GAM_HTTP_PORT` | no | _(off — stdio mode)_ | When set, the MCP listens for Streamable-HTTP requests on this port at `POST /mcp` (with `GET /healthz` for probes), instead of stdio. Use for hosted/team deployments. |
+| `GAM_SAVED_QUERIES_FILE` | no | `${XDG_CONFIG_HOME:-$HOME/.config}/gam-mcp/saved-queries.json` | Path to the saved-query JSON store used by `save_query` / `run_saved_query`. **stdio mode only** — HTTP mode does not register the saved-query tools. Override when running multiple instances per machine or for testing. |
+| `GAM_REPORT_CACHE_DIR` | no | _(off — in-memory only)_ | When set, stores a **reference to each report result** — report name, result name, row count, run time, never rows — as one JSON file per entry, at `<dir>/<network code>/<64-character hex definition hash>.json`, in a directory created with mode `0o700`. Survives MCP restarts. |
+| `GAM_REPORT_CACHE_TTL_MS` | no | 3600000 (1h) | How long a cached result reference is reused, in milliseconds — applies to **both** the in-memory and disk tiers. `0` disables result reuse entirely. |
+| `GAM_HTTP_PORT` | no | _(off — stdio mode)_ | When set, the MCP listens for Streamable-HTTP requests on this port at `POST /mcp` (with `GET /healthz` for probes), instead of stdio. Digits only, 1–65535. Use for hosted/team deployments. |
+| `GAM_HTTP_BEARER_TOKEN` | no | _(off)_ | HTTP mode only — see the HTTP transport notes below. |
+| `GAM_HTTP_ALLOWED_HOSTS` | no | _(off — no Host check)_ | HTTP mode only — see the HTTP transport notes below. |
 
 ## Tools
 
