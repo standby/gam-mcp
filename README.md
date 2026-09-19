@@ -240,9 +240,15 @@ GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... \
   npm run smoke:transports -- --yes
                         # opt-in: drives the packaged dist/cli.js over BOTH
                         # stdio and HTTP, then repeats the run in a fresh
-                        # process to prove report reuse works across processes;
-                        # also calls find_unused_ad_units once, over stdio, to
-                        # check its AdUnit field names against the live API
+                        # process to prove report reuse works across processes
+GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... \
+  npm run smoke:transports -- --yes --define-ad-unit-report
+                        # opt-in (separately from --yes): also calls
+                        # find_unused_ad_units once, over stdio, to check its
+                        # AdUnit field names against the live API. This
+                        # DEFINES A NEW HIDDEN, UNDELETABLE REPORT every
+                        # distinct calendar day it runs (see below), so it is
+                        # not part of a routine smoke run
 GAM_NETWORK_CODE=... GAM_SERVICE_ACCOUNT_KEY_FILE=... npm run verify:pack
                         # release gate: pack tarball, install in tempdir,
                         # exercise the bin as a real MCP client would
@@ -253,14 +259,21 @@ object, which the Ad Manager API creates hidden and cannot delete**. It uses one
 run so it only ever defines one such report — later runs find that report again instead of adding another.
 Override `GAM_SMOKE_DATE_START` / `GAM_SMOKE_DATE_END` if GAM has aged that window out of retention.
 
-It also exercises `find_unused_ad_units` once, on the stdio run only. That tool filters on
-`AdUnit.status === 'ACTIVE'` and derives leaf ad units from `AdUnit.parentAdUnit`, and neither field name
-was ever confirmed against the live API — no unit test can confirm a live API's field spelling, because
-every fixture is written by whoever wrote the code reading it. Because a missing `status` is treated as
-not-active, a wrong field name fails *totally*, not partially: every ad unit gets excluded and the tool
-returns zero rows on every call, silently, forever. The smoke script fails loudly on exactly that
-signature — ad units listed and every one excluded — while still passing on a network with genuinely no
-ad units.
+With `--define-ad-unit-report` (or `GAM_SMOKE_DEFINE_AD_UNIT_REPORT=yes`), it also exercises
+`find_unused_ad_units` once, on the stdio run only. That tool filters on `AdUnit.status === 'ACTIVE'` and
+derives leaf ad units from `AdUnit.parentAdUnit`, and neither field name was ever confirmed against the
+live API — no unit test can confirm a live API's field spelling, because every fixture is written by
+whoever wrote the code reading it. Because a missing `status` is treated as not-active, a wrong field name
+fails *totally*, not partially: every ad unit gets excluded and the tool returns zero rows on every call,
+silently, forever. The smoke script fails loudly on exactly that signature — ad units listed and every one
+excluded — while still passing on a network with genuinely no ad units.
+
+This check is a **separate opt-in from `--yes`**, not part of a routine smoke run, because it is
+unavoidably expensive: `find_unused_ad_units` has no `date_range` input, only `lookback_days`, which
+resolves against today's date, so unlike `run_report`'s fixed window, its report definition changes every
+calendar day — **every day this flag is used defines another new hidden, undeletable report** in the
+network. Without the flag, the script prints one line on stderr saying the check was skipped and how to
+run it, rather than skipping it silently.
 
 `npm publish` is gated by `prepublishOnly` which runs build + tests + verify:pack — a publish can't ship a broken artifact.
 

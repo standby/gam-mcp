@@ -30,10 +30,18 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(ROOT, 'dist', 'cli.js');
 
-// One definition for every run and both transports, so the whole smoke ever
-// defines ONE report in the network. A range that moved with the clock would
-// leave a new undeletable report behind every day. Override both if GAM has
-// aged this window out of its retention window.
+// One definition for every run and both transports, so the run_report
+// exercise below ever defines ONE report in the network. A range that moved
+// with the clock would leave a new undeletable report behind every day.
+// Override both if GAM has aged this window out of its retention window.
+//
+// This invariant covers run_report only. The opt-in find_unused_ad_units
+// check (--define-ad-unit-report, see checkUnusedAdUnits below) cannot be
+// pinned the same way: that tool takes lookback_days, not date_range, and
+// resolves it against today's wall-clock date, so its report definition's
+// hash changes every calendar day and a fresh, undeletable report gets
+// defined each time the flag is used on a new day. There is no fixed range
+// to reuse here the way DATE_START/DATE_END let run_report reuse one.
 const DATE_START = process.env.GAM_SMOKE_DATE_START ?? '2026-09-01';
 const DATE_END = process.env.GAM_SMOKE_DATE_END ?? '2026-09-07';
 const QUERY = {
@@ -224,7 +232,10 @@ const AD_UNIT_COUNTS = /\((\d+)\s+listed;\s+(\d+)\s+excluded/;
 // not permission), a wrong name fails totally, not partially: every unit
 // excluded, zero rows, on every call, with no error. No fixture can catch
 // this: a fixture is written by whoever wrote the code reading it. Stdio
-// only -- this is a field-name check, not a transport check.
+// only -- this is a field-name check, not a transport check. Called only
+// when --define-ad-unit-report (or GAM_SMOKE_DEFINE_AD_UNIT_REPORT=yes) is
+// set -- see main()'s gate for why this one call is opt-in when everything
+// else here is not.
 async function checkUnusedAdUnits(client: Client): Promise<void> {
   const result = await withTimeout(
     'stdio: find_unused_ad_units',
@@ -270,7 +281,7 @@ async function checkUnusedAdUnits(client: Client): Promise<void> {
 }
 
 // Run 1. The client starts the binary itself, exactly as an MCP host does.
-async function overStdio(networkCode: string, scratch: string): Promise<Run> {
+async function overStdio(networkCode: string, scratch: string, defineAdUnitReport: boolean): Promise<Run> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [CLI],
@@ -283,7 +294,7 @@ async function overStdio(networkCode: string, scratch: string): Promise<Run> {
   try {
     await withTimeout('stdio: initialize', STARTUP_MS, client.connect(transport));
     const report = await exercise(client, 'stdio');
-    await checkUnusedAdUnits(client);
+    if (defineAdUnitReport) await checkUnusedAdUnits(client);
     return { report, logs };
   } catch (e) {
     throw new Error(`${e instanceof Error ? e.message : String(e)}\n--- child stderr ---\n${logs.text()}`);
@@ -385,10 +396,34 @@ async function main(): Promise<void> {
     );
   }
 
+  // A second, separate opt-in for the find_unused_ad_units check: unlike
+  // run_report's fixed DATE_START/DATE_END, that tool has no date_range
+  // input, so its report window resolves against today's date and every
+  // distinct calendar day this runs defines a brand-new hidden, undeletable
+  // report (see the header comment above). --yes alone must not pay that
+  // cost automatically, and a silent skip would let the check rot unnoticed
+  // -- so this is announced either way, before anything is spawned.
+  const defineAdUnitReport =
+    process.env.GAM_SMOKE_DEFINE_AD_UNIT_REPORT === 'yes' || process.argv.includes('--define-ad-unit-report');
+  if (defineAdUnitReport) {
+    say(
+      '   ad-units: --define-ad-unit-report set. find_unused_ad_units has no date_range input, so this ' +
+      `WILL define one new hidden, undeletable report in network ${networkCode} — a cost that cannot be ` +
+      "avoided because the tool's lookback_days window resolves against today's date, not a fixed range.",
+    );
+  } else {
+    say(
+      '   ad-units: skipping the find_unused_ad_units field-name check (AdUnit.status / AdUnit.parentAdUnit ' +
+      'were never confirmed against the live API). Re-run with --define-ad-unit-report (or ' +
+      'GAM_SMOKE_DEFINE_AD_UNIT_REPORT=yes) to run it — doing so defines a new permanent, hidden report in ' +
+      'the network on every distinct calendar day it runs.',
+    );
+  }
+
   const scratch = mkdtempSync(join(tmpdir(), 'gam-smoke-transports-'));
   try {
     say(`1. stdio: starting ${CLI} as a child process...`);
-    const stdio = await overStdio(networkCode, scratch);
+    const stdio = await overStdio(networkCode, scratch, defineAdUnitReport);
 
     say('2. http: a fresh process, GAM_HTTP_PORT set, same query...');
     const http = await overHttp(networkCode, scratch);
