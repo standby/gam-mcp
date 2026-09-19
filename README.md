@@ -128,7 +128,7 @@ Setting `GAM_HTTP_PORT` switches the server from stdio to Streamable HTTP: reque
 | `run_saved_query` | Replay a saved template against a fresh `date_range`. Equivalent to `run_report` with the saved fields merged in. |
 | `delete_saved_query` | Delete a saved template by name. |
 | **Operations** | Diagnose the MCP itself |
-| `health_check` | End-to-end probe — verifies auth + network + permissions by listing one company. Reports pass/fail with attributed cause (auth / permission / network / quota / wrong-network). Use after setup or when the LLM hits mysterious errors. |
+| `health_check` | End-to-end probe — verifies auth + network + permissions by listing one company. On failure, returns `isError: true` naming the failing check and an attributed cause (auth / permission / network / quota / wrong-network) — 0.5.2 returned a successful envelope with `status: "failed"` instead. Use after setup or when the LLM hits mysterious errors. |
 | `usage_stats` | Session-to-date counters: GAM API calls by type, report-job count, cumulative report latency, cache hits/misses with hit-rate. Lets the LLM self-pace and the analyst spot redundant work. |
 
 ## Resources
