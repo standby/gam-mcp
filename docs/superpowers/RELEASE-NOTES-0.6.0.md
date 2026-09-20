@@ -12,7 +12,8 @@ poll → page → decode), the report result cache, and the tool-input contract 
 rewritten in this release, and most of the fixes below are fixes to that new code
 — not defects any published version had.
 
-Counted directly: of the 43 `fix:` commits in `main..HEAD`, **32 repair code
+Counted directly: of the 43 `fix:` commits this release's branches contributed,
+**32 repair code
 introduced earlier in this same unreleased stack** (identified by checking, for
 each `fix:` commit, whether the file it touches did not exist on `main` at all, or
 — where the file did pre-exist — whether the specific function/feature it patches
@@ -33,6 +34,12 @@ published defect and breaking compatibility with callers who depended on the old
 the tool's default), so the generated changelog will show roughly `fix` (43) +
 `feat` (27) + `refactor` (5) ≈ **75 entries** — long, and about three-quarters
 of the `fix:` entries are this release fixing itself.
+
+The generated changelog says **44** fixes, not 43. The extra one is `8eb94f2`
+(`fix: build a new MCP server and transport per HTTP request`), which landed on
+`main` as PR #6 *before* this release's work began. `release-please` counts from
+the `v0.5.2` tag; the 43/32/11 figures above count only what this release's own
+branches contributed. Both numbers are right for the range they measure.
 
 ## Breaking changes release-please will show you
 

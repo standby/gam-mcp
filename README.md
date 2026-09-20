@@ -4,6 +4,38 @@ Read-only MCP server for **Google Ad Manager** analytics. Lets an LLM (Claude De
 
 29 tools over HTTP, 33 over stdio (stdio adds 4 saved-query tools that HTTP does not register) — descriptive ("what is happening"), comparative ("compared to what"), and diagnostic ("what's at risk") analytics. Generic across publishers — no per-network assumptions baked in.
 
+## What's new in 0.6.0
+
+A correctness release for the analytics tools. The shared report path, the result cache and the
+tool-input contract were rewritten.
+
+- **Reports are reused, not redefined.** A report is named after the hash of its definition, so an
+  identical query reuses the one already in the network instead of defining another. Results are
+  cached in memory, and optionally on disk so reuse survives a restart.
+- **Large results are paged, not buffered.** `fetch_report_page` walks a result with a cursor;
+  every page carries the same provenance.
+- **Every result explains itself.** A `provenance` block names the report and result, the run time,
+  the resolved date range, the network's reporting time zone *and* the zone dates were chosen in,
+  the currency, and whether the cache was hit.
+- **Computed numbers are labelled as computed.** Anything the server derives rather than reads from
+  GAM sits under a `derived` object carrying its `method`, `inputs`, and whether a heuristic was
+  used — so a caller can tell a measurement from an estimate.
+- **Unknown tool arguments are refused by name.** A typo or a stale field returns `INVALID_INPUT`
+  naming the key instead of being silently dropped.
+- **Ranked tools really rank.** `top_n` sorts by the metric in the summary and caps the rows.
+- **Entity rows carry IDs beside names,** so two entities sharing a display name no longer merge
+  into one row.
+- **Bad configuration fails at startup, not on the first query** — the credential and network code
+  are checked before any tool is served, and a `GAM_TIMEZONE` that isn't a real IANA zone is
+  refused rather than silently misinterpreted.
+- **Ambiguity is an error.** A name matching more than one entity returns `AMBIGUOUS_NAME` with the
+  candidates, instead of silently picking the first.
+- **An optional HTTP transport** with a Host allowlist, optional bearer token, and a request body
+  limit.
+
+0.6.0 contains breaking changes — see the [CHANGELOG](CHANGELOG.md) for the full list, and the
+upgrade notes in **Configuration** and **Troubleshooting** below.
+
 ## Install
 
 You don't. Add it to your MCP client config and let `npx` fetch it on first use.
