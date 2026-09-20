@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // GAM's PRIVACY_AND_MESSAGING report carries several unrelated message
@@ -78,12 +79,7 @@ const RATE_WARNING =
   'at the level you want a single rate for.';
 
 const inputSchema = z.object({
-  date_range: z
-    .object({
-      start: z.string().describe('Inclusive start date, YYYY-MM-DD.'),
-      end: z.string().describe('Inclusive end date, YYYY-MM-DD.'),
-    })
-    .describe('Absolute date range to report over.'),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   focus: z
     .enum(FOCUS_KEYS)
     .describe(
@@ -110,7 +106,7 @@ const inputSchema = z.object({
       "splits by operating system group; 'app' splits by mobile app. These are the report " +
       "type's own compatible dimensions — inventory/order/line-item dimensions are not available here.",
     ),
-});
+}).strict();
 
 export const consentMessagingTool = buildReportTool({
   name: 'consent_messaging',
@@ -133,9 +129,9 @@ export const consentMessagingTool = buildReportTool({
       report_type: 'PRIVACY_AND_MESSAGING',
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` by ${input.group_by}`;
-    return `User messaging (${input.focus})${slice}, ${input.date_range.start}..${input.date_range.end}`;
+    return `User messaging (${input.focus})${slice}, ${range.start}..${range.end}`;
   },
   warnings: () => [MESSAGING_NOT_CONFIGURED_WARNING, RATE_WARNING],
 });

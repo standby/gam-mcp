@@ -1,144 +1,288 @@
-import type { ReportQuery, DateRange } from './gam-client.js';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { DateSpan } from './envelope.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { gzipSync, gunzipSync } from 'node:zlib';
+import { Lru } from './lru.js';
 
-export type CachedRows = Record<string, string>[];
+// Which GAM result answers a definition — never the rows (spec §2.5).
+export type DoneEntry = {
+  kind: 'done';
+  report: string;
+  result: string;
+  run_time: string | null;
+  date_range: DateSpan | null;
+  total_row_count: number | null;
+  stored_at: string;
+};
+
+// A run that outlived its caller's timeout. The next identical call waits for
+// this operation instead of starting another (spec §2.6).
+export type PendingEntry = {
+  kind: 'pending';
+  report: string;
+  operation: string;
+  started_at: string;
+};
+
+export type CacheEntry = DoneEntry | PendingEntry;
+
+// A result, the operation that produces it, or both, as far as they are known.
+export type ResultRef = { result?: string; operation?: string };
+
+// Whether an entry is about this result: a done entry that holds it, or a
+// pending entry for the operation that produces it.
+export function names(entry: CacheEntry, ref: ResultRef): boolean {
+  return entry.kind === 'done' ? entry.result === ref.result : entry.operation === ref.operation;
+}
 
 export type ReportCache = {
-  get(query: ReportQuery, dateRange: DateRange): CachedRows | undefined;
-  set(query: ReportQuery, dateRange: DateRange, rows: CachedRows): void;
+  // The live entry for a key (a definition hash). A done entry counts as a
+  // hit; no entry, or a pending one, counts as a miss.
+  get(key: string): CacheEntry | undefined;
+  putDone(key: string, entry: Omit<DoneEntry, 'kind' | 'stored_at'>): void;
+  // A run GAM has accepted; started_at defaults to now. Returns the start
+  // time recorded, or undefined if the entry was refused.
+  putPending(key: string, entry: { report: string; operation: string; started_at?: string }): string | undefined;
+  // Records a run that is still going only while the key has no live entry:
+  // it may have been dropped from memory while the run was polled, and an
+  // entry another call has written since (a result, or another run) wins.
+  restorePending(key: string, entry: { report: string; operation: string; started_at?: string }): void;
+  // Removes the entry for a key. With `only`, removes it only while it still
+  // names that result or operation, so an entry another call has since
+  // replaced survives.
+  delete(key: string, only?: ResultRef): void;
   size(): number;
-  // Session-scoped hit/miss counters. Useful for the usage_stats tool;
-  // not used internally for any decision.
+  // Session hit and miss counts, for usage_stats.
   stats(): { hits: number; misses: number };
 };
 
-// In-process Map keyed by canonicalized query+date_range. Lifetime is the
-// MCP server process — perfect for stdio sessions where the LLM iterates
-// on adjacent questions and revisits the same time slice multiple times.
-// No TTL (queries reflect a closed past period; results don't change), no
-// LRU eviction (sessions are short-lived).
-export function createReportCache(
-  opts: { logger?: Logger; diskDir?: string; ttlMs?: number } = {},
-): ReportCache {
-  const store = new Map<string, CachedRows>();
-  const logger = opts.logger ?? noopLogger();
-  const ttlMs = opts.ttlMs ?? 60 * 60 * 1000; // 1 hour default
-  const diskDir = opts.diskDir;
-  if (diskDir && !existsSync(diskDir)) {
-    mkdirSync(diskDir, { recursive: true });
+export const CACHE_MAX_ENTRIES = 1000;
+export const PENDING_TTL_MS = 3_600_000;
+const DEFAULT_TTL_MS = 3_600_000;
+
+function isSpan(v: unknown): v is DateSpan {
+  return typeof v === 'object' && v !== null
+    && typeof (v as DateSpan).start === 'string' && typeof (v as DateSpan).end === 'string';
+}
+
+// Keys are definition hashes (definitionHash) and become file names, so any
+// other key is a programming error.
+const KEY = /^[0-9a-f]{64}$/;
+
+function checkKey(key: string): void {
+  if (!KEY.test(key)) throw new Error('report cache keys are definition hashes: 64 lower-case hex characters');
+}
+
+// An entry read from disk, or undefined if the file holds anything else.
+function parseEntry(v: unknown): CacheEntry | undefined {
+  if (typeof v !== 'object' || v === null) return undefined;
+  const e = v as Record<string, unknown>;
+  if (e.kind === 'pending'
+    && typeof e.report === 'string' && typeof e.operation === 'string' && typeof e.started_at === 'string') {
+    return { kind: 'pending', report: e.report as string, operation: e.operation as string, started_at: e.started_at as string };
   }
+  if (e.kind === 'done'
+    && typeof e.report === 'string' && typeof e.result === 'string' && typeof e.stored_at === 'string'
+    && (e.run_time === null || typeof e.run_time === 'string')
+    && (e.date_range === null || isSpan(e.date_range))
+    && (e.total_row_count === null || (Number.isSafeInteger(e.total_row_count) && (e.total_row_count as number) >= 0))) {
+    return {
+      kind: 'done',
+      report: e.report as string,
+      result: e.result as string,
+      run_time: e.run_time as string | null,
+      date_range: e.date_range === null ? null : { start: (e.date_range as DateSpan).start, end: (e.date_range as DateSpan).end },
+      total_row_count: e.total_row_count as number | null,
+      stored_at: e.stored_at as string,
+    };
+  }
+  return undefined;
+}
+
+export function createReportCache(opts: {
+  // GAM_NETWORK_CODE: every report, result and operation an entry names is this network's.
+  networkCode: string;
+  // GAM_REPORT_CACHE_TTL_MS: how long a done entry is used; 0 keeps none.
+  ttlMs?: number;
+  // GAM_REPORT_CACHE_DIR, already specific to one network (cacheDirFor).
+  diskDir?: string;
+  // How many entries memory holds; CACHE_MAX_ENTRIES unless a test says otherwise.
+  maxEntries?: number;
+  logger?: Logger;
+  now?: () => number;
+}): ReportCache {
+  if (!/^\d+$/.test(opts.networkCode)) throw new Error('the report cache needs a numeric network code');
+  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const now = opts.now ?? Date.now;
+  const logger = opts.logger ?? noopLogger();
+  const dir = opts.diskDir;
+  const memory = new Lru<string, CacheEntry>(opts.maxEntries ?? CACHE_MAX_ENTRIES);
+  if (dir) mkdirSync(dir, { recursive: true, mode: 0o700 });
   let hits = 0;
   let misses = 0;
-  return {
-    get(query, dateRange) {
-      const key = keyFor(query, dateRange);
-      const mem = store.get(key);
-      if (mem) {
-        hits += 1;
-        logger.debug('cache.hit', { key_hash: shortHash(key), tier: 'memory' });
-        return mem;
-      }
-      if (diskDir) {
-        const disk = readFromDisk(diskDir, key, ttlMs, logger);
-        if (disk) {
-          // Warm the memory tier so subsequent lookups in this session skip
-          // the fs+gunzip+parse cost. Disk hits count as cache hits.
-          store.set(key, disk);
-          hits += 1;
-          logger.debug('cache.hit', { key_hash: shortHash(key), tier: 'disk' });
-          return disk;
-        }
-      }
-      misses += 1;
-      logger.debug('cache.miss', { key_hash: shortHash(key) });
-      return undefined;
-    },
-    set(query, dateRange, rows) {
-      const key = keyFor(query, dateRange);
-      store.set(key, rows);
-      if (diskDir) {
-        try {
-          writeToDisk(diskDir, key, rows);
-        } catch (e) {
-          // Disk persistence is best-effort. A full disk or permission error
-          // should never crash the tool — the in-memory tier still serves.
-          logger.warn('cache.disk_write_failed', { key_hash: shortHash(key), message: e instanceof Error ? e.message : String(e) });
-        }
-      }
-    },
-    size() { return store.size; },
-    stats() { return { hits, misses }; },
+
+  const network = `networks/${opts.networkCode}`;
+  const REPORT = new RegExp(`^${network}/reports/\\d+$`);
+  const RESULT = new RegExp(`^${network}/reports/\\d+/results/\\d+$`);
+  const OPERATION = new RegExp(`^${network}/operations/reports/runs/\\d+$`);
+
+  const short = (key: string) => key.slice(0, 16);
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  // A time this cache could have written: a real instant, not in the future.
+  const past = (t: string): boolean => {
+    const ms = Date.parse(t);
+    return Number.isFinite(ms) && ms <= now();
   };
-}
+  // Whether an entry names only this network's report, a result of that
+  // report and this network's operation, each matched in full (a prefix check
+  // would let an encoded ".." reach another network), with times this cache
+  // could have written.
+  const valid = (e: CacheEntry): boolean =>
+    REPORT.test(e.report) && (e.kind === 'done'
+      ? RESULT.test(e.result) && e.result.startsWith(`${e.report}/results/`) && past(e.stored_at)
+      : OPERATION.test(e.operation) && past(e.started_at));
+  // An unreadable timestamp is not live.
+  const live = (e: CacheEntry): boolean =>
+    e.kind === 'done'
+      ? now() - Date.parse(e.stored_at) < ttlMs
+      : now() - Date.parse(e.started_at) < PENDING_TTL_MS;
 
-function diskPath(dir: string, key: string): string {
-  // Filename = sha256 of the canonical key, in a flat dir. Avoids deep
-  // nesting and any platform path-length surprises with long key strings.
-  return join(dir, `${createHash('sha256').update(key).digest('hex')}.json.gz`);
-}
-
-function readFromDisk(
-  dir: string,
-  key: string,
-  ttlMs: number,
-  logger: Logger,
-): CachedRows | undefined {
-  const path = diskPath(dir, key);
-  if (!existsSync(path)) return undefined;
-  try {
-    const ageMs = Date.now() - statSync(path).mtimeMs;
-    if (ageMs > ttlMs) {
-      // Opportunistic cleanup of stale entries.
-      try { unlinkSync(path); } catch { /* ignore */ }
+  function readDisk(key: string): CacheEntry | undefined {
+    if (!dir) return undefined;
+    let text: string;
+    try {
+      text = readFileSync(join(dir, `${key}.json`), 'utf8');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn('cache.disk_read_failed', { key: short(key), message: message(e) });
+      }
       return undefined;
     }
-    const buf = readFileSync(path);
-    const json = gunzipSync(buf).toString('utf8');
-    return JSON.parse(json) as CachedRows;
-  } catch (e) {
-    logger.warn('cache.disk_read_failed', { message: e instanceof Error ? e.message : String(e) });
+    let entry: CacheEntry | undefined;
+    try {
+      entry = parseEntry(JSON.parse(text));
+    } catch {
+      entry = undefined;
+    }
+    if (entry && valid(entry)) return entry;
+    logger.warn('cache.disk_entry_invalid', { key: short(key) });
     return undefined;
   }
-}
 
-function writeToDisk(dir: string, key: string, rows: CachedRows): void {
-  const path = diskPath(dir, key);
-  const buf = gzipSync(Buffer.from(JSON.stringify(rows)));
-  // No atomic rename here — single-process MCP server, the race window for
-  // duplicate writes is microscopic and a half-written file is detected
-  // by JSON.parse failing at read time (logged + treated as miss).
-  writeFileSync(path, buf);
-}
+  // Written under a new temporary name and renamed, so a reader never sees
+  // half a file. The temporary file is removed if the write or the rename fails.
+  function writeDisk(key: string, entry: CacheEntry): void {
+    if (!dir) return;
+    const path = join(dir, `${key}.json`);
+    const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    let written = false;
+    try {
+      writeFileSync(tmp, JSON.stringify(entry), { flag: 'wx' });
+      written = true;
+      renameSync(tmp, path);
+    } catch (e) {
+      // `wx` refuses a file that already exists, and that file is not this write's.
+      if (written || (e as NodeJS.ErrnoException).code !== 'EEXIST') {
+        try {
+          rmSync(tmp, { force: true });
+        } catch {
+          // Nothing more can be done; the failure is logged below.
+        }
+      }
+      logger.warn('cache.disk_write_failed', { key: short(key), message: message(e) });
+    }
+  }
 
-function shortHash(s: string): string {
-  return createHash('sha1').update(s).digest('hex').slice(0, 12);
-}
+  function removeDisk(key: string): void {
+    if (!dir) return;
+    try {
+      unlinkSync(join(dir, `${key}.json`));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn('cache.disk_delete_failed', { key: short(key), message: message(e) });
+      }
+    }
+  }
 
-function keyFor(q: ReportQuery, dr: DateRange): string {
-  // Sort dims/metrics so callers don't have to. Filters are pre-sorted by
-  // (field, op) with their values stringified. custom_dimension_key_ids
-  // are positional, so order matters — preserve as-is.
-  // ponytail: report_type is intentionally absent — it's a pure function of
-  // the metric list (resolveReportType), so metrics already disambiguate it.
-  const dims = [...q.dimensions].sort();
-  const metrics = [...q.metrics].sort();
-  const filters = (q.filters ?? [])
-    .map((f) => ({
-      field: f.field,
-      op: f.op,
-      value: Array.isArray(f.value) ? [...f.value].map(String).sort() : String(f.value),
-    }))
-    .sort((a, b) => a.field.localeCompare(b.field) || a.op.localeCompare(b.op));
-  return JSON.stringify({
-    dims,
-    metrics,
-    filters,
-    cdki: q.custom_dimension_key_ids ?? [],
-    dr,
-  });
+  function put(key: string, entry: CacheEntry): boolean {
+    if (!valid(entry)) {
+      logger.warn('cache.entry_rejected', { key: short(key), kind: entry.kind });
+      return false;
+    }
+    memory.set(key, entry);
+    writeDisk(key, entry);
+    return true;
+  }
+
+  function putPending(key: string, e: { report: string; operation: string; started_at?: string }): string | undefined {
+    const entry: PendingEntry = { kind: 'pending', report: e.report, operation: e.operation, started_at: e.started_at ?? iso(now()) };
+    return put(key, entry) ? entry.started_at : undefined;
+  }
+
+  function remove(key: string): void {
+    memory.delete(key);
+    removeDisk(key);
+  }
+
+  return {
+    get(key) {
+      checkKey(key);
+      let entry = memory.get(key);
+      if (!entry) {
+        entry = readDisk(key);
+        if (entry) memory.set(key, entry);
+      }
+      if (entry && !live(entry)) {
+        remove(key);
+        entry = undefined;
+      }
+      if (entry?.kind === 'done') {
+        hits += 1;
+        logger.debug('cache.hit', { key: short(key) });
+      } else {
+        misses += 1;
+        logger.debug('cache.miss', { key: short(key), pending: entry !== undefined });
+      }
+      return entry;
+    },
+    putDone(key, e) {
+      checkKey(key);
+      if (ttlMs === 0) {
+        remove(key);
+        return;
+      }
+      put(key, {
+        kind: 'done',
+        report: e.report,
+        result: e.result,
+        run_time: e.run_time,
+        date_range: e.date_range,
+        total_row_count: e.total_row_count,
+        stored_at: iso(now()),
+      });
+    },
+    putPending(key, e) {
+      checkKey(key);
+      return putPending(key, e);
+    },
+    restorePending(key, e) {
+      checkKey(key);
+      const current = memory.get(key) ?? readDisk(key);
+      if (current && live(current)) return;
+      putPending(key, e);
+    },
+    delete(key, only) {
+      checkKey(key);
+      if (only) {
+        const current = memory.get(key) ?? readDisk(key);
+        if (!current || !names(current, only)) return;
+      }
+      remove(key);
+    },
+    size: () => memory.size,
+    stats: () => ({ hits, misses }),
+  };
 }

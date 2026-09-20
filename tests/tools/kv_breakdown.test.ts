@@ -1,38 +1,63 @@
 import { describe, it, expect } from 'vitest';
-import { gzipSync } from 'node:zlib';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { kvBreakdownTool } from '../../src/tools/kv_breakdown.js';
-import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
-import type { GAMClient, ReportQuery, DateRange } from '../../src/gam-client.js';
+import { makeCtx, NETWORK } from '../helpers.js';
+import type { GAMClient } from '../../src/gam-client.js';
+import { definitionRange, type ReportDefinition } from '../../src/report-definition.js';
+
+// A full GAMClient spy over the new report path (defineReport → runReport →
+// pollOperation → fetchRows), used where the fixture matcher in the mock
+// client isn't precise enough — this captures the exact definition the tool
+// hands to GAM.
+function spyClient(onDefine: (definition: ReportDefinition) => void): GAMClient {
+  return {
+    async listEntities() { return []; },
+    async getResource() { return null; },
+    async getNetwork() { return { networkCode: NETWORK, timeZone: 'Asia/Tokyo', currencyCode: 'USD' }; },
+    async listReports() { return []; },
+    async defineReport(definition) {
+      onDefine(definition);
+      return { report: `networks/${NETWORK}/reports/1` };
+    },
+    async runReport() { return { operation: `networks/${NETWORK}/operations/reports/runs/1` }; },
+    async pollOperation() {
+      const result = `networks/${NETWORK}/reports/1/results/1`;
+      return { state: 'done', result };
+    },
+    async fetchRows() {
+      return {
+        rows: [{ dimensionValues: [{ stringValue: 'sports' }], metricValueGroups: [{ primaryValues: [{ intValue: '1000' }] }] }],
+        totalRowCount: 1,
+        runTime: '2026-01-01T00:00:00Z',
+        dateRanges: [{ start: '2026-05-01', end: '2026-05-07' }],
+      };
+    },
+    async getReport() { return null; },
+  };
+}
 
 describe('kv_breakdown', () => {
   it('queries CUSTOM_DIMENSION_0_VALUE with the chosen metric', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kvb-'));
-    const csv = 'custom_dimension_0_value,revenue\nsports,1234\nnews,5678\n';
     const args = kvBreakdownTool.input.parse({
       custom_targeting_key_id: 999,
       date_range: { start: '2026-04-01', end: '2026-04-29' },
       metric: 'revenue',
       top_n: 10,
     });
-    const r = await kvBreakdownTool.handler(args, {
-      client: createMockGamClient({
-        reports: [{
+    const r = await kvBreakdownTool.handler(
+      args,
+      makeCtx(
+        { reports: [{
           query: { dimensions: ['CUSTOM_DIMENSION_0_VALUE'], metrics: ['REVENUE'] },
-          csvGz: gzipSync(Buffer.from(csv)),
-        }],
-      }),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'America/Los_Angeles',
-      logger: noopLogger(),
-    });
+          rows: [
+            { CUSTOM_DIMENSION_0_VALUE: 'sports', REVENUE: 1234 },
+            { CUSTOM_DIMENSION_0_VALUE: 'news', REVENUE: 5678 },
+          ],
+        }] },
+        { timezone: 'America/Los_Angeles' },
+      ),
+    );
     if ('error' in r) throw new Error(JSON.stringify(r));
-    expect(r.row_count).toBe(2);
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.total_row_count).toBe(2);
   });
 
   // Stronger check: the mock client's fixture matcher ignores filters and
@@ -41,25 +66,8 @@ describe('kv_breakdown', () => {
   // basic mock test above. Capture the raw query/dateRange that hits the
   // client and assert their exact shape.
   it('wires custom_dimension_key_ids[0] = key and applies entity filters', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kvb-'));
-    let captured: { query: ReportQuery; dateRange: DateRange } | null = null;
-    const csv = 'custom_dimension_0_value,impressions\nsports,1000\n';
-    const csvGz = gzipSync(Buffer.from(csv));
-
-    const spyClient: GAMClient = {
-      async listEntities() { return []; },
-      async createReport(query, dateRange) {
-        captured = { query, dateRange };
-        return { operation_name: 'op/1' };
-      },
-      async pollOperation() {
-        return { state: 'done', download_url: 'mock://op/1' };
-      },
-      async downloadReport(_url, dest) {
-        writeFileSync(dest, csvGz);
-        return dest;
-      },
-    };
+    let captured: ReportDefinition | null = null;
+    const client = spyClient((definition) => { captured = definition; });
 
     const args = kvBreakdownTool.input.parse({
       custom_targeting_key_id: 4242,
@@ -68,47 +76,30 @@ describe('kv_breakdown', () => {
       ad_unit_id: 77,
       order_id: 88,
     });
-    const r = await kvBreakdownTool.handler(args, {
-      client: spyClient,
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'America/Los_Angeles',
-      logger: noopLogger(),
-    });
+    const r = await kvBreakdownTool.handler(args, makeCtx({}, { client, timezone: 'America/Los_Angeles' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
     expect(captured).not.toBeNull();
-    expect(captured!.query.dimensions).toEqual(['CUSTOM_DIMENSION_0_VALUE']);
-    expect(captured!.query.metrics).toEqual(['IMPRESSIONS']);
-    expect(captured!.query.custom_dimension_key_ids).toEqual([4242]);
-    expect(captured!.query.filters).toEqual([
-      { field: 'AD_UNIT_ID', op: '=', value: 77 },
-      { field: 'ORDER_ID', op: '=', value: 88 },
+    expect(captured!.dimensions).toEqual(['CUSTOM_DIMENSION_0_VALUE']);
+    expect(captured!.metrics).toEqual(['IMPRESSIONS']);
+    expect(captured!.customDimensionKeyIds).toEqual(['4242']);
+    expect(captured!.filters).toEqual([
+      { fieldFilter: { field: { dimension: 'AD_UNIT_ID' }, operation: 'IN', values: [{ intValue: '77' }] } },
+      { fieldFilter: { field: { dimension: 'ORDER_ID' }, operation: 'IN', values: [{ intValue: '88' }] } },
     ]);
-    expect(captured!.dateRange).toEqual({ start: '2026-05-01', end: '2026-05-07' });
-    rmSync(dir, { recursive: true, force: true });
+    expect(definitionRange(captured!)).toEqual({ start: '2026-05-01', end: '2026-05-07' });
   });
 
   it('omits filters when no entity narrowing is given', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kvb-'));
-    let captured: ReportQuery | null = null;
-    const csvGz = gzipSync(Buffer.from('custom_dimension_0_value,revenue\nsports,1\n'));
-    const spyClient: GAMClient = {
-      async listEntities() { return []; },
-      async createReport(query) { captured = query; return { operation_name: 'op/1' }; },
-      async pollOperation() { return { state: 'done', download_url: 'mock://op/1' }; },
-      async downloadReport(_url, dest) { writeFileSync(dest, csvGz); return dest; },
-    };
+    let captured: ReportDefinition | null = null;
+    const client = spyClient((definition) => { captured = definition; });
+
     const args = kvBreakdownTool.input.parse({
       custom_targeting_key_id: 1,
       date_range: { start: '2026-05-01', end: '2026-05-07' },
     });
-    await kvBreakdownTool.handler(args, {
-      client: spyClient,
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'America/Los_Angeles',
-      logger: noopLogger(),
-    });
+    const r = await kvBreakdownTool.handler(args, makeCtx({}, { client, timezone: 'America/Los_Angeles' }));
+    if ('error' in r) throw new Error(JSON.stringify(r));
     expect(captured!.filters).toBeUndefined();
-    rmSync(dir, { recursive: true, force: true });
   });
 });

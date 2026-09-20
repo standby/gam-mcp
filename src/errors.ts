@@ -8,7 +8,10 @@ export type GamErrorCode =
   | 'ENTITY_NOT_FOUND'
   | 'AMBIGUOUS_NAME'
   | 'UNSUPPORTED_DIMENSION_COMBO'
-  | 'INTERNAL_ERROR';
+  | 'INTERNAL_ERROR'
+  | 'REPORT_RESULT_EXPIRED'
+  | 'RESULT_TOO_LARGE'
+  | 'DUPLICATE_JOIN_KEY';
 
 export type GamErrorEnvelope = {
   error: {
@@ -24,7 +27,8 @@ type Renderer = (details: Record<string, unknown>) => { message: string; hint: s
 const CATALOG: Record<GamErrorCode, Renderer> = {
   INVALID_DATE_RANGE: (d) => ({
     message: `Invalid date range: ${d.reason ?? 'unknown reason'}.`,
-    hint: 'Use YYYY-MM-DD strings, ensure start ≤ end, and pick an end date no later than yesterday in the network timezone.',
+    hint: 'Use real YYYY-MM-DD dates with start ≤ end. A historical report must end by yesterday, and a forecast ' +
+      '(sell_through) must start today or later; both are judged in the date time zone (GAM_TIMEZONE).',
   }),
   INVALID_INPUT: (d) => ({
     message: `Invalid input: ${d.reason ?? 'see details'}.`,
@@ -45,8 +49,9 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
     hint: 'Verify dimension/metric combinations are supported (call describe_schema) and filters reference real entities.',
   }),
   REPORT_TIMEOUT: (d) => ({
-    message: `Report did not finish within ${d.timeout_ms ?? 300000}ms.`,
-    hint: 'Narrow the date range, reduce dimensions, or set GAM_REPORT_TIMEOUT_MS higher.',
+    message: `Report did not finish within ${d.timeout_ms ?? 300000}ms${d.operation ? ` (operation ${d.operation})` : ''}.`,
+    hint: 'GAM is still running it: making the same call again waits for that operation instead of starting another report. ' +
+      "Set GAM_REPORT_TIMEOUT_MS below your client's call timeout, or narrow the date range.",
   }),
   ENTITY_NOT_FOUND: (d) => ({
     message: `No ${d.entity_type} matched ${JSON.stringify(d.query)}.`,
@@ -54,7 +59,7 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
   }),
   AMBIGUOUS_NAME: (d) => ({
     message: `Multiple ${d.entity_type}s matched ${JSON.stringify(d.query)}.`,
-    hint: 'Pick a specific candidate from details.candidates and re-run with its numeric ID.',
+    hint: String(d.hint ?? 'Pick a specific candidate from details.candidates and re-run with its numeric ID.'),
   }),
   UNSUPPORTED_DIMENSION_COMBO: (d) => ({
     message: `Dimension combination not supported: ${d.dims}.`,
@@ -64,7 +69,34 @@ const CATALOG: Record<GamErrorCode, Renderer> = {
     message: `Internal error: ${d.reason ?? 'see logs'}.`,
     hint: 'Re-run; if it persists, check stderr logs for the correlation ID.',
   }),
+  // `from_cursor`: the result was reached through fetch_report_page.
+  REPORT_RESULT_EXPIRED: (d) => ({
+    message: `Report result ${d.result ?? ''} is no longer available.`,
+    hint: d.from_cursor
+      ? 'Re-run the tool that produced this cursor; GAM keeps report results for a limited time.'
+      : 'Run the tool again: GAM no longer serves this result, and the next call runs the report afresh.',
+  }),
+  RESULT_TOO_LARGE: (d) => ({
+    message: `The ${d.what ?? 'result'} has ${d.rows} rows, over the limit of ${d.limit}.`,
+    hint: 'Narrow the date range, add filters, or request fewer dimensions.',
+  }),
+  // Two rows in the same period reduced to the same join key, so the join
+  // cannot tell which one the other period's row should be compared against.
+  // `period` names which side had the collision ('base' or 'previous') and
+  // `key` is the dimension→value map that repeated; both are required from
+  // the caller — an absent period is a caller bug, not a value to paper
+  // over, so it renders literally (as "undefined") rather than as a
+  // plausible-sounding "same period" that would hide the omission.
+  DUPLICATE_JOIN_KEY: (d) => ({
+    message: `Multiple rows in the ${d.period} period share the join key ${JSON.stringify(d.key)}.`,
+    hint: 'Add a dimension that separates these rows (e.g. a more granular ID) so each join key names exactly one row.',
+  }),
 };
+
+// The full set of error codes this server can return, derived from the
+// catalogue rather than hand-copied, so a code added above is covered here
+// without a second edit.
+export const GAM_ERROR_CODES = Object.keys(CATALOG) as readonly GamErrorCode[];
 
 export function gamError(
   code: GamErrorCode,
@@ -81,4 +113,14 @@ export function isGamError(x: unknown): x is GamErrorEnvelope {
     'error' in x &&
     typeof (x as GamErrorEnvelope).error?.code === 'string'
   );
+}
+
+// A credential that could not produce an access token. The message names the
+// failure's kind only: the auth library's own messages can quote the key file
+// they failed to parse, so they never leave src/auth.ts.
+export class CredentialError extends Error {
+  constructor(readonly source: 'file' | 'json' | 'adc', readonly reason: string) {
+    super(`the ${source} credential could not produce an access token (${reason})`);
+    this.name = 'CredentialError';
+  }
 }

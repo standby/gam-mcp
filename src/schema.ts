@@ -5,6 +5,7 @@ import {
   type GeneratedEntry,
 } from './schema-generated.js';
 import { CURATED_DIMENSIONS, CURATED_METRICS, type Override } from './schema-overrides.js';
+import type { ReportQuery } from './gam-client.js';
 
 export type ReportType = (typeof REPORT_TYPES)[number];
 
@@ -48,6 +49,18 @@ export const GAM_SCHEMA: { dimensions: DimensionDef[]; metrics: MetricDef[] } = 
   metrics: merge<MetricDef>(GENERATED_METRICS, CURATED_METRICS),
 };
 
+const FIELD_TYPES = new Map<string, DimensionDef['type'] | MetricDef['type']>([
+  ...GAM_SCHEMA.dimensions.map((d) => [d.name, d.type] as const),
+  ...GAM_SCHEMA.metrics.map((m) => [m.name, m.type] as const),
+]);
+
+// The schema's declared type for a dimension or metric name, or undefined for
+// a name GAM does not have. Used to decode values (dates) and to type columns
+// that came back empty.
+export function fieldType(name: string): DimensionDef['type'] | MetricDef['type'] | undefined {
+  return FIELD_TYPES.get(name);
+}
+
 export { REPORT_TYPES };
 
 // Friendly / legacy names that map onto a canonical REST name. GAM's REST v1
@@ -61,6 +74,31 @@ export const DIMENSION_ALIASES: Record<string, string> = {
 // Map a dimension name to its canonical REST name, or return it unchanged.
 export function resolveDimensionAlias(name: string): string {
   return DIMENSION_ALIASES[name] ?? name;
+}
+
+// Resolve every familiar name in a query -- dimensions AND filter fields --
+// returning the canonical query plus one warning per rewrite. Alias
+// resolution lives here, with the alias table, rather than in one tool: a
+// filter spelled the same as its dimension used to be refused with "Unknown
+// filter dimension" because only the dimension list was rewritten. A query
+// with no aliases produces no warnings, and a filter field that is neither
+// an alias nor a real dimension is left as-is for validateCombo /
+// checkReportQuery to refuse downstream -- this only widens what resolves,
+// it does not relax what is accepted.
+export function canonicalizeQuery(query: ReportQuery): { query: ReportQuery; warnings: string[] } {
+  const warnings: string[] = [];
+  const rewrite = (name: string): string => {
+    const canonical = resolveDimensionAlias(name);
+    if (canonical !== name) {
+      warnings.push(`'${name}' is not a GAM REST dimension; queried as '${canonical}'.`);
+    }
+    return canonical;
+  };
+  const canonicalQuery: ReportQuery = { ...query, dimensions: query.dimensions.map(rewrite) };
+  if (query.filters) {
+    canonicalQuery.filters = query.filters.map((f) => ({ ...f, field: rewrite(f.field) }));
+  }
+  return { query: canonicalQuery, warnings };
 }
 
 const DIMS = new Set(GAM_SCHEMA.dimensions.map((d) => d.name));
@@ -111,6 +149,30 @@ const PREFERENCE: readonly string[] = ['HISTORICAL', ...REPORT_TYPES.filter((t) 
 
 export function reportTypesFor(name: string): string[] {
   return DIM_BY_NAME.get(name)?.report_types ?? METRIC_BY_NAME.get(name)?.report_types ?? [];
+}
+
+// What is wrong with a query for its report type, or null. Every report the
+// report path builds passes this first (spec §2.1 step 1, test H3): each
+// dimension, metric and filter field exists, and is offered under the
+// report type. An entry the schema lists without report types (the
+// publisher-configured slots) is not restricted, as in resolveReportType.
+export function checkReportQuery(q: {
+  dimensions: string[];
+  metrics: string[];
+  filters?: { field: string }[];
+  report_type?: string;
+}): string | null {
+  const unknown = validateCombo(q);
+  if (unknown) return unknown;
+  const filterFields = (q.filters ?? []).map((f) => f.field);
+  const badFilter = filterFields.find((f) => !isValidDimension(f));
+  if (badFilter !== undefined) return `Unknown filter dimension: ${badFilter}`;
+  const type = q.report_type ?? 'HISTORICAL';
+  for (const name of [...q.dimensions, ...q.metrics, ...filterFields]) {
+    const types = reportTypesFor(name);
+    if (types.length > 0 && !types.includes(type)) return `${name} is not offered in ${type} reports`;
+  }
+  return null;
 }
 
 /**

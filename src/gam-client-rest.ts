@@ -1,17 +1,16 @@
-import { writeFileSync } from 'node:fs';
-import { gzipSync } from 'node:zlib';
 import type {
   GAMClient,
   EntityType,
-  ReportQuery,
-  ReportOperation,
   OperationStatus,
   Entity,
-  DateRange,
+  StoredReport,
 } from './gam-client.js';
-import { gamError } from './errors.js';
+import { GamHttpError, NetworkFieldMissingError, ReportFilterRejectedError, ResultUnavailableError } from './gam-client.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
+import type { ReportRow } from './values.js';
+import { isoDate, type GamDate, type ReportDefinition } from './report-definition.js';
+import { definitionHash, reportName } from './report-key.js';
 
 const BASE = 'https://admanager.googleapis.com/v1';
 
@@ -25,32 +24,11 @@ const ENTITY_PATH: Record<EntityType, { collection: string; idField: string }> =
   custom_targeting_key: { collection: 'customTargetingKeys', idField: 'customTargetingKeyId' },
 };
 
-type ReportValue = { stringValue?: string; intValue?: number; doubleValue?: number };
-
-function toDateParts(iso: string): { year: number; month: number; day: number } {
-  const [year, month, day] = iso.split('-').map(Number);
-  return { year, month, day };
-}
-
-function extractValue(rv: ReportValue | null | undefined): string {
-  if (!rv) return '';
-  if (rv.stringValue !== undefined) return rv.stringValue;
-  if (rv.intValue !== undefined) return String(rv.intValue);
-  if (rv.doubleValue !== undefined) return String(rv.doubleValue);
-  return '';
-}
-
-function csvQuote(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return '"' + value.replace(/"/g, '""') + '"';
-  }
-  return value;
-}
-
-// Wrap a fetch impl with exponential-backoff retries on transient failures.
-// 4xx (other than 429) are application errors — surface immediately. 429
-// (quota) and 5xx (server) are retried with jitter. Network errors (thrown
-// from fetch itself) are also retried.
+// Retries transient failures with exponential backoff (spec §2.3). A GET is
+// retried on a thrown fetch, 429 and 5xx. A POST is retried only on 429, the
+// one answer that means GAM did not act on it: after a 5xx or a lost
+// connection the report may already exist, and the next identical call finds
+// it by name instead of creating a second one. Other 4xx answers return at once.
 export function withRetries(
   fetchImpl: typeof fetch,
   opts: { maxAttempts?: number; baseDelayMs?: number; logger?: Logger } = {},
@@ -58,29 +36,31 @@ export function withRetries(
   const maxAttempts = opts.maxAttempts ?? 4; // 1 initial + 3 retries
   const baseDelay = opts.baseDelayMs ?? 250;
   const logger = opts.logger ?? noopLogger();
-  return (async (input: any, init?: any) => {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    const post = method === 'POST';
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let res: Response;
       try {
-        const res = await fetchImpl(input, init);
-        if (res.status === 429 || res.status >= 500) {
-          if (attempt === maxAttempts - 1) return res;
-          const delay_ms = baseDelay * 2 ** attempt;
-          logger.warn('gam.retry', { status: res.status, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
-          await sleepWithJitter(delay_ms);
-          continue;
-        }
-        return res;
+        res = await fetchImpl(input, init);
       } catch (e) {
         lastErr = e;
-        if (attempt === maxAttempts - 1) {
-          logger.error('gam.fetch_failed', { message: e instanceof Error ? e.message : String(e), attempt: attempt + 1, max_attempts: maxAttempts });
+        const message = e instanceof Error ? e.message : String(e);
+        if (post || attempt === maxAttempts - 1) {
+          logger.error('gam.fetch_failed', { method, message, attempt: attempt + 1, max_attempts: maxAttempts });
           throw e;
         }
         const delay_ms = baseDelay * 2 ** attempt;
-        logger.warn('gam.retry', { message: e instanceof Error ? e.message : String(e), attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
+        logger.warn('gam.retry', { method, message, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
         await sleepWithJitter(delay_ms);
+        continue;
       }
+      const retryable = res.status === 429 || (!post && res.status >= 500);
+      if (!retryable || attempt === maxAttempts - 1) return res;
+      const delay_ms = baseDelay * 2 ** attempt;
+      logger.warn('gam.retry', { method, status: res.status, attempt: attempt + 1, max_attempts: maxAttempts, delay_ms });
+      await sleepWithJitter(delay_ms);
     }
     throw lastErr ?? new Error('unreachable: retry loop exhausted');
   }) as typeof fetch;
@@ -92,15 +72,47 @@ function sleepWithJitter(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, jittered));
 }
 
+// The error for a non-2xx answer, with GAM's canonical status when the body has one.
+async function httpError(call: string, res: Response): Promise<GamHttpError> {
+  const text = await res.text();
+  let gamStatus: string | undefined;
+  try {
+    const status = (JSON.parse(text) as { error?: { status?: unknown } } | null)?.error?.status;
+    if (typeof status === 'string') gamStatus = status;
+  } catch {
+    // Not JSON: the text itself is the detail.
+  }
+  return new GamHttpError(call, res.status, gamStatus, text.slice(0, 500));
+}
+
+// GAM reports a result it no longer serves as NOT_FOUND or FAILED_PRECONDITION
+// naming that result (spec §1.3). The status alone could be about something else.
+function namesResult(err: GamHttpError, result: string): boolean {
+  if (err.gamStatus !== 'NOT_FOUND' && err.gamStatus !== 'FAILED_PRECONDITION') return false;
+  if (err.detail.includes(result)) return true;
+  const id = result.slice(result.lastIndexOf('/') + 1);
+  return /^\d+$/.test(id) && new RegExp(`results/${id}(?!\\d)`).test(err.detail);
+}
+
+type RawReport = { name: string; displayName?: string; reportDefinition?: Partial<ReportDefinition> };
+
+// GAM's JSON omits empty lists, so a stored definition can lack dimensions or
+// metrics; the rest of the server relies on both being present.
+function toStoredReport(r: RawReport): StoredReport {
+  const d = r.reportDefinition ?? {};
+  return {
+    name: r.name,
+    ...(r.displayName !== undefined && { displayName: r.displayName }),
+    definition: { ...d, dimensions: d.dimensions ?? [], metrics: d.metrics ?? [] } as ReportDefinition,
+  };
+}
+
 export function createRestGamClient(opts: {
   networkCode: string;
   fetchImpl?: typeof fetch;
 }): GAMClient {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const networkPath = `${BASE}/networks/${opts.networkCode}`;
-
-  // Keyed by report resource name (e.g. networks/xxx/reports/yyy) so downloadReport can build CSV headers.
-  const reportQueryCache = new Map<string, { dimensions: string[]; metrics: string[] }>();
 
   return {
     async listEntities({ entity_type, query, ids, limit, match }) {
@@ -131,6 +143,14 @@ export function createRestGamClient(opts: {
         if (gamDisplayName !== undefined && gamDisplayName !== primaryName) {
           entity.displayName = gamDisplayName;
         }
+        // find_unused_ad_units needs to tell an archived unit and a parent
+        // container (neither of which can be "unused" inventory) apart from
+        // a genuine leaf. Carried for ad_unit only -- every other entity type
+        // keeps the old id/name/displayName-only shape.
+        if (entity_type === 'ad_unit') {
+          if (typeof e.status === 'string') entity.status = e.status;
+          if (typeof e.parentAdUnit === 'string') entity.parentAdUnit = e.parentAdUnit;
+        }
         return entity;
       };
 
@@ -147,7 +167,7 @@ export function createRestGamClient(opts: {
           const url = `${networkPath}/${meta.collection}/${id}`;
           const res = await fetchImpl(url);
           if (res.status === 404) return null;
-          if (!res.ok) throw new Error(`listEntities(getById) ${res.status}: ${await res.text()}`);
+          if (!res.ok) throw await httpError('listEntities(getById)', res);
           const json = await res.json() as Record<string, unknown>;
           return toEntity(json);
         }));
@@ -201,7 +221,7 @@ export function createRestGamClient(opts: {
           effectiveMode = 'exact';
           res = await fetchPage(effectiveMode, pageToken, pageSize);
         }
-        if (!res.ok) throw new Error(`listEntities ${res.status}: ${await res.text()}`);
+        if (!res.ok) throw await httpError('listEntities', res);
         const json = await res.json() as Record<string, unknown>;
         const list = (json[meta.collection] as any[] | undefined) ?? [];
         for (const e of list) out.push(toEntity(e));
@@ -216,57 +236,22 @@ export function createRestGamClient(opts: {
       const url = path.startsWith('networks/') ? `${BASE}/${path}` : `${networkPath}/${path}`;
       const res = await fetchImpl(url);
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`getResource ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('getResource', res);
       return await res.json() as Record<string, unknown>;
     },
 
-    async createReport(query: ReportQuery, dateRange: DateRange): Promise<ReportOperation> {
-      // Step 1: create the report resource
-      const body = {
-        reportDefinition: {
-          dimensions: query.dimensions,
-          metrics: query.metrics,
-          dateRange: {
-            fixed: {
-              startDate: toDateParts(dateRange.start),
-              endDate: toDateParts(dateRange.end),
-            },
-          },
-          reportType: query.report_type ?? 'HISTORICAL',
-          ...(query.filters?.length && { filters: toReportFilters(query.filters) }),
-          // GAM expects int64 IDs as strings. Index here = slot number on
-          // CUSTOM_DIMENSION_<N>_VALUE dimensions.
-          ...(query.custom_dimension_key_ids?.length && {
-            customDimensionKeyIds: query.custom_dimension_key_ids.map(String),
-          }),
-        },
-      };
-      const createRes = await fetchImpl(`${networkPath}/reports`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!createRes.ok) throw new Error(`createReport(create) ${createRes.status}: ${await createRes.text()}`);
-      const report = await createRes.json() as { name: string };
-
-      // Cache dims/metrics so downloadReport can write the CSV header later
-      reportQueryCache.set(report.name, { dimensions: query.dimensions, metrics: query.metrics });
-
-      // Step 2: run the report → returns an operation
-      const runRes = await fetchImpl(`${BASE}/${report.name}:run`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!runRes.ok) throw new Error(`createReport(run) ${runRes.status}: ${await runRes.text()}`);
-      const op = await runRes.json() as { name: string };
-      return { operation_name: op.name };
+    async getNetwork() {
+      const res = await fetchImpl(networkPath);
+      if (!res.ok) throw await httpError('getNetwork', res);
+      const n = await res.json() as { networkCode?: string; timeZone?: string; currencyCode?: string };
+      if (!n.timeZone) throw new NetworkFieldMissingError('timeZone');
+      if (!n.currencyCode) throw new NetworkFieldMissingError('currencyCode');
+      return { networkCode: n.networkCode ?? opts.networkCode, timeZone: n.timeZone, currencyCode: n.currencyCode };
     },
 
     async pollOperation(operation_name: string): Promise<OperationStatus> {
       const res = await fetchImpl(`${BASE}/${operation_name}`);
-      if (res.status === 429) return { state: 'failed', reason: 'QUOTA_EXCEEDED' };
-      if (!res.ok) throw new Error(`pollOperation ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await httpError('pollOperation', res);
       const op = await res.json() as {
         done?: boolean;
         error?: { message: string };
@@ -276,86 +261,87 @@ export function createRestGamClient(opts: {
       if (op.error) return { state: 'failed', reason: op.error.message };
       const resultPath = op.response?.reportResult;
       if (!resultPath) return { state: 'failed', reason: 'response missing reportResult' };
-      return { state: 'done', download_url: resultPath };
+      return { state: 'done', result: resultPath };
     },
 
-    async downloadReport(downloadUrl: string, destPath: string): Promise<string> {
-      // HTTP URL fallback (used in tests / future CSV download endpoints)
-      if (downloadUrl.startsWith('http')) {
-        const res = await fetchImpl(downloadUrl);
-        if (!res.ok) throw new Error(`downloadReport ${res.status}: ${await res.text()}`);
-        const buf = Buffer.from(await res.arrayBuffer());
-        writeFileSync(destPath, buf);
-        return destPath;
+    async defineReport(definition: ReportDefinition) {
+      const res = await fetchImpl(`${networkPath}/reports`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // Named from the definition's hash so any process can find it again
+        // (spec §2.2). visibility stays unset: GAM's default, HIDDEN, keeps
+        // these reports out of the Ad Manager UI.
+        body: JSON.stringify({ displayName: reportName(definitionHash(definition)), reportDefinition: definition }),
+      });
+      if (!res.ok) throw await httpError('defineReport', res);
+      const report = await res.json() as { name: string };
+      return { report: report.name };
+    },
+
+    async runReport(report: string) {
+      const res = await fetchImpl(`${BASE}/${report}:run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw await httpError('runReport', res);
+      const op = await res.json() as { name: string };
+      return { operation: op.name };
+    },
+
+    async fetchRows(result: string, page: { pageSize: number; pageToken?: string }) {
+      const params = new URLSearchParams({ pageSize: String(page.pageSize) });
+      if (page.pageToken) params.set('pageToken', page.pageToken);
+      const res = await fetchImpl(`${BASE}/${result}:fetchRows?${params}`);
+      if (res.status === 404) throw new ResultUnavailableError(result, 404);
+      if (!res.ok) {
+        const err = await httpError('fetchRows', res);
+        throw namesResult(err, result) ? new ResultUnavailableError(result, res.status) : err;
       }
+      const body = await res.json() as {
+        rows?: ReportRow[];
+        nextPageToken?: string;
+        totalRowCount?: number | string;
+        runTime?: string;
+        dateRanges?: { startDate?: GamDate; endDate?: GamDate }[];
+      };
+      // A range with either end missing isn't a date range GAM reported — it's
+      // absence, and absence must not be dressed up as '' so the "no date
+      // range" warning gets skipped downstream. Drop such entries; only keep
+      // dateRanges at all if something usable survives.
+      const dateRanges = (body.dateRanges ?? [])
+        .map((r) => ({ start: isoDate(r.startDate), end: isoDate(r.endDate) }))
+        .filter((r): r is { start: string; end: string } => r.start !== undefined && r.end !== undefined);
+      return {
+        rows: body.rows ?? [],
+        ...(body.nextPageToken && { nextPageToken: body.nextPageToken }),
+        ...(body.totalRowCount !== undefined && { totalRowCount: Number(body.totalRowCount) }),
+        ...(body.runTime && { runTime: body.runTime }),
+        ...(dateRanges.length > 0 && { dateRanges }),
+      };
+    },
 
-      // GAM result path: networks/{n}/reports/{id}/results/{rid}
-      const reportName = downloadUrl.split('/results/')[0];
-      const queryInfo = reportQueryCache.get(reportName);
-      const dimensions = queryInfo?.dimensions ?? [];
-      const metrics = queryInfo?.metrics ?? [];
-      const headers = [...dimensions, ...metrics];
+    async getReport(report: string) {
+      const res = await fetchImpl(`${BASE}/${report}`);
+      if (res.status === 404) return null;
+      if (!res.ok) throw await httpError('getReport', res);
+      return toStoredReport(await res.json() as RawReport);
+    },
 
-      const csvLines: string[] = [headers.map(csvQuote).join(',')];
+    async listReports({ displayName }: { displayName: string }) {
+      const out: StoredReport[] = [];
       let pageToken: string | undefined;
       do {
-        const params = new URLSearchParams({ pageSize: '10000' });
+        const params = new URLSearchParams({ filter: `displayName = ${JSON.stringify(displayName)}`, pageSize: '100' });
         if (pageToken) params.set('pageToken', pageToken);
-        const url = `${BASE}/${downloadUrl}:fetchRows?${params}`;
-        const res = await fetchImpl(url);
-        if (!res.ok) throw new Error(`fetchRows ${res.status}: ${await res.text()}`);
-        const page = await res.json() as {
-          rows?: Array<{
-            dimensionValues?: ReportValue[];
-            metricValueGroups?: Array<{ primaryValues?: ReportValue[] }>;
-          }>;
-          nextPageToken?: string;
-        };
-        for (const row of page.rows ?? []) {
-          const dimVals = (row.dimensionValues ?? []).map(extractValue);
-          const metVals = (row.metricValueGroups?.[0]?.primaryValues ?? []).map(extractValue);
-          csvLines.push([...dimVals, ...metVals].map(csvQuote).join(','));
-        }
-        pageToken = page.nextPageToken;
+        const res = await fetchImpl(`${networkPath}/reports?${params}`);
+        if (res.status === 400) throw new ReportFilterRejectedError(res.status);
+        if (!res.ok) throw await httpError('listReports', res);
+        const body = await res.json() as { reports?: RawReport[]; nextPageToken?: string };
+        out.push(...(body.reports ?? []).map(toStoredReport));
+        pageToken = body.nextPageToken || undefined;
       } while (pageToken);
-
-      writeFileSync(destPath, gzipSync(Buffer.from(csvLines.join('\n') + '\n')));
-      return destPath;
+      return out;
     },
   };
-}
-
-// GAM REST Reports API expects structured filters wrapped in
-// { fieldFilter: { field: {dimension}, operation, values: ReportValue[] } }.
-// Notable quirks captured here once so callers don't have to know them:
-//   - GAM has no EQUALS / NOT_EQUALS operators; `=` and `!=` are expressed as
-//     IN / NOT_IN with a single-element values array.
-//   - `values` is always an array, even for single-value comparisons.
-//   - `intValue` is a JSON string (Google's int64 → JSON convention).
-//   - The dimension is on `field.dimension`, not `field.name`.
-const OP_TO_OPERATION: Record<'=' | 'IN' | '!=' | 'CONTAINS' | 'NOT_CONTAINS',
-  'IN' | 'NOT_IN' | 'CONTAINS' | 'NOT_CONTAINS'> = {
-  '=': 'IN',
-  'IN': 'IN',
-  '!=': 'NOT_IN',
-  'CONTAINS': 'CONTAINS',
-  'NOT_CONTAINS': 'NOT_CONTAINS',
-};
-
-function toReportFilters(filters: NonNullable<ReportQuery['filters']>): unknown[] {
-  return filters.map((f) => {
-    const list = Array.isArray(f.value) ? f.value : [f.value];
-    if (list.length === 0) throw new Error('filter value list is empty');
-    return {
-      fieldFilter: {
-        field: { dimension: f.field },
-        operation: OP_TO_OPERATION[f.op],
-        values: list.map(toReportValue),
-      },
-    };
-  });
-}
-
-function toReportValue(v: number | string): unknown {
-  return typeof v === 'number' ? { intValue: String(v) } : { stringValue: v };
 }

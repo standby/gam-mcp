@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
 
 const ENTITY_TYPES = [
   'advertiser', 'order', 'line_item', 'ad_unit', 'placement', 'company',
@@ -8,26 +9,34 @@ const ENTITY_TYPES = [
 ] as const;
 
 const inputSchema = z.object({
-  entity_type: z.enum(ENTITY_TYPES),
-  query: z.string().min(1).optional(),
-  ids: z.array(z.number().int().positive()).optional(),
+  entity_type: z.enum(ENTITY_TYPES).describe('The kind of entity to find.'),
+  query: z.string().min(1).optional()
+    .describe('Text to match: part of the display name by default, or the whole name with match="exact".'),
+  ids: z.array(z.number().int().positive()).optional()
+    .describe('Look up exactly these IDs.'),
   // Pagination is transparent — values up to 1000 page through GAM
   // automatically. Default 50 keeps responses small for exploratory queries.
-  limit: z.number().int().min(1).max(1000).default(50),
+  limit: z.number().int().min(1).max(1000).default(50)
+    .describe('Most entities to return, 1-1000; GAM is paged through automatically.'),
   // 'substring' (default): AIP-160 has-operator on displayName.
   // 'exact': equality on the canonical name attribute. Required for resolving
   // a custom_targeting_key by its API code (the `channel_id` in
   // KEY_VALUES_NAME rows) — GAM accepts `name = "channel_id"` but rejects
   // substring CONTAINS-style filters on that attribute. For other entity
   // types it does exact equality on displayName.
-  match: z.enum(['substring', 'exact']).default('substring'),
-});
+  match: z.enum(['substring', 'exact']).default('substring')
+    .describe(
+      '"substring" matches part of the display name; "exact" matches the whole name ' +
+      '(use it to find a custom_targeting_key by its API code).',
+    ),
+}).strict();
 
 export const lookupTool: ToolDefinition<typeof inputSchema> = {
   name: 'lookup',
   description:
     'Resolve names ↔ IDs for GAM entities (advertiser, order, line_item, ad_unit, placement, company, custom_targeting_key). With query: substring match on name by default; pass match="exact" for equality (e.g. find a custom_targeting_key whose API code is exactly "channel_id"). With ids: exact lookup. With neither: list up to `limit` entries (default 50, max 1000 — pagination is automatic across GAM\'s 200-per-page responses). For custom_targeting_key, rows include both `name` (API code emitted in KEY_VALUES_NAME) and `displayName` (human-readable label). Use this to discover the key IDs needed for run_report\'s custom_dimension_key_ids parameter.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     let matches;
     try {
@@ -86,7 +95,7 @@ export const lookupTool: ToolDefinition<typeof inputSchema> = {
       : input.ids?.length
         ? ` matching ids ${JSON.stringify(input.ids)}`
         : '';
-    return ctx.output.fromInlineRows(
+    return listEnvelope(
       rows,
       `${trimmed.length} ${input.entity_type}(s)${filterDesc}`,
       [

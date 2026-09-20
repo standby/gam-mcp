@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { listToolNames, installStdoutGuard } from '../src/server.js';
+import { SAVED_QUERY_TOOLS } from './tool-table.js';
 
 describe('server registry', () => {
   it('lists all expected tool names', () => {
@@ -14,6 +15,7 @@ describe('server registry', () => {
       'describe_schema',
       'diagnose_fill_rate',
       'diagnose_floor_pricing',
+      'fetch_report_page',
       'fill_rate',
       'find_anomalies',
       'find_unused_ad_units',
@@ -38,6 +40,13 @@ describe('server registry', () => {
       'viewability_breakdown',
       'yield_breakdown',
     ]);
+  });
+
+  it('HTTP mode lists every tool but the four saved-query tools', () => {
+    expect(listToolNames('http').sort()).toEqual(
+      listToolNames().filter((n) => !SAVED_QUERY_TOOLS.includes(n)).sort(),
+    );
+    expect(listToolNames('stdio')).toEqual(listToolNames());
   });
 
   it('stdout guard redirects writes to stderr', () => {

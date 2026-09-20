@@ -1,23 +1,26 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  ad_unit: 'AD_UNIT_NAME',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
-  line_item_type: 'LINE_ITEM_TYPE',
+  day: ['DATE'],
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
+  line_item_type: ['LINE_ITEM_TYPE'],
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   group_by: z
     .enum(['none', 'day', 'ad_unit', 'country', 'device', 'line_item_type'])
-    .default('none'),
-  top_n: z.number().int().min(1).max(500).default(50),
-});
+    .default('none')
+    .describe("Optional secondary slice beside the bidder; 'none' gives one row per bidder."),
+  top_n: z.number().int().min(1).max(500).default(50)
+    .describe('How many rows to return, 1-500.'),
+}).strict();
 
 export const bidderBreakdownTool = buildReportTool({
   name: 'bidder_breakdown',
@@ -31,7 +34,7 @@ export const bidderBreakdownTool = buildReportTool({
   buildQuery: (input): ReportQuery => {
     const secondary = SECONDARY[input.group_by];
     return {
-      dimensions: secondary ? ['BIDDER_NAME', secondary] : ['BIDDER_NAME'],
+      dimensions: secondary ? ['BIDDER_NAME', ...secondary] : ['BIDDER_NAME'],
       metrics: [
         'AD_EXCHANGE_IMPRESSIONS',
         'AD_EXCHANGE_REVENUE',
@@ -39,8 +42,10 @@ export const bidderBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Open Bidding breakdown by bidder${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Open Bidding breakdown by bidder${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'AD_EXCHANGE_REVENUE', descending: true }),
 });

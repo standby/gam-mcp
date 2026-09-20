@@ -1,23 +1,32 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension for viewability.
 const PRIMARY = {
-  ad_unit: 'AD_UNIT_NAME',
-  size: 'RENDERED_CREATIVE_SIZE',
-  device: 'DEVICE_CATEGORY_NAME',
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  size: ['RENDERED_CREATIVE_SIZE'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
+  day: ['DATE'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
+// Whether two dimension lists name the same pair (or single dimension), not
+// merely equal strings — PRIMARY/SECONDARY entries are now [ID, NAME] arrays,
+// so by:'device' + group_by:'device' produces two distinct array instances
+// with identical contents; `!==` would miss that and double the dimension.
+function sameDims(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((d, i) => d === b[i]);
+}
+
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   by: z
     .enum(['ad_unit', 'size', 'device'])
     .default('ad_unit')
@@ -28,7 +37,7 @@ const inputSchema = z.object({
     .describe('Optional secondary slice.'),
   top_n: z.number().int().min(1).max(500).default(50)
     .describe('Maximum rows to surface.'),
-});
+}).strict();
 
 export const viewabilityBreakdownTool = buildReportTool({
   name: 'viewability_breakdown',
@@ -43,9 +52,9 @@ export const viewabilityBreakdownTool = buildReportTool({
     const primary = PRIMARY[input.by];
     const secondary = SECONDARY[input.group_by];
     // Guard against by:'device' + group_by:'device' emitting a duplicate dim.
-    const useSecondary = secondary && secondary !== primary ? secondary : null;
+    const useSecondary = secondary && !sameDims(secondary, primary) ? secondary : null;
     return {
-      dimensions: useSecondary ? [primary, useSecondary] : [primary],
+      dimensions: useSecondary ? [...primary, ...useSecondary] : [...primary],
       metrics: [
         'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS',
         'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS',
@@ -55,8 +64,10 @@ export const viewabilityBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Viewability by ${input.by}${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Viewability by ${input.by}${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'ACTIVE_VIEW_MEASURABLE_IMPRESSIONS', descending: true }),
 });

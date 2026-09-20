@@ -1,14 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { gzipSync } from 'node:zlib';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { consentMessagingTool } from '../../src/tools/consent_messaging.js';
 import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
+import { makeCtx, NETWORK } from '../helpers.js';
 import { GAM_SCHEMA } from '../../src/schema.js';
-import type { ReportQuery, DateRange } from '../../src/gam-client.js';
+import type { ReportDefinition } from '../../src/report-definition.js';
 
 const EU_METRICS = [
   'EUROPEAN_REGULATIONS_MESSAGES_SHOWN',
@@ -35,24 +30,17 @@ const ATT_METRICS = [
   'USER_MESSAGES_IDFA_NO_DECISION',
 ];
 
-const ctx = (dir: string, client: ReturnType<typeof createMockGamClient>) => ({
-  client,
-  output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-  timezone: 'UTC',
-  logger: noopLogger(),
-});
-
 // Capture the query the tool hands to the client so the report type and the
 // per-focus metric set can be asserted directly.
 const spyClient = (mock: ReturnType<typeof createMockGamClient>) => {
-  const seen: { query?: ReportQuery } = {};
+  const seen: { definition?: ReportDefinition } = {};
   return {
     seen,
     client: {
       ...mock,
-      createReport: (q: ReportQuery, dr: DateRange) => {
-        seen.query = q;
-        return mock.createReport(q, dr);
+      defineReport: (definition: ReportDefinition) => {
+        seen.definition = definition;
+        return mock.defineReport(definition);
       },
     },
   };
@@ -69,16 +57,14 @@ describe('consent_messaging metric names exist in the schema', () => {
 
 describe('consent_messaging', () => {
   it('requests the EU consent metrics under reportType PRIVACY_AND_MESSAGING', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'msg-'));
     const mock = createMockGamClient({
+      networkCode: NETWORK,
       reports: [{
         query: { dimensions: ['COUNTRY_NAME'], metrics: EU_METRICS },
-        csvGz: gzipSync(Buffer.from(
-          'country_name,european_regulations_messages_shown,european_regulations_consent_rate,' +
-          'european_regulations_no_consent_rate,european_regulations_custom_consent_rate\n' +
-          'Country A,120000,0.71,0.19,0.10\n' +
-          'Country B,80000,0.64,0.28,0.08\n',
-        )),
+        rows: [
+          { COUNTRY_NAME: 'Country A', EUROPEAN_REGULATIONS_MESSAGES_SHOWN: 120000, EUROPEAN_REGULATIONS_CONSENT_RATE: 0.71, EUROPEAN_REGULATIONS_NO_CONSENT_RATE: 0.19, EUROPEAN_REGULATIONS_CUSTOM_CONSENT_RATE: 0.10 },
+          { COUNTRY_NAME: 'Country B', EUROPEAN_REGULATIONS_MESSAGES_SHOWN: 80000, EUROPEAN_REGULATIONS_CONSENT_RATE: 0.64, EUROPEAN_REGULATIONS_NO_CONSENT_RATE: 0.28, EUROPEAN_REGULATIONS_CUSTOM_CONSENT_RATE: 0.08 },
+        ],
       }],
     });
     const { seen, client } = spyClient(mock);
@@ -88,31 +74,27 @@ describe('consent_messaging', () => {
       focus: 'eu_consent',
       group_by: 'country',
     });
-    const r = await consentMessagingTool.handler(args, ctx(dir, client));
+    const r = await consentMessagingTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    expect(seen.query?.report_type).toBe('PRIVACY_AND_MESSAGING');
-    expect(seen.query?.metrics).toEqual(EU_METRICS);
-    expect(seen.query?.dimensions).toEqual(['COUNTRY_NAME']);
-    expect(r.row_count).toBe(2);
-    expect(r.rows?.[0].european_regulations_consent_rate).toBe('0.71');
-    rmSync(dir, { recursive: true, force: true });
+    expect(seen.definition?.reportType).toBe('PRIVACY_AND_MESSAGING');
+    expect(seen.definition?.metrics).toEqual(EU_METRICS);
+    expect(seen.definition?.dimensions).toEqual(['COUNTRY_NAME']);
+    expect(r.total_row_count).toBe(2);
+    expect(r.rows[0]?.EUROPEAN_REGULATIONS_CONSENT_RATE).toBe(0.71);
   });
 
   it('swaps the metric set per focus and never mixes families', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'msg-'));
     const cases: [string, string[]][] = [
       ['ad_blocking', AD_BLOCKING_METRICS],
       ['att', ATT_METRICS],
     ];
     for (const [focus, metrics] of cases) {
       const mock = createMockGamClient({
+        networkCode: NETWORK,
         reports: [{
           query: { dimensions: [], metrics },
-          csvGz: gzipSync(Buffer.from(
-            `${metrics.map((m) => m.toLowerCase()).join(',')}\n` +
-            `${metrics.map(() => '0').join(',')}\n`,
-          )),
+          rows: [Object.fromEntries(metrics.map((m) => [m, 0]))],
         }],
       });
       const { seen, client } = spyClient(mock);
@@ -121,27 +103,23 @@ describe('consent_messaging', () => {
         date_range: { start: '2026-04-01', end: '2026-04-30' },
         focus,
       });
-      const r = await consentMessagingTool.handler(args, ctx(dir, client));
+      const r = await consentMessagingTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
       if ('error' in r) throw new Error(JSON.stringify(r));
 
-      expect(seen.query?.report_type).toBe('PRIVACY_AND_MESSAGING');
-      expect(seen.query?.metrics).toEqual(metrics);
+      expect(seen.definition?.reportType).toBe('PRIVACY_AND_MESSAGING');
+      expect(seen.definition?.metrics).toEqual(metrics);
       // group_by defaults to 'none' — a single total row, no dimensions.
-      expect(seen.query?.dimensions).toEqual([]);
-      expect(seen.query?.metrics.some((m) => EU_METRICS.includes(m))).toBe(false);
+      expect(seen.definition?.dimensions).toEqual([]);
+      expect(seen.definition?.metrics.some((m) => EU_METRICS.includes(m))).toBe(false);
     }
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it('warns that an all-zero result may mean the message type is not configured', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'msg-'));
     const client = createMockGamClient({
+      networkCode: NETWORK,
       reports: [{
         query: { dimensions: ['DATE'], metrics: ATT_METRICS },
-        csvGz: gzipSync(Buffer.from(
-          `date,${ATT_METRICS.map((m) => m.toLowerCase()).join(',')}\n` +
-          `2026-04-01,${ATT_METRICS.map(() => '0').join(',')}\n`,
-        )),
+        rows: [{ DATE: '2026-04-01', ...Object.fromEntries(ATT_METRICS.map((m) => [m, 0])) }],
       }],
     });
 
@@ -150,15 +128,14 @@ describe('consent_messaging', () => {
       focus: 'att',
       group_by: 'day',
     });
-    const r = await consentMessagingTool.handler(args, ctx(dir, client));
+    const r = await consentMessagingTool.handler(args, makeCtx({}, { client, timezone: 'UTC' }));
     if ('error' in r) throw new Error(JSON.stringify(r));
 
-    const warnings = r.warnings?.join(' ') ?? '';
+    const warnings = r.warnings.join(' ');
     expect(warnings).toMatch(/not configured/i);
     expect(warnings).toMatch(/zero/i);
     // The caveat must stay feature-agnostic — it may not assume which message
     // types this publisher runs.
     expect(warnings).toMatch(/NOT additive/i);
-    rmSync(dir, { recursive: true, force: true });
   });
 });

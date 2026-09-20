@@ -2,48 +2,45 @@ import { z } from 'zod';
 import { gamError } from '../errors.js';
 import { resolveDateRange } from '../dates.js';
 import { validateCombo } from '../schema.js';
-import { readCsvGz } from '../output.js';
-import { join } from 'node:path';
-import { makeKvResolver, parseKvPair } from '../kv-rewrite.js';
-import type { ToolDefinition } from '../report-tool-builder.js';
-import type { ReportQuery, GAMClient, DateRange } from '../gam-client.js';
-import type { Logger } from '../log.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
+import { executeReport } from '../report-exec.js';
+import { AMBIGUOUS_KEY_HINT, ambiguousName, makeKvResolver, parseKvPair } from '../kv-rewrite.js';
+import { READS_GAM, type ToolDefinition } from '../report-tool-builder.js';
+import type { ReportQuery } from '../gam-client.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 
 const inputSchema = z.object({
   // KV pair to slice on, in `key=value` form (e.g. `channel_id=479`). The
   // key is resolved to a custom_targeting_key ID via lookup, then plugged
   // into CUSTOM_DIMENSION_<N>_VALUE so the report is compatible with any
   // request-time or programmatic metric.
-  kv: z.string().regex(/^[^=]+=[^=]+$/, 'must be in key=value form'),
-  date_range: dateRangeSchema,
-  metrics: z.array(z.string()).min(1).max(20),
+  kv: z.string().regex(/^[^=]+=[^=]+$/, 'must be in key=value form')
+    .describe("The key-value pair to report on, as key=value, where key is the custom targeting key's API code."),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
+  metrics: z.array(z.string()).min(1).max(20)
+    .describe('1-20 metric names from describe_schema; request-time metrics such as AD_REQUESTS are allowed.'),
   // Optional narrowing. ad_unit_id is preferred; ad_unit_name does an exact
   // displayName lookup first. order_id and line_item_id apply AND filters
   // alongside the KV filter.
-  ad_unit_id: z.number().int().positive().optional(),
-  ad_unit_name: z.string().optional(),
-  order_id: z.number().int().positive().optional(),
-  line_item_id: z.number().int().positive().optional(),
+  ad_unit_id: z.number().int().positive().optional()
+    .describe('Only this ad unit.'),
+  ad_unit_name: z.string().optional()
+    .describe('Only the ad unit with exactly this name; ignored when ad_unit_id is given.'),
+  order_id: z.number().int().positive().optional()
+    .describe('Only this order.'),
+  line_item_id: z.number().int().positive().optional()
+    .describe('Only this line item.'),
   // Extra dimensions to group by, on top of the KV slot. Default: just the
   // slot itself (one row per KV value). Pass e.g. ['DATE'] for a daily trend.
-  dimensions: z.array(z.string()).max(9).default([]),
-});
+  dimensions: z.array(z.string()).max(9).default([])
+    .describe('Up to 9 more dimensions to split each value by, e.g. ["DATE"] for a daily trend.'),
+}).strict();
 
 export const kvReportTool: ToolDefinition<typeof inputSchema> = {
   name: 'kv_report',
   description:
     "High-level KV-narrowed report. Accepts kv='key=value' (e.g. 'channel_id=479'), date_range, and metrics; internally resolves the key via lookup, picks a CUSTOM_DIMENSION slot, and runs a report that's compatible with request-time metrics (AD_REQUESTS, AdX/AdSense, etc.) that GAM normally forbids alongside KEY_VALUES_NAME. Optionally narrows by ad_unit_id, ad_unit_name (exact displayName match), order_id, or line_item_id.",
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx) {
     const parsed = parseKvPair(input.kv);
     if (!parsed) {
@@ -61,23 +58,19 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
 
-    let dateRange: DateRange;
-    try {
-      dateRange = resolveDateRange(input.date_range, ctx.timezone, ctx.now);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return gamError('INVALID_DATE_RANGE', { reason: msg });
-    }
+    const dateRange = resolveDateRange(input.date_range, { timezone: ctx.timezone, now: ctx.now, rule: 'historical' });
+    if ('error' in dateRange) return dateRange;
 
     // Resolve the KV key → ID
-    const resolve = makeKvResolver(ctx.client);
-    const keyId = await resolve(parsed.key);
-    if (!keyId) {
+    const key = await makeKvResolver(ctx.client)(parsed.key);
+    if (!key) {
       return gamError('ENTITY_NOT_FOUND', {
         entity_type: 'custom_targeting_key',
         query: parsed.key,
       });
     }
+    if ('ambiguous' in key) return ambiguousName('custom_targeting_key', parsed.key, key.ambiguous, AMBIGUOUS_KEY_HINT);
+    const keyId = key.id;
 
     // Resolve ad_unit_name if given
     let adUnitId = input.ad_unit_id;
@@ -88,16 +81,16 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
         match: 'exact',
         limit: 5,
       });
-      const hit = matches.find((m) => m.name === input.ad_unit_name)
-        ?? matches.find((m) => m.displayName === input.ad_unit_name)
-        ?? matches[0];
-      if (!hit) {
+      if (matches.length === 0) {
         return gamError('ENTITY_NOT_FOUND', {
           entity_type: 'ad_unit',
           query: input.ad_unit_name,
         });
       }
-      adUnitId = hit.id;
+      if (matches.length > 1) {
+        return ambiguousName('ad_unit', input.ad_unit_name, matches, 'Pick an ad unit from details.candidates and pass its ID as ad_unit_id.');
+      }
+      adUnitId = matches[0].id;
     }
 
     // Slot 0 is fine; we own the whole report. The CUSTOM_DIMENSION_0_VALUE
@@ -130,53 +123,13 @@ export const kvReportTool: ToolDefinition<typeof inputSchema> = {
       `Resolved '${parsed.key}' to custom_targeting_key_id=${keyId}; filtering on CUSTOM_DIMENSION_0_VALUE='${parsed.value}'.`,
     ];
 
-    const cached = ctx.reportCache?.get(query, dateRange);
-    if (cached) return ctx.output.fromInlineRows(cached, `${summary} (cached)`);
-
-    try {
-      ctx.logger.debug('report.create', {
-        tool: 'kv_report',
-        dimensions: query.dimensions,
-        metrics: query.metrics,
-        date_start: dateRange.start,
-        date_end: dateRange.end,
-      });
-      const op = await ctx.client.createReport(query, dateRange);
-      const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
-      if ('error' in status) return status;
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(status.download_url, dest);
-      if (ctx.reportCache) {
-        try {
-          const { rows } = await readCsvGz(dest);
-          ctx.reportCache.set(query, dateRange, rows);
-        } catch { /* cache best-effort */ }
-      }
-      return ctx.output.fromCsvGzFile(dest, summary, warnings);
-    } catch (e) {
-      return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
-    }
+    // The summary above already names every filter in friendlier terms than
+    // a generic clause could: `kv=channel_id=479` carries the human key name
+    // (channel_id) the CUSTOM_DIMENSION_0_VALUE filter's wire dimension name
+    // does not, since the slot→key mapping is per-query. describesFilters
+    // stops pageEnvelope adding a second "(filtered by ...)" describing the
+    // same filters again, less legibly (spec §4.7's own precedent in
+    // top_line_items: one clause, not two adjacent ones).
+    return executeReport(ctx, { tool: 'kv_report', query, dateRange, summary, warnings, describesFilters: true });
   },
 };
-
-async function pollUntilDone(client: GAMClient, name: string, timeoutMs: number, logger: Logger) {
-  const start = Date.now();
-  let delay = 2000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await client.pollOperation(name);
-    const elapsed_ms = Date.now() - start;
-    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
-    if (s.state === 'done') {
-      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
-      return { download_url: s.download_url };
-    }
-    if (s.state === 'failed') {
-      logger.warn('report.failed', { operation: name, reason: s.reason });
-      return gamError('REPORT_FAILED', { reason: s.reason });
-    }
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
-  return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
-}

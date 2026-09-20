@@ -1,67 +1,61 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { resolveDateRange } from '../dates.js';
+import { rangeRuleFor, resolveDateRange } from '../dates.js';
 import {
   validateCombo,
-  resolveDimensionAlias,
+  canonicalizeQuery,
   resolveReportType,
   SUPPORTED_REPORT_TYPES,
 } from '../schema.js';
-import { readCsvGz } from '../output.js';
-import { join } from 'node:path';
-import type { ToolDefinition } from '../report-tool-builder.js';
-import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
-import type { Logger } from '../log.js';
+import { executeReport } from '../report-exec.js';
+import { READS_GAM, type ToolDefinition } from '../report-tool-builder.js';
+import type { ReportQuery } from '../gam-client.js';
 import { makeKvResolver, maybeRewriteKvFilter } from '../kv-rewrite.js';
-import { REACH_NON_ADDITIVE_WARNING } from './reach_report.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
-
-const filterSchema = z.object({
-  field: z.string(),
-  // GAM has no EQUALS/NOT_EQUALS — use IN/NOT_IN with a single value (the
-  // = / != aliases here translate that). CONTAINS/NOT_CONTAINS do substring
-  // match on string fields (e.g., AD_UNIT_NAME CONTAINS "sports").
-  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
-  value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
-});
+import { dateRangeInput, filterInput } from '../tool-input.js';
 
 const inputSchema = z.object({
-  dimensions: z.array(z.string()).min(1).max(10),
-  metrics: z.array(z.string()).min(1).max(20),
-  date_range: dateRangeSchema,
-  filters: z.array(filterSchema).optional(),
+  dimensions: z.array(z.string()).min(1).max(10)
+    .describe('1-10 dimension names from describe_schema, in the column order wanted.'),
+  metrics: z.array(z.string()).min(1).max(20)
+    .describe(
+      '1-20 metric names from describe_schema, in the column order wanted. The metrics choose the report type; ' +
+      'metrics of different report types cannot be mixed.',
+    ),
+  date_range: dateRangeInput(
+    'The dates to report on: { start, end } or { relative }. A historical report must end by yesterday; ' +
+    'a sell-through forecast must start today or later and be given as dates. Dates are judged in the date time zone (GAM_TIMEZONE).',
+  ),
+  filters: z.array(filterInput).optional()
+    .describe('Conditions every row must meet; all of them apply.'),
   // Required when querying CUSTOM_DIMENSION_<N>_VALUE dimensions. Index N in
   // the dimension name maps to index N in this array (i.e., slot 0 = key at
   // index 0). Find IDs via lookup(entity_type='custom_targeting_key').
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
-});
+  custom_dimension_key_ids: z.array(z.number().int().positive()).optional()
+    .describe(
+      'Custom targeting key IDs for CUSTOM_DIMENSION_<N>_VALUE dimensions: the ID at index N fills slot N. ' +
+      'Find them with lookup(entity_type="custom_targeting_key").',
+    ),
+}).strict();
 
 export const runReportTool: ToolDefinition<typeof inputSchema> = {
   name: 'run_report',
   description:
-    'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns standard envelope (inline if small, file path if large). Asking only for reach metrics (UNIQUE_VISITORS, REACH_IMPRESSIONS, AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR) switches GAM to its REACH report type automatically; those cannot be mixed with historical metrics in one call.',
+    'Run an arbitrary GAM report. Pick dimensions and metrics from describe_schema. Date range accepts absolute {start,end} or {relative: enum}. Returns the first page of rows with provenance; when more rows exist, pass next_cursor to fetch_report_page. Asking only for reach metrics (UNIQUE_VISITORS, REACH_IMPRESSIONS, AVERAGE_IMPRESSIONS_PER_UNIQUE_VISITOR) switches GAM to its REACH report type automatically; those cannot be mixed with historical metrics in one call.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx) {
-    // Rewrite alias dimension names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE)
-    // to their canonical REST names before validating, so familiar names don't
-    // trip the unknown-dimension check or get rejected by GAM.
-    const aliasWarnings: string[] = [];
-    const dimensions = input.dimensions.map((d) => {
-      const canonical = resolveDimensionAlias(d);
-      if (canonical !== d) {
-        aliasWarnings.push(`Dimension '${d}' is not a GAM REST dimension; queried as '${canonical}'.`);
-      }
-      return canonical;
+    // Rewrite alias names (e.g. CREATIVE_SIZE → RENDERED_CREATIVE_SIZE) in both
+    // dimensions and filter fields to their canonical REST names before
+    // validating, so a familiar name doesn't trip the unknown-name check or
+    // get rejected by GAM -- and a filter spelled the same as its dimension
+    // resolves too, not just the dimension.
+    const canonical = canonicalizeQuery({
+      dimensions: input.dimensions,
+      metrics: input.metrics,
+      filters: input.filters,
+      custom_dimension_key_ids: input.custom_dimension_key_ids,
     });
+    const { dimensions, filters } = canonical.query;
 
     const comboError = validateCombo({ dimensions, metrics: input.metrics });
     if (comboError) {
@@ -79,25 +73,21 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       });
     }
 
-    let dateRange;
-    try {
-      dateRange = resolveDateRange(input.date_range, ctx.timezone, ctx.now);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return gamError('INVALID_DATE_RANGE', { reason: msg });
-    }
+    const dateRange = resolveDateRange(input.date_range, {
+      timezone: ctx.timezone,
+      now: ctx.now,
+      rule: rangeRuleFor(reportType),
+    });
+    if ('error' in dateRange) return dateRange;
 
     let query: ReportQuery = {
       dimensions,
       metrics: input.metrics,
-      filters: input.filters,
+      filters,
       custom_dimension_key_ids: input.custom_dimension_key_ids,
       report_type: reportType,
     };
-    const warnings: string[] = [...aliasWarnings];
-    if (reportType === 'REACH') {
-      warnings.push(REACH_NON_ADDITIVE_WARNING);
-    }
+    const warnings: string[] = [...canonical.warnings];
     // The whitelist covers every metric GAM declares, including families whose
     // report type this server has no purpose-built tool for. Those requests are
     // forwarded as-is — GAM may still reject them for reasons we can't predict.
@@ -121,6 +111,8 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
         tool: 'run_report',
         warning: rewrite.warning,
       });
+    } else if ('failure' in rewrite) {
+      return rewrite.failure;
     } else if ('error' in rewrite && rewrite.error) {
       return gamError('INVALID_INPUT', {
         reason: rewrite.error,
@@ -132,57 +124,6 @@ export const runReportTool: ToolDefinition<typeof inputSchema> = {
       `Report: dims=[${query.dimensions.join(',')}] metrics=[${query.metrics.join(',')}] ` +
       `${dateRange.start}..${dateRange.end}`;
 
-    // Cache hit: skip create→poll→download entirely.
-    const cached = ctx.reportCache?.get(query, dateRange);
-    if (cached) return ctx.output.fromInlineRows(cached, `${summary} (cached)`);
-
-    try {
-      ctx.logger.debug('report.create', {
-        tool: 'run_report',
-        dimensions: query.dimensions,
-        metrics: query.metrics,
-        date_start: dateRange.start,
-        date_end: dateRange.end,
-      });
-      const op = await ctx.client.createReport(query, dateRange);
-      const status = await pollUntilDone(ctx.client, op.operation_name, ctx.reportTimeoutMs ?? 300_000, ctx.logger);
-      if ('error' in status) return status;
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(status.download_url, dest);
-      // Read once for the cache, then either inline-or-file via output manager.
-      // The output manager re-reads the file but on subsequent identical
-      // queries the cache short-circuits before we ever hit createReport.
-      if (ctx.reportCache) {
-        try {
-          const { rows } = await readCsvGz(dest);
-          ctx.reportCache.set(query, dateRange, rows);
-        } catch { /* cache best-effort; envelope path is authoritative */ }
-      }
-      return ctx.output.fromCsvGzFile(dest, summary, warnings.length ? warnings : undefined);
-    } catch (e) {
-      return gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) });
-    }
+    return executeReport(ctx, { tool: 'run_report', query, dateRange, summary, warnings });
   },
 };
-
-async function pollUntilDone(client: GAMClient, name: string, timeoutMs: number, logger: Logger) {
-  const start = Date.now();
-  let delay = 2000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await client.pollOperation(name);
-    const elapsed_ms = Date.now() - start;
-    logger.debug('report.poll', { operation: name, state: s.state, elapsed_ms });
-    if (s.state === 'done') {
-      logger.info('report.done', { operation: name, total_elapsed_ms: elapsed_ms });
-      return { download_url: s.download_url };
-    }
-    if (s.state === 'failed') {
-      logger.warn('report.failed', { operation: name, reason: s.reason });
-      return gamError('REPORT_FAILED', { reason: s.reason });
-    }
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  logger.error('report.timeout', { operation: name, timeout_ms: timeoutMs });
-  return gamError('REPORT_TIMEOUT', { timeout_ms: timeoutMs });
-}

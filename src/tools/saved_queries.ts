@@ -1,43 +1,36 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import { validateCombo } from '../schema.js';
+import { canonicalizeQuery, validateCombo } from '../schema.js';
 import { runReportTool } from './run_report.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
-
-const RELATIVE = z.enum([
-  'today', 'yesterday', 'last_7_days', 'last_30_days', 'last_week',
-  'last_full_month', 'month_to_date', 'quarter_to_date', 'last_quarter', 'year_to_date',
-]);
-
-const dateRangeSchema = z.union([
-  z.object({ start: z.string(), end: z.string() }),
-  z.object({ relative: RELATIVE }),
-]);
-
-const filterSchema = z.object({
-  field: z.string(),
-  op: z.enum(['=', 'IN', '!=', 'CONTAINS', 'NOT_CONTAINS']).default('='),
-  value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
-});
+import { READS_GAM, READS_LOCAL, WRITES_LOCAL, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
+import { dateRangeInput, filterInput } from '../tool-input.js';
 
 const savedBodySchema = z.object({
   dimensions: z.array(z.string()).min(1).max(10),
   metrics: z.array(z.string()).min(1).max(20),
-  filters: z.array(filterSchema).optional(),
+  filters: z.array(filterInput).optional(),
   custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
 });
 
 // ------------------------------- save_query -------------------------------
 
 const saveInput = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, 'name must be alphanumeric / _ / -'),
-  description: z.string().max(500).optional(),
-  dimensions: z.array(z.string()).min(1).max(10),
-  metrics: z.array(z.string()).min(1).max(20),
-  filters: z.array(filterSchema).optional(),
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
-  replace: z.boolean().default(false),
-});
+  name: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, 'name must be alphanumeric / _ / -')
+    .describe('Name to save the template under: letters, digits, _ and -, at most 64 characters.'),
+  description: z.string().max(500).optional()
+    .describe('What the template is for, at most 500 characters.'),
+  dimensions: z.array(z.string()).min(1).max(10)
+    .describe('1-10 dimension names, as run_report takes them.'),
+  metrics: z.array(z.string()).min(1).max(20)
+    .describe('1-20 metric names, as run_report takes them.'),
+  filters: z.array(filterInput).optional()
+    .describe('Filters, as run_report takes them.'),
+  custom_dimension_key_ids: z.array(z.number().int().positive()).optional()
+    .describe('Custom targeting key IDs for CUSTOM_DIMENSION_<N>_VALUE dimensions, as run_report takes them.'),
+  replace: z.boolean().default(false)
+    .describe('Overwrite a template that already has this name. Without it, saving under a taken name fails.'),
+}).strict();
 
 export const saveQueryTool: ToolDefinition<typeof saveInput> = {
   name: 'save_query',
@@ -48,11 +41,24 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
     'Set replace=true to overwrite an existing name (default refuses). ' +
     'Storage location is the file pointed to by GAM_SAVED_QUERIES_FILE (default: ${XDG_CONFIG_HOME:-$HOME/.config}/gam-mcp/saved-queries.json).',
   input: saveInput,
+  annotations: WRITES_LOCAL,
   async handler(input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
     }
-    const comboError = validateCombo({ dimensions: input.dimensions, metrics: input.metrics });
+    // Resolve familiar names (e.g. CREATIVE_SIZE) the same way run_report does,
+    // so a template saved with an alias replays correctly and isn't refused up
+    // front the way it used to be. The rewrite is disclosed via warnings here
+    // -- the only point in the alias lifecycle it happens, since a replayed
+    // template is already canonical and run_report's own re-resolution is a
+    // silent no-op on it.
+    const canonical = canonicalizeQuery({
+      dimensions: input.dimensions,
+      metrics: input.metrics,
+      filters: input.filters,
+    });
+    const { dimensions, filters } = canonical.query;
+    const comboError = validateCombo({ dimensions, metrics: input.metrics });
     if (comboError) {
       return gamError('INVALID_INPUT', { reason: comboError, hint: 'Call describe_schema for valid names.' });
     }
@@ -66,28 +72,31 @@ export const saveQueryTool: ToolDefinition<typeof saveInput> = {
     const entry = ctx.savedQueries.save(
       input.name,
       {
-        dimensions: input.dimensions,
+        dimensions,
         metrics: input.metrics,
-        ...(input.filters && { filters: input.filters }),
+        ...(filters && { filters }),
         ...(input.custom_dimension_key_ids && { custom_dimension_key_ids: input.custom_dimension_key_ids }),
       },
       input.description,
     );
-    return ctx.output.fromInlineRows(
+    return listEnvelope(
       [{ name: entry.name, saved_at: entry.saved_at, description: entry.description ?? '' }],
       `Saved query "${entry.name}" (${existing ? 'replaced' : 'new'}).`,
+      undefined,
+      canonical.warnings,
     );
   },
 };
 
 // ---------------------------- list_saved_queries --------------------------
 
-const listInput = z.object({});
+const listInput = z.object({}).strict();
 
 export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
   name: 'list_saved_queries',
   description: 'List all saved query templates with their names, descriptions, and save timestamps.',
   input: listInput,
+  annotations: READS_LOCAL,
   async handler(_input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
@@ -100,22 +109,23 @@ export const listSavedQueriesTool: ToolDefinition<typeof listInput> = {
       metrics: e.body.metrics.join(','),
       saved_at: e.saved_at,
     }));
-    return ctx.output.fromInlineRows(rows, `${entries.length} saved query template(s).`);
+    return listEnvelope(rows, `${entries.length} saved query template(s).`);
   },
 };
 
 // ---------------------------- run_saved_query -----------------------------
 
 const runInput = z.object({
-  name: z.string().min(1),
-  date_range: dateRangeSchema,
-});
+  name: z.string().min(1).describe('The saved template to run.'),
+  date_range: dateRangeInput('The dates to run the template over, with the same rules as run_report.'),
+}).strict();
 
 export const runSavedQueryTool: ToolDefinition<typeof runInput> = {
   name: 'run_saved_query',
   description:
     'Replay a previously saved query against a fresh date_range. The saved template provides dimensions/metrics/filters/custom_dimension_key_ids; you supply the time window. Equivalent to calling run_report with the saved fields merged in.',
   input: runInput,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
@@ -147,20 +157,32 @@ export const runSavedQueryTool: ToolDefinition<typeof runInput> = {
 
 // ---------------------------- delete_saved_query --------------------------
 
-const deleteInput = z.object({ name: z.string().min(1) });
+const deleteInput = z.object({
+  name: z.string().min(1).describe('The saved template to delete.'),
+}).strict();
 
 export const deleteSavedQueryTool: ToolDefinition<typeof deleteInput> = {
   name: 'delete_saved_query',
   description: 'Delete a saved query template by name. Returns success even if the name did not exist.',
   input: deleteInput,
+  annotations: WRITES_LOCAL,
   async handler(input, ctx: ToolContext) {
     if (!ctx.savedQueries) {
       return gamError('INTERNAL_ERROR', { reason: 'saved-query store is not configured' });
     }
     const removed = ctx.savedQueries.delete(input.name);
-    return ctx.output.fromInlineRows(
+    return listEnvelope(
       [{ name: input.name, removed: String(removed) }],
       removed ? `Deleted saved query "${input.name}".` : `No saved query named "${input.name}".`,
     );
   },
 };
+
+// The saved-query tools, as one list: `toolsFor` keeps them off HTTP and the
+// tests read the same list, so the set cannot be described twice and drift.
+export const SAVED_QUERY_TOOLS: ToolDefinition[] = [
+  saveQueryTool,
+  listSavedQueriesTool,
+  runSavedQueryTool,
+  deleteSavedQueryTool,
+];

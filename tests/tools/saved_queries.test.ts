@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import {
   saveQueryTool,
   listSavedQueriesTool,
@@ -10,28 +9,13 @@ import {
   deleteSavedQueryTool,
 } from '../../src/tools/saved_queries.js';
 import { createSavedQueryStore } from '../../src/saved-queries.js';
-import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
-
-function makeCtx() {
-  const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
-  const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
-  return {
-    dir,
-    ctx: {
-      client: createMockGamClient(),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'UTC',
-      logger: noopLogger(),
-      savedQueries,
-    },
-  };
-}
+import { makeCtx } from '../helpers.js';
 
 describe('saved_queries tools', () => {
   it('save_query persists and rejects duplicate names without replace=true', async () => {
-    const { ctx, dir } = makeCtx();
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx({}, { savedQueries });
     const args = saveQueryTool.input.parse({
       name: 'wow_revenue',
       dimensions: ['DATE'],
@@ -47,46 +31,71 @@ describe('saved_queries tools', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('save_query accepts the CREATIVE_SIZE alias in dimensions and a same-named filter, stores it canonicalized, and warns (only disclosure point in the lifecycle)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx({}, { savedQueries });
+    const args = saveQueryTool.input.parse({
+      name: 'by_creative_size',
+      dimensions: ['CREATIVE_SIZE'],
+      metrics: ['IMPRESSIONS'],
+      filters: [{ field: 'CREATIVE_SIZE', op: '=', value: '300x250' }],
+    });
+    const r = await saveQueryTool.handler(args, ctx);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    const entry = savedQueries.get('by_creative_size');
+    expect(entry?.body.dimensions).toEqual(['RENDERED_CREATIVE_SIZE']);
+    expect(entry?.body.filters).toEqual([{ field: 'RENDERED_CREATIVE_SIZE', op: '=', value: '300x250' }]);
+    // Two rewrites (the dimension and the filter field), each naming both the
+    // given and the canonical spelling -- the only place this rewrite is ever
+    // disclosed, since a replayed template is already canonical and
+    // run_report's own re-resolution of it is a silent no-op.
+    expect(r.warnings).toHaveLength(2);
+    for (const w of r.warnings) expect(w).toMatch(/CREATIVE_SIZE.*RENDERED_CREATIVE_SIZE/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('list_saved_queries returns saved entries', async () => {
-    const { ctx, dir } = makeCtx();
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx({}, { savedQueries });
     await saveQueryTool.handler(
       saveQueryTool.input.parse({ name: 'a', dimensions: ['DATE'], metrics: ['REVENUE'] }),
       ctx,
     );
     const r = await listSavedQueriesTool.handler({}, ctx);
     if (!('rows' in r)) throw new Error(JSON.stringify(r));
-    expect(r.rows!.map((x) => x.name)).toEqual(['a']);
+    expect(r.rows.map((x) => x.name)).toEqual(['a']);
     rmSync(dir, { recursive: true, force: true });
   });
 
   it('run_saved_query replays against a fresh date_range via run_report', async () => {
-    const { ctx, dir } = makeCtx();
-    // Replace mock client with one that has a matching report fixture.
-    const csv = gzipSync(Buffer.from('date,revenue\n2026-04-01,123\n'));
-    const ctxWithReport = {
-      ...ctx,
-      client: createMockGamClient({
-        reports: [{
-          query: { dimensions: ['DATE'], metrics: ['REVENUE'] },
-          csvGz: csv,
-        }],
-      }),
-    };
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx(
+      { reports: [{
+        query: { dimensions: ['DATE'], metrics: ['REVENUE'] },
+        rows: [{ DATE: '2026-04-01', REVENUE: 123 }],
+      }] },
+      { timezone: 'UTC', savedQueries },
+    );
     await saveQueryTool.handler(
       saveQueryTool.input.parse({ name: 'rev', dimensions: ['DATE'], metrics: ['REVENUE'] }),
-      ctxWithReport,
+      ctx,
     );
     const r = await runSavedQueryTool.handler(
       runSavedQueryTool.input.parse({ name: 'rev', date_range: { start: '2026-04-01', end: '2026-04-01' } }),
-      ctxWithReport,
+      ctx,
     );
-    if (!('row_count' in r)) throw new Error(JSON.stringify(r));
-    expect(r.row_count).toBe(1);
+    if ('error' in r) throw new Error(JSON.stringify(r));
+    expect(r.total_row_count).toBe(1);
     rmSync(dir, { recursive: true, force: true });
   });
 
   it('run_saved_query returns ENTITY_NOT_FOUND for unknown name', async () => {
-    const { ctx, dir } = makeCtx();
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx({}, { timezone: 'UTC', savedQueries });
     const r = await runSavedQueryTool.handler(
       { name: 'nope', date_range: { start: '2026-04-01', end: '2026-04-01' } },
       ctx,
@@ -99,14 +108,16 @@ describe('saved_queries tools', () => {
   });
 
   it('delete_saved_query removes the entry', async () => {
-    const { ctx, dir } = makeCtx();
+    const dir = mkdtempSync(join(tmpdir(), 'sqt-'));
+    const savedQueries = createSavedQueryStore(join(dir, 'q.json'));
+    const ctx = makeCtx({}, { savedQueries });
     await saveQueryTool.handler(
       saveQueryTool.input.parse({ name: 'x', dimensions: ['DATE'], metrics: ['REVENUE'] }),
       ctx,
     );
     const r = await deleteSavedQueryTool.handler({ name: 'x' }, ctx);
     if (!('rows' in r)) throw new Error(JSON.stringify(r));
-    expect(r.rows![0].removed).toBe('true');
+    expect(r.rows[0].removed).toBe('true');
     const list = await listSavedQueriesTool.handler({}, ctx);
     if (!('rows' in list)) throw new Error(JSON.stringify(list));
     expect(list.rows).toEqual([]);

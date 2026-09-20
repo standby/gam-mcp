@@ -9,17 +9,19 @@ import {
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createRequire } from 'node:module';
-import { ALL_TOOLS } from './tools/index.js';
+import type { Readable, Writable } from 'node:stream';
+import { toolsFor, type TransportMode } from './tools/index.js';
 import { GAM_SCHEMA } from './schema.js';
 import { PROMPTS, renderPrompt } from './prompts.js';
-import type { ToolContext } from './report-tool-builder.js';
-import { gamError } from './errors.js';
-import { z } from 'zod';
+import type { ToolContext, ToolDefinition } from './report-tool-builder.js';
+import { gamError, isGamError, type GamErrorEnvelope } from './errors.js';
+import { toJsonSchema } from './json-schema.js';
+import { describeInputError } from './tool-input.js';
 
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
-export function listToolNames(): string[] {
-  return ALL_TOOLS.map((t) => t.name);
+export function listToolNames(mode: TransportMode = 'stdio'): string[] {
+  return toolsFor(mode).map((t) => t.name);
 }
 
 type ResourceDef = {
@@ -54,12 +56,19 @@ export function listResources(): ResourceDef[] {
   return RESOURCES;
 }
 
-function networkResource(networkCode: string, timezone: string): ResourceDef {
+function networkResource(ctx: ToolContext): ResourceDef {
   return {
     uri: 'gam://network',
     name: 'GAM network identity',
-    description: 'Network code and configured timezone this MCP is reporting on.',
-    body: () => ({ network_code: networkCode, timezone }),
+    description:
+      'The network this MCP reports on, its currency, the time zone GAM counts report days in, ' +
+      'and the time zone dates are chosen in (GAM_TIMEZONE).',
+    body: () => ({
+      network_code: ctx.networkCode,
+      currency_code: ctx.currencyCode,
+      report_time_zone: ctx.reportTimeZone,
+      date_time_zone: ctx.timezone,
+    }),
   };
 }
 
@@ -79,29 +88,31 @@ export function installStdoutGuard(): () => void {
   return () => { process.stdout.write = original; };
 }
 
-// Build the MCP Server with every capability and tool registered, but don't
-// connect a transport yet. Callers choose how to connect (stdio, HTTP, etc.)
-// — this split lets us keep the existing stdio entrypoint unchanged while
-// supporting alternate transports.
-export function buildMcpServer(
-  ctx: ToolContext,
-  opts: { networkCode: string } = { networkCode: '' },
-): Server {
+export type ServerOptions = {
+  // Which transport the server is built for; it decides the tool set.
+  mode: TransportMode;
+  // Replaces the mode's tool set (tests).
+  tools?: ToolDefinition[];
+};
+
+// Build the MCP Server with every capability and the mode's tools
+// registered, but don't connect a transport yet: stdio connects one server,
+// HTTP builds one per request.
+export function buildMcpServer(ctx: ToolContext, opts: ServerOptions): Server {
+  const tools = opts.tools ?? toolsFor(opts.mode);
   const server = new Server(
     { name: 'gam-mcp', version: pkg.version },
     { capabilities: { tools: {}, resources: {}, prompts: {} } },
   );
 
-  const resources = [
-    ...RESOURCES,
-    ...(opts.networkCode ? [networkResource(opts.networkCode, ctx.timezone)] : []),
-  ];
+  const resources = [...RESOURCES, networkResource(ctx)];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: ALL_TOOLS.map((t) => ({
+    tools: tools.map((t) => ({
       name: t.name,
       description: t.description,
-      inputSchema: zodToJsonSchema(t.input),
+      inputSchema: toJsonSchema(t.input),
+      annotations: t.annotations,
     })),
   }));
 
@@ -159,76 +170,41 @@ export function buildMcpServer(
     const argKeys = Object.keys(req.params.arguments ?? {});
     ctx.logger.info('tool.call.start', { tool: toolName, arg_keys: argKeys });
     const start = Date.now();
+    const end = (ok: boolean) => ctx.logger.info('tool.call.end', { tool: toolName, duration_ms: Date.now() - start, ok });
+    // Every way a call can fail ends here: flagged, logged, and closed with
+    // one tool.call.end line like a success.
+    const failed = (err: GamErrorEnvelope) => {
+      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
+      end(false);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(err) }], isError: true };
+    };
 
-    const tool = ALL_TOOLS.find((t) => t.name === toolName);
-    if (!tool) {
-      const err = gamError('INVALID_INPUT', { reason: `Unknown tool ${toolName}` });
-      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
-      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
-    }
+    const tool = tools.find((t) => t.name === toolName);
+    if (!tool) return failed(gamError('INVALID_INPUT', { reason: `Unknown tool ${toolName}` }));
     const parsed = tool.input.safeParse(req.params.arguments ?? {});
-    if (!parsed.success) {
-      const err = gamError('INVALID_INPUT', { reason: parsed.error.message });
-      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason: err.error.message });
-      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
-    }
+    if (!parsed.success) return failed(gamError('INVALID_INPUT', { reason: describeInputError(parsed.error) }));
     try {
       const result = await tool.handler(parsed.data, ctx);
-      const duration_ms = Date.now() - start;
-      // Result is either an envelope or a gamError; check the discriminator.
-      if (result && typeof result === 'object' && 'error' in result) {
-        const e = (result as { error: { code: string; message: string } }).error;
-        ctx.logger.warn('tool.call.error', { tool: toolName, error_code: e.code, reason: e.message });
-        ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
-      } else {
-        ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: true });
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      if (isGamError(result)) return failed(result);
+      // Serialised before the call is logged closed: a failure here is still a
+      // failed call, and must not follow an end line that already said ok.
+      const text = JSON.stringify(result);
+      end(true);
+      return { content: [{ type: 'text', text }] };
     } catch (e) {
-      const duration_ms = Date.now() - start;
-      const reason = e instanceof Error ? e.message : String(e);
-      const err = gamError('INTERNAL_ERROR', { reason });
-      ctx.logger.warn('tool.call.error', { tool: toolName, error_code: err.error.code, reason });
-      ctx.logger.info('tool.call.end', { tool: toolName, duration_ms, ok: false });
-      return { content: [{ type: 'text', text: JSON.stringify(err) }], isError: true };
+      return failed(gamError('INTERNAL_ERROR', { reason: e instanceof Error ? e.message : String(e) }));
     }
   });
 
   return server;
 }
 
-export async function startMcpServer(
+// Serves over stdio: this process's stdin and stdout, or the streams given.
+export async function connectStdio(
   ctx: ToolContext,
-  opts: { networkCode: string } = { networkCode: '' },
-): Promise<void> {
-  const server = buildMcpServer(ctx, opts);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
-
-// Minimal zod → JSON Schema. zod has many third-party converters; for v1 we
-// emit a permissive schema that lets the LLM at least see field names.
-function zodToJsonSchema(schema: z.ZodTypeAny): unknown {
-  if (schema instanceof z.ZodObject) {
-    const shape = (schema as z.ZodObject<any>).shape;
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-    for (const key of Object.keys(shape)) {
-      const sub = shape[key];
-      properties[key] = zodToJsonSchema(sub);
-      if (!sub.isOptional()) required.push(key);
-    }
-    return { type: 'object', properties, required };
-  }
-  if (schema instanceof z.ZodString) return { type: 'string' };
-  if (schema instanceof z.ZodNumber) return { type: 'number' };
-  if (schema instanceof z.ZodBoolean) return { type: 'boolean' };
-  if (schema instanceof z.ZodArray) return { type: 'array', items: zodToJsonSchema((schema as z.ZodArray<any>).element) };
-  if (schema instanceof z.ZodEnum) return { type: 'string', enum: (schema as z.ZodEnum<any>).options };
-  if (schema instanceof z.ZodOptional) return zodToJsonSchema((schema as z.ZodOptional<any>).unwrap());
-  if (schema instanceof z.ZodUnion) return { anyOf: (schema as z.ZodUnion<any>).options.map(zodToJsonSchema) };
-  if (schema instanceof z.ZodDefault) return zodToJsonSchema((schema as any)._def.innerType);
-  // ZodEffects wraps the schema in .refine/.transform/.preprocess; descend.
-  if (schema instanceof z.ZodEffects) return zodToJsonSchema((schema as z.ZodEffects<any>).innerType());
-  return {};
+  io: { stdin: Readable; stdout: Writable } = { stdin: process.stdin, stdout: process.stdout },
+): Promise<Server> {
+  const server = buildMcpServer(ctx, { mode: 'stdio' });
+  await server.connect(new StdioServerTransport(io.stdin, io.stdout));
+  return server;
 }

@@ -2,6 +2,7 @@ import { lookupTool } from './lookup.js';
 import { describeSchemaTool } from './describe_schema.js';
 import { describeLineItemTool } from './describe_line_item.js';
 import { runReportTool } from './run_report.js';
+import { fetchReportPageTool } from './fetch_report_page.js';
 import { revenueSummaryTool } from './revenue_summary.js';
 import { topAdvertisersTool } from './top_advertisers.js';
 import { topLineItemsTool } from './top_line_items.js';
@@ -26,20 +27,18 @@ import { diagnoseFillRateTool } from './diagnose_fill_rate.js';
 import { diagnoseFloorPricingTool } from './diagnose_floor_pricing.js';
 import { healthCheckTool } from './health_check.js';
 import { usageStatsTool } from './usage_stats.js';
-import {
-  saveQueryTool,
-  listSavedQueriesTool,
-  runSavedQueryTool,
-  deleteSavedQueryTool,
-} from './saved_queries.js';
+import { SAVED_QUERY_TOOLS } from './saved_queries.js';
 import type { ToolDefinition } from '../report-tool-builder.js';
-import type { ZodTypeAny } from 'zod';
 
-export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
+export type TransportMode = 'stdio' | 'http';
+
+// Tools every transport serves.
+const SHARED_TOOLS: ToolDefinition[] = [
   lookupTool,
   describeSchemaTool,
   describeLineItemTool,
   runReportTool,
+  fetchReportPageTool,
   revenueSummaryTool,
   topAdvertisersTool,
   topLineItemsTool,
@@ -64,8 +63,13 @@ export const ALL_TOOLS: ToolDefinition<ZodTypeAny>[] = [
   diagnoseFloorPricingTool,
   healthCheckTool,
   usageStatsTool,
-  saveQueryTool,
-  listSavedQueriesTool,
-  runSavedQueryTool,
-  deleteSavedQueryTool,
-] as unknown as ToolDefinition<ZodTypeAny>[];
+];
+
+// Saved queries live in a file on the machine the server runs on and are
+// shared by everyone it serves, so only stdio offers them (spec D-3, §3.5).
+export function toolsFor(mode: TransportMode): ToolDefinition[] {
+  return mode === 'stdio' ? [...SHARED_TOOLS, ...SAVED_QUERY_TOOLS] : [...SHARED_TOOLS];
+}
+
+// Every tool this server has: the stdio set.
+export const ALL_TOOLS: ToolDefinition[] = toolsFor('stdio');

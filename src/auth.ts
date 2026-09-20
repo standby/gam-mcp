@@ -1,5 +1,5 @@
 import { GoogleAuth } from 'google-auth-library';
-import { gamError } from './errors.js';
+import { CredentialError, gamError } from './errors.js';
 import type { Logger } from './log.js';
 import { noopLogger } from './log.js';
 
@@ -19,33 +19,62 @@ export type AuthSource =
   | { type: 'json'; credentials: Record<string, unknown> }
   | { type: 'adc' };
 
-const SCOPES = ['https://www.googleapis.com/auth/admanager'];
+// The only scope any credential asks for (spec D-6): admanager.readonly cannot
+// create reports. Read-only behaviour is held by what the client can send
+// (test H7), not by the scope.
+export const SCOPES = ['https://www.googleapis.com/auth/admanager'];
+
+// The failure kind for a credential the library accepted but that yielded no token.
+const NO_ACCESS_TOKEN = 'no access token';
 
 export function createGoogleAuth(source: AuthSource, logger: Logger = noopLogger()): GoogleAuthLike {
   const auth = new GoogleAuth(authOptionsFor(source));
   return {
     async getAccessToken() {
       logger.debug('auth.token_refresh', { source: source.type });
+      // The library's messages can quote the key it failed to parse, so only
+      // the failure's kind is logged or passed on.
+      const fail = (reason: string): never => {
+        logger.error('auth.token_failure', { source: source.type, reason });
+        throw new CredentialError(source.type, reason);
+      };
+      let token: string | null | undefined;
       try {
         const client = await auth.getClient();
-        const t = await client.getAccessToken();
-        return t.token ?? null;
+        token = (await client.getAccessToken()).token;
       } catch (e) {
-        // Only the error MESSAGE — never the underlying error object or stack,
-        // which may include request URLs with credentials in headers.
-        logger.error('auth.token_failure', { message: e instanceof Error ? e.message : String(e), source: source.type });
-        throw e;
+        return fail(failureKind(e));
       }
+      return token || fail(NO_ACCESS_TOKEN);
     },
   };
 }
 
-function authOptionsFor(source: AuthSource): ConstructorParameters<typeof GoogleAuth>[0] {
+export function authOptionsFor(source: AuthSource): ConstructorParameters<typeof GoogleAuth>[0] {
   switch (source.type) {
     case 'file': return { keyFile: source.path, scopes: SCOPES };
     case 'json': return { credentials: source.credentials as never, scopes: SCOPES };
     case 'adc':  return { scopes: SCOPES };
   }
+}
+
+const SAFE_WORD = /^[A-Za-z0-9_.-]{1,64}$/;
+
+// What kind of failure the auth library reported (error class, system or
+// OpenSSL code, HTTP status, OAuth error code), without any of its text.
+export function failureKind(e: unknown): string {
+  const x = (typeof e === 'object' && e !== null ? e : {}) as {
+    name?: unknown;
+    code?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown } };
+  };
+  const parts: string[] = [];
+  if (typeof x.name === 'string' && SAFE_WORD.test(x.name)) parts.push(x.name);
+  if (typeof x.code === 'string' && SAFE_WORD.test(x.code)) parts.push(x.code);
+  if (typeof x.response?.status === 'number') parts.push(`HTTP ${x.response.status}`);
+  const oauth = x.response?.data?.error;
+  if (typeof oauth === 'string' && SAFE_WORD.test(oauth)) parts.push(oauth);
+  return parts.length > 0 ? parts.join(' ') : 'unknown failure';
 }
 
 // Inspect env and pick the right credential source. Precedence:
@@ -72,7 +101,12 @@ export function resolveAuthSource(env: NodeJS.ProcessEnv): ResolveResult {
       return {
         error: {
           code: 'AUTH_FAILED',
-          message: `GAM_SERVICE_ACCOUNT_KEY_JSON is set but is not valid JSON: ${decoded.error}`,
+          // Fixed sentence, deliberately naming no reason: whatever went wrong
+          // (not JSON, not base64 of JSON, or JSON that isn't an object), the
+          // detail lives only in decodeInlineCredentials and never reaches
+          // here, because the parser's own message can quote the value it
+          // failed to parse.
+          message: 'GAM_SERVICE_ACCOUNT_KEY_JSON is not valid JSON (raw or base64-encoded).',
           hint: 'Pass raw service-account JSON or base64-encoded JSON. Check for shell-quoting issues (newlines in env vars often need base64).',
         },
       };
@@ -83,19 +117,23 @@ export function resolveAuthSource(env: NodeJS.ProcessEnv): ResolveResult {
   return { source: { type: 'adc' } };
 }
 
-function decodeInlineCredentials(raw: string): { credentials: Record<string, unknown> } | { error: string } {
+// Every failure mode collapses to `{ error: true }`, with no reason string:
+// JSON.parse's own message can quote the value it failed to parse (spec D1),
+// so no text derived from `raw` — parser message or otherwise — leaves this
+// function. resolveAuthSource turns any of these into one fixed sentence.
+function decodeInlineCredentials(raw: string): { credentials: Record<string, unknown> } | { error: true } {
   // Raw JSON: starts with `{`. Anything else: try base64-decode first, then parse.
   const trimmed = raw.trim();
   const jsonText = trimmed.startsWith('{')
     ? trimmed
     : tryBase64Decode(trimmed);
-  if (jsonText === null) return { error: 'value does not look like JSON or base64' };
+  if (jsonText === null) return { error: true };
   try {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-    if (typeof parsed !== 'object' || parsed === null) return { error: 'JSON value is not an object' };
+    if (typeof parsed !== 'object' || parsed === null) return { error: true };
     return { credentials: parsed };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+  } catch {
+    return { error: true };
   }
 }
 

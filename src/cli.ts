@@ -1,81 +1,99 @@
 #!/usr/bin/env node
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startMcpServer, buildMcpServer, installStdoutGuard } from './server.js';
-import { connectHttp } from './http-transport.js';
-import { createOutputManager } from './output.js';
+import { buildMcpServer, connectStdio, installStdoutGuard } from './server.js';
+import { connectHttp, HttpListenError } from './http-transport.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from './auth.js';
 import { createRestGamClient, withRetries } from './gam-client-rest.js';
-import { createReportCache } from './cache.js';
 import { createLogger, levelFromEnv } from './log.js';
+import { resolvePageRows } from './report-exec.js';
 import { createSavedQueryStore, defaultSavedQueriesPath } from './saved-queries.js';
+import {
+  checkNetworkIdentity,
+  chooseDateTimeZone,
+  ignoredInStdio,
+  openReportCache,
+  readHttpSettings,
+  readSettings,
+} from './startup.js';
 import { createUsageCounters, instrumentGamClient } from './usage.js';
 
-function requiredEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) {
-    process.stderr.write(`gam-mcp: ${name} is required\n`);
-    process.exit(2);
-  }
-  return v;
+function stop(message: string): never {
+  process.stderr.write(`gam-mcp: ${message}\n`);
+  process.exit(2);
 }
 
 async function main(): Promise<void> {
   // Only install the stdout guard for stdio mode — in HTTP mode stdout is
   // free for normal logging since MCP frames go over HTTP, not stdout.
-  const httpPort = process.env.GAM_HTTP_PORT ? Number(process.env.GAM_HTTP_PORT) : null;
-  if (httpPort === null) installStdoutGuard();
+  const http = readHttpSettings(process.env);
+  if (http === null) installStdoutGuard();
+  if (http !== null && 'error' in http) stop(http.error);
 
-  const networkCode = requiredEnv('GAM_NETWORK_CODE');
-  const timezone = process.env.GAM_TIMEZONE ?? 'UTC';
-  const inlineThreshold = Number(process.env.GAM_INLINE_ROW_THRESHOLD ?? 200);
-  const reportTimeoutMs = Number(process.env.GAM_REPORT_TIMEOUT_MS ?? 300_000);
-
+  // Everything that can be checked without the network is checked first.
+  const settings = readSettings(process.env);
+  if ('error' in settings) stop(settings.error);
+  const { networkCode } = settings;
   const logger = createLogger({ level: levelFromEnv(process.env) });
+  const pageRows = resolvePageRows(process.env.GAM_PAGE_ROWS, logger);
+  if (typeof pageRows !== 'number') stop(pageRows.error);
+  if (http === null) {
+    for (const variable of ignoredInStdio(process.env)) {
+      logger.warn('config.ignored', { variable, reason: 'only HTTP mode (GAM_HTTP_PORT) reads it' });
+    }
+  }
+  if (process.env.GAM_INLINE_ROW_THRESHOLD !== undefined) {
+    logger.warn('config.ignored', {
+      variable: 'GAM_INLINE_ROW_THRESHOLD',
+      reason: 'results are paged; set GAM_PAGE_ROWS instead',
+    });
+  }
+  const reportCache = openReportCache(settings, logger);
+  if ('error' in reportCache) stop(reportCache.error);
 
   const resolved = resolveAuthSource(process.env);
-  if ('error' in resolved) {
-    process.stderr.write(`gam-mcp: ${resolved.error.message}\n  hint: ${resolved.error.hint}\n`);
-    process.exit(2);
-  }
+  if ('error' in resolved) stop(`${resolved.error.message}\n  hint: ${resolved.error.hint}`);
   logger.info('auth.source_resolved', { source: resolved.source.type });
 
-  const tempDir = mkdtempSync(join(tmpdir(), `gam-mcp-${process.pid}-`));
-  const output = createOutputManager({ tempDir, inlineThreshold });
-
   const auth = createGoogleAuth(resolved.source, logger);
-  const authFetch = createAuthFetch(auth);
-  // Retry transient failures (429 quota, 5xx, network) with exponential
-  // backoff so a single hiccup doesn't kill a multi-step LLM session.
-  const fetchImpl = withRetries(authFetch, { logger });
+  // Transient failures are retried with backoff; a POST only on 429 (spec §2.3).
+  const fetchImpl = withRetries(createAuthFetch(auth), { logger });
   const rawClient = createRestGamClient({ networkCode, fetchImpl });
+
+  // Nothing is served until the credential has read the network (spec §2.4).
+  const network = await checkNetworkIdentity(rawClient, networkCode, resolved.source.type);
+  if ('error' in network) stop(network.error);
+  const timezone = chooseDateTimeZone(settings.dateTimeZone, network, logger);
+
   const usageCounters = createUsageCounters();
   const client = instrumentGamClient(rawClient, usageCounters);
-
-  const cleanup = () => {
-    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    process.exit(0);
-  };
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
-
-  const reportCache = createReportCache({
-    logger,
-    ...(process.env.GAM_REPORT_CACHE_DIR && { diskDir: process.env.GAM_REPORT_CACHE_DIR }),
-    ...(process.env.GAM_REPORT_CACHE_TTL_MS && { ttlMs: Number(process.env.GAM_REPORT_CACHE_TTL_MS) }),
-  });
   const savedQueries = createSavedQueryStore(defaultSavedQueriesPath(process.env));
-  const ctx = { client, output, timezone, reportTimeoutMs, reportCache, logger, savedQueries, usageCounters };
-  if (httpPort !== null) {
-    if (!Number.isFinite(httpPort) || httpPort <= 0 || httpPort > 65535) {
-      process.stderr.write(`gam-mcp: GAM_HTTP_PORT must be a valid port number, got ${process.env.GAM_HTTP_PORT}\n`);
-      process.exit(2);
-    }
+  const ctx = {
+    client,
+    timezone,
+    reportTimeZone: network.timeZone,
+    currencyCode: network.currencyCode,
+    networkCode,
+    pageRows,
+    reportTimeoutMs: settings.reportTimeoutMs,
+    reportCache,
+    logger,
+    savedQueries,
+    usageCounters,
+  };
+  if (http === null) {
+    await connectStdio(ctx);
+    return;
+  }
+  try {
     // A factory: stateless HTTP needs a fresh server per request, not one shared.
-    await connectHttp(() => buildMcpServer(ctx, { networkCode }), { port: httpPort, logger });
-  } else {
-    await startMcpServer(ctx, { networkCode });
+    await connectHttp(() => buildMcpServer(ctx, { mode: 'http' }), {
+      port: http.port,
+      logger,
+      bearerToken: http.bearerToken,
+      allowedHosts: http.allowedHosts,
+    });
+  } catch (e) {
+    if (e instanceof HttpListenError) stop(e.message);
+    throw e;
   }
 }
 

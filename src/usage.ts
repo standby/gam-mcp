@@ -8,10 +8,10 @@ export type UsageCounters = {
   get_resource_calls: number;
   report_jobs_created: number;
   poll_operations: number;
-  reports_downloaded: number;
-  report_cache_hits: number;
-  report_cache_misses: number;
   cumulative_report_latency_ms: number;
+  report_definitions_created: number;
+  report_pages_fetched: number;
+  report_lookups: number;
 };
 
 export function createUsageCounters(): UsageCounters {
@@ -21,16 +21,16 @@ export function createUsageCounters(): UsageCounters {
     get_resource_calls: 0,
     report_jobs_created: 0,
     poll_operations: 0,
-    reports_downloaded: 0,
-    report_cache_hits: 0,
-    report_cache_misses: 0,
     cumulative_report_latency_ms: 0,
+    report_definitions_created: 0,
+    report_pages_fetched: 0,
+    report_lookups: 0,
   };
 }
 
 // Wrap a GAMClient so every method call ticks the relevant counter. The wrap
 // is transparent — same interface, same return shapes. Report latency is
-// measured around createReport→pollOperation→download since that's the
+// measured around pollOperation/runReport/fetchRows since that's the
 // quota-burning operation the LLM should be aware of.
 export function instrumentGamClient(client: GAMClient, counters: UsageCounters): GAMClient {
   return {
@@ -42,14 +42,9 @@ export function instrumentGamClient(client: GAMClient, counters: UsageCounters):
       counters.get_resource_calls += 1;
       return client.getResource(path);
     },
-    async createReport(query, dateRange) {
-      counters.report_jobs_created += 1;
-      const start = Date.now();
-      try {
-        return await client.createReport(query, dateRange);
-      } finally {
-        counters.cumulative_report_latency_ms += Date.now() - start;
-      }
+    // The startup identity check, not a per-call cost, so it is not counted.
+    async getNetwork() {
+      return client.getNetwork();
     },
     async pollOperation(name) {
       counters.poll_operations += 1;
@@ -60,14 +55,35 @@ export function instrumentGamClient(client: GAMClient, counters: UsageCounters):
         counters.cumulative_report_latency_ms += Date.now() - start;
       }
     },
-    async downloadReport(downloadUrl, destPath) {
-      counters.reports_downloaded += 1;
+    async defineReport(definition) {
+      counters.report_definitions_created += 1;
+      return client.defineReport(definition);
+    },
+    async runReport(report) {
+      counters.report_jobs_created += 1;
       const start = Date.now();
       try {
-        return await client.downloadReport(downloadUrl, destPath);
+        return await client.runReport(report);
       } finally {
         counters.cumulative_report_latency_ms += Date.now() - start;
       }
+    },
+    async fetchRows(result, page) {
+      counters.report_pages_fetched += 1;
+      const start = Date.now();
+      try {
+        return await client.fetchRows(result, page);
+      } finally {
+        counters.cumulative_report_latency_ms += Date.now() - start;
+      }
+    },
+    async getReport(report) {
+      counters.report_lookups += 1;
+      return client.getReport(report);
+    },
+    async listReports(q) {
+      counters.report_lookups += 1;
+      return client.listReports(q);
     },
   };
 }

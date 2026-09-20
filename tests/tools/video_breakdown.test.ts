@@ -1,12 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { gzipSync } from 'node:zlib';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { videoBreakdownTool } from '../../src/tools/video_breakdown.js';
-import { createMockGamClient } from '../../src/gam-client.js';
-import { createOutputManager } from '../../src/output.js';
-import { noopLogger } from '../../src/log.js';
+import { makeCtx } from '../helpers.js';
 
 const METRICS = [
   'VIDEO_VIEWERSHIP_STARTS',
@@ -19,46 +13,58 @@ const METRICS = [
 
 describe('video_breakdown', () => {
   it('returns the completion funnel by ad unit', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vid-'));
-    const csv =
-      'ad_unit_name,video_viewership_starts,video_viewership_first_quartiles,video_viewership_midpoints,video_viewership_third_quartiles,video_viewership_completes,video_viewership_completion_rate\n' +
-      'Homepage,100000,90000,80000,70000,60000,0.6\n';
     const args = videoBreakdownTool.input.parse({
       date_range: { start: '2026-04-01', end: '2026-04-07' },
     });
-    const r = await videoBreakdownTool.handler(args, {
-      client: createMockGamClient({
-        reports: [{ query: { dimensions: ['AD_UNIT_NAME'], metrics: METRICS }, csvGz: gzipSync(Buffer.from(csv)) }],
-      }),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'UTC',
-      logger: noopLogger(),
-    });
+    const r = await videoBreakdownTool.handler(
+      args,
+      makeCtx(
+        { reports: [{
+          query: { dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'], metrics: METRICS },
+          rows: [{
+            AD_UNIT_ID: 1,
+            AD_UNIT_NAME: 'Homepage',
+            VIDEO_VIEWERSHIP_STARTS: 100000,
+            VIDEO_VIEWERSHIP_FIRST_QUARTILES: 90000,
+            VIDEO_VIEWERSHIP_MIDPOINTS: 80000,
+            VIDEO_VIEWERSHIP_THIRD_QUARTILES: 70000,
+            VIDEO_VIEWERSHIP_COMPLETES: 60000,
+            VIDEO_VIEWERSHIP_COMPLETION_RATE: 0.6,
+          }],
+        }] },
+        { timezone: 'UTC' },
+      ),
+    );
     if ('error' in r) throw new Error(JSON.stringify(r));
-    expect(r.row_count).toBe(1);
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.total_row_count).toBe(1);
   });
 
   it('slices by placement type with a secondary dimension', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vid-'));
-    const csv =
-      'video_plcmt_name,date,video_viewership_starts,video_viewership_first_quartiles,video_viewership_midpoints,video_viewership_third_quartiles,video_viewership_completes,video_viewership_completion_rate\n' +
-      'In-stream,2026-04-01,50000,45000,40000,35000,30000,0.6\n';
     const args = videoBreakdownTool.input.parse({
       date_range: { start: '2026-04-01', end: '2026-04-01' },
       by: 'placement',
       group_by: 'day',
     });
-    const r = await videoBreakdownTool.handler(args, {
-      client: createMockGamClient({
-        reports: [{ query: { dimensions: ['VIDEO_PLCMT_NAME', 'DATE'], metrics: METRICS }, csvGz: gzipSync(Buffer.from(csv)) }],
-      }),
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: 'UTC',
-      logger: noopLogger(),
-    });
+    const r = await videoBreakdownTool.handler(
+      args,
+      makeCtx(
+        { reports: [{
+          query: { dimensions: ['VIDEO_PLCMT_NAME', 'DATE'], metrics: METRICS },
+          rows: [{
+            VIDEO_PLCMT_NAME: 'In-stream',
+            DATE: '2026-04-01',
+            VIDEO_VIEWERSHIP_STARTS: 50000,
+            VIDEO_VIEWERSHIP_FIRST_QUARTILES: 45000,
+            VIDEO_VIEWERSHIP_MIDPOINTS: 40000,
+            VIDEO_VIEWERSHIP_THIRD_QUARTILES: 35000,
+            VIDEO_VIEWERSHIP_COMPLETES: 30000,
+            VIDEO_VIEWERSHIP_COMPLETION_RATE: 0.6,
+          }],
+        }] },
+        { timezone: 'UTC' },
+      ),
+    );
     if ('error' in r) throw new Error(JSON.stringify(r));
-    expect(r.row_count).toBe(1);
-    rmSync(dir, { recursive: true, force: true });
+    expect(r.total_row_count).toBe(1);
   });
 });

@@ -4,7 +4,9 @@ import {
   nextFreeSlot,
   maybeRewriteKvFilter,
   isKvFilterIncompatibleWithMetrics,
+  makeKvResolver,
 } from '../src/kv-rewrite.js';
+import { createMockGamClient } from '../src/gam-client.js';
 
 describe('kv-rewrite', () => {
   it('parseKvPair splits on the first =', () => {
@@ -35,7 +37,7 @@ describe('kv-rewrite', () => {
   });
 
   it('maybeRewriteKvFilter rewrites a conflicting filter to CUSTOM_DIMENSION_0_VALUE', async () => {
-    const resolver = async (k: string) => (k === 'channel_id' ? 12345 : null);
+    const resolver = async (k: string) => (k === 'channel_id' ? { id: 12345 } : null);
     const r = await maybeRewriteKvFilter(
       {
         dimensions: ['DATE'],
@@ -54,7 +56,7 @@ describe('kv-rewrite', () => {
   });
 
   it('maybeRewriteKvFilter picks the next free slot when slot 0 is already used', async () => {
-    const resolver = async () => 999;
+    const resolver = async () => ({ id: 999 });
     const r = await maybeRewriteKvFilter(
       {
         dimensions: ['DATE'],
@@ -79,7 +81,7 @@ describe('kv-rewrite', () => {
         metrics: ['REVENUE', 'IMPRESSIONS'],
         filters: [{ field: 'KEY_VALUES_NAME', op: '=', value: 'channel_id=479' }],
       },
-      async () => 12345,
+      async () => ({ id: 12345 }),
     );
     expect(r.rewritten).toBe(false);
   });
@@ -105,7 +107,7 @@ describe('kv-rewrite', () => {
         metrics: ['AD_REQUESTS'],
         filters: [{ field: 'KEY_VALUES_NAME', op: '=', value: 'no_equals_sign' }],
       },
-      async () => 12345,
+      async () => ({ id: 12345 }),
     );
     if (r.rewritten || !('error' in r)) throw new Error('expected error');
     expect(r.error).toMatch(/key=value/);
@@ -118,9 +120,49 @@ describe('kv-rewrite', () => {
         metrics: ['AD_REQUESTS'],
         filters: [{ field: 'KEY_VALUES_NAME', op: 'IN', value: ['channel_id=1', 'channel_id=2'] }],
       },
-      async () => 12345,
+      async () => ({ id: 12345 }),
     );
     if (r.rewritten || !('error' in r)) throw new Error('expected error');
     expect(r.error).toMatch(/array/);
+  });
+
+  describe('a key name that matches more than one key (spec §3.3)', () => {
+    const keys = [
+      { id: 11, name: 'section', displayName: 'Section' },
+      { id: 12, name: 'section', displayName: 'Section (old)' },
+      { id: 13, name: 'topic' },
+    ];
+    const resolve = makeKvResolver(createMockGamClient({ entities: { custom_targeting_key: keys } }));
+
+    it('makeKvResolver returns every candidate instead of the first', async () => {
+      expect(await resolve('section')).toEqual({ ambiguous: [keys[0], keys[1]] });
+      expect(await resolve('topic')).toEqual({ id: 13 });
+      expect(await resolve('nothing')).toBeNull();
+    });
+
+    it('maybeRewriteKvFilter returns AMBIGUOUS_NAME with the candidates', async () => {
+      const r = await maybeRewriteKvFilter(
+        {
+          dimensions: ['DATE'],
+          metrics: ['AD_REQUESTS'],
+          filters: [{ field: 'KEY_VALUES_NAME', op: '=', value: 'section=news' }],
+        },
+        resolve,
+      );
+      if (r.rewritten || !('failure' in r)) throw new Error(`expected a failure, got ${JSON.stringify(r)}`);
+      expect(r.failure.error).toMatchObject({
+        code: 'AMBIGUOUS_NAME',
+        message: 'Multiple custom_targeting_keys matched "section".',
+        details: {
+          entity_type: 'custom_targeting_key',
+          query: 'section',
+          candidates: [
+            { id: 11, name: 'section', displayName: 'Section' },
+            { id: 12, name: 'section', displayName: 'Section (old)' },
+          ],
+        },
+      });
+      expect(r.failure.error.hint).toContain('custom_dimension_key_ids');
+    });
   });
 });

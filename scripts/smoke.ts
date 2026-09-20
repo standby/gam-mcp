@@ -1,13 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createRestGamClient, withRetries } from '../src/gam-client-rest.js';
 import { createGoogleAuth, createAuthFetch, resolveAuthSource } from '../src/auth.js';
 import { resolveDateRange } from '../src/dates.js';
 import { describeLineItemTool } from '../src/tools/describe_line_item.js';
-import { createOutputManager } from '../src/output.js';
 import { noopLogger } from '../src/log.js';
-import type { GAMClient } from '../src/gam-client.js';
+import type { GAMClient, NetworkInfo } from '../src/gam-client.js';
+import { reportDefinition } from '../src/report-definition.js';
 
 async function main(): Promise<void> {
   const networkCode = process.env.GAM_NETWORK_CODE;
@@ -22,51 +19,55 @@ async function main(): Promise<void> {
     process.stderr.write(`${resolved.error.message} ${resolved.error.hint}\n`);
     process.exit(2);
   }
-  const tz = process.env.GAM_TIMEZONE ?? 'America/Los_Angeles';
-
   const auth = createGoogleAuth(resolved.source);
   // Same retry wrapper the server installs (src/cli.ts), so the smoke run
   // absorbs 429s the way a real session does instead of dropping them.
   const fetchImpl = withRetries(createAuthFetch(auth));
   const client = createRestGamClient({ networkCode, fetchImpl });
 
+  process.stderr.write('0. Reading the network identity...\n');
+  const network = await client.getNetwork();
+  process.stderr.write(`   time zone=${network.timeZone} currency=${network.currencyCode}\n`);
+  const tz = process.env.GAM_TIMEZONE ?? network.timeZone;
+
   process.stderr.write('1. Listing 5 most recent orders...\n');
   const orders = await client.listEntities({ entity_type: 'order' });
   process.stderr.write(`   got ${orders.length} orders; first: ${JSON.stringify(orders[0])}\n`);
 
   process.stderr.write('2. Running tiny report (yesterday, top advertisers, impressions)...\n');
-  await tinyReport(client, tz);
+  await tinyReport(client, tz, network);
 
   process.stderr.write('3. By-id lookups (line_item / ad_unit / placement — these used to 400)...\n');
   await byIdLookups(client);
 
   process.stderr.write('4. describe_line_item on live line items...\n');
-  await describeSome(client, tz, networkCode);
+  await describeSome(client, tz, network);
 
   // Opt-in: GAM_SMOKE_SCAN=<n> walks up to n line items looking for a negated
   // custom-targeting clause, the one branch a single line item rarely covers.
   const scan = Number(process.env.GAM_SMOKE_SCAN ?? 0);
   if (scan > 0) {
     process.stderr.write(`5. Scanning up to ${scan} line items for a negated clause...\n`);
-    await scanForNegation(client, tz, scan);
+    await scanForNegation(client, tz, network, scan);
   }
 
   process.stderr.write('SMOKE OK\n');
 }
 
-async function tinyReport(client: GAMClient, tz: string): Promise<void> {
+async function tinyReport(client: GAMClient, tz: string, network: NetworkInfo): Promise<void> {
   const range = resolveDateRange({ relative: 'yesterday' }, tz);
-  const op = await client.createReport(
-    { dimensions: ['ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
+  const { report } = await client.defineReport(reportDefinition(
+    { dimensions: ['ADVERTISER_ID', 'ADVERTISER_NAME'], metrics: ['IMPRESSIONS'] },
     range,
-  );
-  process.stderr.write(`   operation: ${op.operation_name}\n`);
+    network,
+  ));
+  const { operation } = await client.runReport(report);
+  process.stderr.write(`   report: ${report} operation: ${operation}\n`);
   for (let attempts = 0; attempts < 60; attempts++) {
-    const s = await client.pollOperation(op.operation_name);
+    const s = await client.pollOperation(operation);
     if (s.state === 'done') {
-      process.stderr.write(`   done; download: ${s.download_url}\n`);
-      const path = await client.downloadReport(s.download_url, '/tmp/gam-mcp-smoke.csv.gz');
-      process.stderr.write(`   wrote: ${path}\n`);
+      const page = await client.fetchRows(s.result, { pageSize: 5 });
+      process.stderr.write(`   done; rows on first page=${page.rows.length} total=${page.totalRowCount ?? 'n/a'}\n`);
       return;
     }
     if (s.state === 'failed') throw new Error(`report failed: ${s.reason}`);
@@ -143,107 +144,101 @@ async function pickLineItemIds(client: GAMClient, networkCode: string): Promise<
   return (await client.listEntities({ entity_type: 'line_item', limit: 10 })).map((e) => e.id);
 }
 
-async function describeSome(client: GAMClient, tz: string, networkCode: string): Promise<void> {
-  const ids = (await pickLineItemIds(client, networkCode)).slice(0, 10);
+async function describeSome(client: GAMClient, tz: string, network: NetworkInfo): Promise<void> {
+  const ids = (await pickLineItemIds(client, network.networkCode)).slice(0, 10);
   if (ids.length === 0) {
     process.stderr.write('   no line items to describe, skipped\n');
     return;
   }
-  const dir = mkdtempSync(join(tmpdir(), 'gam-smoke-'));
-  try {
-    const r = await describeLineItemTool.handler({ ids }, {
-      client,
-      output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-      timezone: tz,
-      logger: noopLogger(),
-    }) as Record<string, any>;
-    if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
+  const r = await describeLineItemTool.handler({ ids }, {
+    client,
+    timezone: tz,
+    logger: noopLogger(),
+    networkCode: network.networkCode,
+    reportTimeZone: network.timeZone,
+    currencyCode: network.currencyCode,
+  }) as Record<string, any>;
+  if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
 
-    const items: any[] = r.line_items;
-    const clauses = items.flatMap((li) => li.custom_targeting);
-    const withTargeting = items.filter((li) => li.custom_targeting.length > 0).length;
-    // A label that is still a resource path means resolution missed it.
-    const stillRaw = clauses
-      .flatMap((c: { key: string; values: string[] }) => [c.key, ...c.values])
-      .filter((v: string) => v.startsWith('networks/')).length;
-    // Counts and enums only — no targeting values are printed, so a smoke log
-    // is safe to paste anywhere.
-    // Field names only, never values — these are schema, not publisher data.
-    const unmapped = [...new Set(clauses.flatMap((c: { unrecognized_fields?: Record<string, unknown> }) =>
-      Object.keys(c.unrecognized_fields ?? {})))];
-    process.stderr.write(
-      `   described=${items.length} with_custom_targeting=${withTargeting} clauses=${clauses.length}` +
-      ` negated=${clauses.filter((c: { op: string }) => c.op === 'IS NONE OF').length}` +
-      ` referenced=${r.resolution.referenced} resolved=${r.resolution.resolved}` +
-      ` missing=${r.resolution.missing} failed=${r.resolution.failed} unresolved_labels=${stillRaw}` +
-      (unmapped.length ? ` unmapped_literal_fields=${unmapped.join(',')}` : '') + '\n',
+  const items: any[] = r.line_items;
+  const clauses = items.flatMap((li) => li.custom_targeting);
+  const withTargeting = items.filter((li) => li.custom_targeting.length > 0).length;
+  // A label that is still a resource path means resolution missed it.
+  const stillRaw = clauses
+    .flatMap((c: { key: string; values: string[] }) => [c.key, ...c.values])
+    .filter((v: string) => v.startsWith('networks/')).length;
+  // Counts and enums only — no targeting values are printed, so a smoke log
+  // is safe to paste anywhere.
+  // Field names only, never values — these are schema, not publisher data.
+  const unmapped = [...new Set(clauses.flatMap((c: { unrecognized_fields?: Record<string, unknown> }) =>
+    Object.keys(c.unrecognized_fields ?? {})))];
+  process.stderr.write(
+    `   described=${items.length} with_custom_targeting=${withTargeting} clauses=${clauses.length}` +
+    ` negated=${clauses.filter((c: { op: string }) => c.op === 'IS NONE OF').length}` +
+    ` referenced=${r.resolution.referenced} resolved=${r.resolution.resolved}` +
+    ` missing=${r.resolution.missing} failed=${r.resolution.failed} unresolved_labels=${stillRaw}` +
+    (unmapped.length ? ` unmapped_literal_fields=${unmapped.join(',')}` : '') + '\n',
+  );
+  if (r.resolution.failed > 0) {
+    throw new Error(
+      `${r.resolution.failed} of ${r.resolution.referenced} targeting path(s) failed to fetch — ` +
+      'labels are unknown, not absent',
     );
-    if (r.resolution.failed > 0) {
-      throw new Error(
-        `${r.resolution.failed} of ${r.resolution.referenced} targeting path(s) failed to fetch — ` +
-        'labels are unknown, not absent',
-      );
-    }
-    if (stillRaw > r.resolution.missing) {
-      throw new Error(`${stillRaw} targeting label(s) stayed as raw resource paths`);
-    }
-    if (clauses.length === 0) {
-      process.stderr.write(
-        '   WARNING: none of these line items use custom targeting, so clause flattening was not exercised.\n' +
-        '   Re-run against a network segment that has key-value targeting to cover it.\n',
-      );
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+  }
+  if (stillRaw > r.resolution.missing) {
+    throw new Error(`${stillRaw} targeting label(s) stayed as raw resource paths`);
+  }
+  if (clauses.length === 0) {
+    process.stderr.write(
+      '   WARNING: none of these line items use custom targeting, so clause flattening was not exercised.\n' +
+      '   Re-run against a network segment that has key-value targeting to cover it.\n',
+    );
   }
 }
 
 // Describe line items in small batches until a negated clause turns up. Stops
 // at the first hit: the point is to confirm the IS NONE OF branch against real
 // data, not to inventory the network.
-async function scanForNegation(client: GAMClient, tz: string, max: number): Promise<void> {
+async function scanForNegation(client: GAMClient, tz: string, network: NetworkInfo, max: number): Promise<void> {
   const all = await client.listEntities({ entity_type: 'line_item', limit: max });
-  const dir = mkdtempSync(join(tmpdir(), 'gam-scan-'));
   let described = 0;
   let clausesSeen = 0;
-  try {
-    for (let i = 0; i < all.length; i += 25) {
-      const batch = all.slice(i, i + 25).map((e) => e.id);
-      const r = await describeLineItemTool.handler({ ids: batch }, {
-        client,
-        output: createOutputManager({ tempDir: dir, inlineThreshold: 200 }),
-        timezone: tz,
-        logger: noopLogger(),
-      }) as Record<string, any>;
-      if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
-      described += r.line_items.length;
-      for (const li of r.line_items as any[]) {
-        clausesSeen += li.custom_targeting.length;
-        const negated = li.custom_targeting.filter((c: { op: string }) => c.op === 'IS NONE OF');
-        const unmapped = [...new Set(li.custom_targeting.flatMap(
-          (c: { unrecognized_fields?: Record<string, unknown> }) => Object.keys(c.unrecognized_fields ?? {})))];
-        if (negated.length > 0) {
-          process.stderr.write(
-            `   line item ${li.id}: ${negated.length} negated clause(s) — IS NONE OF confirmed against live data\n`,
-          );
-          return;
-        }
-        if (unmapped.length > 0) {
-          process.stderr.write(
-            `   line item ${li.id}: unmapped literal field(s) ${unmapped.join(',')} — negation may live here\n`,
-          );
-          return;
-        }
+  for (let i = 0; i < all.length; i += 25) {
+    const batch = all.slice(i, i + 25).map((e) => e.id);
+    const r = await describeLineItemTool.handler({ ids: batch }, {
+      client,
+      timezone: tz,
+      logger: noopLogger(),
+      networkCode: network.networkCode,
+      reportTimeZone: network.timeZone,
+      currencyCode: network.currencyCode,
+    }) as Record<string, any>;
+    if ('error' in r) throw new Error(`describe_line_item: ${JSON.stringify(r.error)}`);
+    described += r.line_items.length;
+    for (const li of r.line_items as any[]) {
+      clausesSeen += li.custom_targeting.length;
+      const negated = li.custom_targeting.filter((c: { op: string }) => c.op === 'IS NONE OF');
+      const unmapped = [...new Set(li.custom_targeting.flatMap(
+        (c: { unrecognized_fields?: Record<string, unknown> }) => Object.keys(c.unrecognized_fields ?? {})))];
+      if (negated.length > 0) {
+        process.stderr.write(
+          `   line item ${li.id}: ${negated.length} negated clause(s) — IS NONE OF confirmed against live data\n`,
+        );
+        return;
       }
-      process.stderr.write(`   ${described}/${all.length} scanned, ${clausesSeen} clause(s), none negated yet\n`);
+      if (unmapped.length > 0) {
+        process.stderr.write(
+          `   line item ${li.id}: unmapped literal field(s) ${unmapped.join(',')} — negation may live here\n`,
+        );
+        return;
+      }
     }
-    process.stderr.write(
-      `   no negated clause in ${described} line item(s) (${clausesSeen} clauses). ` +
-      'IS NONE OF stays unconfirmed; try a line item known to exclude a key-value.\n',
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    process.stderr.write(`   ${described}/${all.length} scanned, ${clausesSeen} clause(s), none negated yet\n`);
   }
+  process.stderr.write(
+    `   no negated clause in ${described} line item(s) (${clausesSeen} clauses). ` +
+    'IS NONE OF stays unconfirmed; try a line item known to exclude a key-value.\n',
+  );
 }
 
 function gamMessage(e: unknown): string {

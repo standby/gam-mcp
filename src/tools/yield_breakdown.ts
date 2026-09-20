@@ -1,26 +1,27 @@
 import { z } from 'zod';
 import { buildReportTool } from '../report-tool-builder.js';
+import { dateRangeInput, HISTORICAL_RANGE } from '../tool-input.js';
 import type { ReportQuery } from '../gam-client.js';
 
 // Primary breakdown dimension: the Open Bidding partner (buyer) vs the
 // configured yield group itself.
 const PRIMARY = {
-  buyer: 'YIELD_GROUP_BUYER_NAME',
-  yield_group: 'YIELD_GROUP_NAME',
+  buyer: ['YIELD_GROUP_BUYER_NAME'],
+  yield_group: ['YIELD_GROUP_NAME'],
 } as const;
 
 // Optional secondary slice — same set as bidder_breakdown so the two read
 // alike (see *where* a partner wins).
 const SECONDARY = {
   none: null,
-  day: 'DATE',
-  ad_unit: 'AD_UNIT_NAME',
-  country: 'COUNTRY_NAME',
-  device: 'DEVICE_CATEGORY_NAME',
+  day: ['DATE'],
+  ad_unit: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
+  country: ['COUNTRY_NAME'],
+  device: ['DEVICE_CATEGORY_NAME'],
 } as const;
 
 const inputSchema = z.object({
-  date_range: z.object({ start: z.string(), end: z.string() }),
+  date_range: dateRangeInput(HISTORICAL_RANGE),
   by: z
     .enum(['buyer', 'yield_group'])
     .default('buyer')
@@ -31,7 +32,7 @@ const inputSchema = z.object({
     .describe('Optional secondary slice to see where yield comes from.'),
   top_n: z.number().int().min(1).max(500).default(50)
     .describe('Maximum rows to surface.'),
-});
+}).strict();
 
 export const yieldBreakdownTool = buildReportTool({
   name: 'yield_breakdown',
@@ -49,7 +50,7 @@ export const yieldBreakdownTool = buildReportTool({
     const primary = PRIMARY[input.by];
     const secondary = SECONDARY[input.group_by];
     return {
-      dimensions: secondary ? [primary, secondary] : [primary],
+      dimensions: secondary ? [...primary, ...secondary] : [...primary],
       metrics: [
         'YIELD_GROUP_IMPRESSIONS',
         'YIELD_GROUP_ESTIMATED_REVENUE',
@@ -59,8 +60,10 @@ export const yieldBreakdownTool = buildReportTool({
       ],
     };
   },
-  summary: (input) => {
+  summary: (input, range) => {
     const slice = input.group_by === 'none' ? '' : ` x ${input.group_by}`;
-    return `Yield group breakdown by ${input.by}${slice}, ${input.date_range.start}..${input.date_range.end} (top ${input.top_n})`;
+    return `Yield group breakdown by ${input.by}${slice}, ${range.start}..${range.end}`;
   },
+  topN: (input) => input.top_n,
+  sort: () => ({ metric: 'YIELD_GROUP_ESTIMATED_REVENUE', descending: true }),
 });

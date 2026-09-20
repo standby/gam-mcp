@@ -1,5 +1,6 @@
-import type { GAMClient, ReportQuery } from './gam-client.js';
+import type { Entity, GAMClient, ReportQuery } from './gam-client.js';
 import { incompatibleWith } from './schema.js';
+import { gamError, type GamErrorEnvelope } from './errors.js';
 
 // Pure helpers for translating KEY_VALUES_* filters into the
 // CUSTOM_DIMENSION_<N>_VALUE shape GAM actually accepts alongside request-time
@@ -35,12 +36,34 @@ export function isKvFilterIncompatibleWithMetrics(
   return metrics.some((m) => bad.has(m));
 }
 
-export type KvResolver = (keyName: string) => Promise<number | null>;
+// An entity a name could mean, as AMBIGUOUS_NAME lists it.
+export type Candidate = { id: number; name: string; displayName?: string };
 
-// Resolves a custom_targeting_key by API name (the adTagName, e.g.
-// "channel_id") to its numeric ID via the configured GAMClient. Returns null
-// when no key matches — caller is responsible for surfacing that as a
-// user-facing error.
+export function candidatesOf(entities: Entity[]): Candidate[] {
+  return entities.map((e) => ({
+    id: e.id,
+    name: e.name,
+    ...(e.displayName !== undefined && e.displayName !== e.name && { displayName: e.displayName }),
+  }));
+}
+
+// The error for a name that matches more than one entity (spec §3.3).
+export function ambiguousName(entityType: string, query: string, entities: Entity[], hint: string): GamErrorEnvelope {
+  return gamError('AMBIGUOUS_NAME', { entity_type: entityType, query, candidates: candidatesOf(entities), hint });
+}
+
+export const AMBIGUOUS_KEY_HINT =
+  'Pick a key from details.candidates and pass its ID: run_report with custom_dimension_key_ids and ' +
+  'CUSTOM_DIMENSION_0_VALUE, or kv_breakdown with custom_targeting_key_id.';
+
+// The key a name resolves to: exactly one, several, or none.
+export type KeyMatch = { id: number } | { ambiguous: Entity[] } | null;
+
+export type KvResolver = (keyName: string) => Promise<KeyMatch>;
+
+// Resolves a custom_targeting_key by API name (the adTagName) to its ID.
+// More than one key with that name is reported, never settled by picking
+// the first (spec §3.3); the caller turns null and `ambiguous` into errors.
 export function makeKvResolver(client: GAMClient): KvResolver {
   return async (keyName: string) => {
     const matches = await client.listEntities({
@@ -49,8 +72,10 @@ export function makeKvResolver(client: GAMClient): KvResolver {
       match: 'exact',
       limit: 5,
     });
-    const hit = matches.find((m) => m.name === keyName);
-    return hit?.id ?? matches[0]?.id ?? null;
+    const named = matches.filter((m) => m.name === keyName);
+    const keys = named.length > 0 ? named : matches;
+    if (keys.length === 0) return null;
+    return keys.length === 1 ? { id: keys[0].id } : { ambiguous: keys };
   };
 }
 
@@ -68,7 +93,8 @@ export function nextFreeSlot(existing: number[] | undefined): number {
 export type RewriteResult =
   | { rewritten: false }
   | { rewritten: true; query: ReportQuery; warning: string }
-  | { rewritten: false; error: string };
+  | { rewritten: false; error: string }
+  | { rewritten: false; failure: GamErrorEnvelope };
 
 // Examines a ReportQuery and, if it carries an incompatible
 // KEY_VALUES_NAME=<key>=<value> filter, rewrites it to a CUSTOM_DIMENSION
@@ -113,13 +139,17 @@ export async function maybeRewriteKvFilter(
     };
   }
 
-  const keyId = await resolve(parsed.key);
-  if (!keyId) {
+  const key = await resolve(parsed.key);
+  if (!key) {
     return {
       rewritten: false,
       error: `Unknown custom_targeting_key '${parsed.key}' — discover via lookup(entity_type="custom_targeting_key", match="exact").`,
     };
   }
+  if ('ambiguous' in key) {
+    return { rewritten: false, failure: ambiguousName('custom_targeting_key', parsed.key, key.ambiguous, AMBIGUOUS_KEY_HINT) };
+  }
+  const keyId = key.id;
 
   const slot = nextFreeSlot(query.custom_dimension_key_ids);
   if (slot === -1) {

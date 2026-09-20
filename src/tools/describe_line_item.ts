@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { gamError } from '../errors.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
 
 // Resource paths GAM embeds inside a line item's targeting. Only these
 // collections carry a label worth resolving; every other string passes
@@ -19,7 +19,7 @@ const RESOLVE_BATCH = 20;
 const inputSchema = z.object({
   ids: z.array(z.number().int().positive()).min(1).max(50)
     .describe('Line item IDs to describe, 1-50 per call. Resolve names to IDs with lookup(entity_type="line_item").'),
-});
+}).strict();
 
 export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
   name: 'describe_line_item',
@@ -36,6 +36,7 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
     'No reporting dimension exposes a targeting expression, so this is the only way to see what a line item ' +
     'targets: read it here rather than inferring it from delivery data. Read-only.',
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx: ToolContext) {
     const fetched = await Promise.all(
       input.ids.map(async (id) => ({ id, raw: await ctx.client.getResource(`lineItems/${id}`) })),
@@ -84,6 +85,13 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
         (notFound.length ? `, ${notFound.length} not found` : '') +
         `; ${resolved.size} of ${unique.length} targeting resource path(s) resolved` +
         (failed ? `, ${failed} failed to fetch` : '') + '.',
+      // Qualifiers before data (spec §1.1).
+      ...(failed ? {
+        warnings: [
+          `${failed} targeting resource path(s) could not be fetched (rate limit or permission), ` +
+          'so their labels fall back to the raw resource path. Those labels are unknown, not absent — re-run for complete output.',
+        ],
+      } : {}),
       line_items,
       resolved_paths: Object.fromEntries(resolved),
       resolution: {
@@ -93,12 +101,6 @@ export const describeLineItemTool: ToolDefinition<typeof inputSchema> = {
         failed,
       },
       ...(notFound.length ? { not_found: notFound } : {}),
-      ...(failed ? {
-        warnings: [
-          `${failed} targeting resource path(s) could not be fetched (rate limit or permission), ` +
-          'so their labels fall back to the raw resource path. Those labels are unknown, not absent — re-run for complete output.',
-        ],
-      } : {}),
     };
   },
 };

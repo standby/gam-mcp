@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { listResources } from '../src/server.js';
+import { buildMcpServer, listResources } from '../src/server.js';
+import { connectClient, makeCtx } from './helpers.js';
 import { PROMPTS, renderPrompt } from '../src/prompts.js';
 
 describe('resources', () => {
@@ -10,6 +11,17 @@ describe('resources', () => {
       'gam://schema/dimensions',
       'gam://schema/metrics',
     ]);
+  });
+
+  it('gam://network names the network, its currency and both time zones (PR 2 review)', async () => {
+    const client = await connectClient(buildMcpServer(makeCtx({}, { timezone: 'Asia/Seoul' }), { mode: 'http' }));
+    const { contents } = await client.readResource({ uri: 'gam://network' });
+    expect(JSON.parse(contents[0].text as string)).toEqual({
+      network_code: '1234',
+      currency_code: 'USD',
+      report_time_zone: 'Asia/Tokyo',
+      date_time_zone: 'Asia/Seoul',
+    });
   });
 
   it('each resource body is JSON-serializable', () => {
@@ -47,5 +59,25 @@ describe('prompts', () => {
 
   it('returns null for unknown prompt names', () => {
     expect(renderPrompt('does_not_exist', {})).toBeNull();
+  });
+
+  // spec §4.7: bundled prompts no longer ask the LLM for a number no tool
+  // produces. Pinned against every prompt's description, its arguments'
+  // descriptions, and its rendered text (default args) so the wording
+  // cannot come back in any of them.
+  function allPromptTexts(): string[] {
+    const texts: string[] = [];
+    for (const p of PROMPTS) {
+      texts.push(p.description);
+      for (const a of p.arguments) texts.push(a.description);
+      texts.push(renderPrompt(p.name, {})?.text ?? '');
+    }
+    return texts;
+  }
+
+  it('no prompt asks for a revenue estimate the tools do not produce', () => {
+    for (const text of allPromptTexts()) {
+      expect(text).not.toMatch(/estimated (lost )?revenue/i);
+    }
   });
 });

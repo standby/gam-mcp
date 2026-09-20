@@ -1,11 +1,14 @@
 import { z } from 'zod';
-import { join } from 'node:path';
-import { unlinkSync } from 'node:fs';
 import { gamError } from '../errors.js';
-import { resolveDateRange } from '../dates.js';
-import { readCsvGz } from '../output.js';
-import type { ToolDefinition, ToolContext } from '../report-tool-builder.js';
-import type { GAMClient, ReportQuery, DateRange } from '../gam-client.js';
+import { num, ratio, pct, derived } from '../derived.js';
+import { lastDays, previousPeriod, type ResolvedRange } from '../dates.js';
+import { executeReportRows, derivedEnvelope } from '../report-exec.js';
+import { cellText } from '../values.js';
+import { pacingRows, PACING_LIVE_VALUE_WARNING } from './pacing_status.js';
+import { READS_GAM, type ToolDefinition, type ToolContext } from '../report-tool-builder.js';
+import type { ReportQuery } from '../gam-client.js';
+
+const TOOL = 'find_anomalies';
 
 const inputSchema = z.object({
   kind: z.enum([
@@ -13,17 +16,20 @@ const inputSchema = z.object({
     'fill_rate_drops',
     'ecpm_regression',
     'viewability_drops',
-  ]),
-  threshold_pct: z.number().min(0).max(100).optional(),
-  top_n: z.number().int().min(1).max(200).default(25),
-});
+  ]).describe('Which anomaly to look for. Each kind reads threshold_pct in its own unit; see the tool description.'),
+  threshold_pct: z.number().min(0).max(100).optional()
+    .describe('How far from normal a row must be to be flagged, 0-100, in the unit of the chosen kind. Omit it for the kind\'s default.'),
+  top_n: z.number().int().min(1).max(200).default(25)
+    .describe('Most rows to return, 1-200, worst first.'),
+}).strict();
 
 export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
-  name: 'find_anomalies',
+  name: TOOL,
   description:
     "Surface decision-relevant anomalies. Each kind owns its own threshold unit — read carefully. " +
-    "kind='pacing_underdelivery': line items whose month-to-date impressions are below their pro-rated goal. " +
-    "threshold_pct = how far below pro-rated pace counts as 'at risk' (default 80 → flag <80% of expected). " +
+    "kind='pacing_underdelivery': LIFETIME-goal line items (last_7_days) whose GAM delivery_indicator is below " +
+    "threshold_pct / 100 (default 80 → flag an indicator below 0.80). Line items with another primary goal type are " +
+    "never flagged, because the indicator is only meaningful for a LIFETIME goal. " +
     "kind='fill_rate_drops': ad units whose fill rate dropped week-over-week by more than threshold_pct *percentage points* " +
     "(default 10pp). " +
     "kind='ecpm_regression': buyer networks (DSPs / AdX / AdSense) whose AdX average eCPM dropped week-over-week by more " +
@@ -32,6 +38,7 @@ export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
     "threshold_pct *percentage points* (default 5pp). Low-volume ad units (<10k imps either side) are filtered. " +
     "All kinds return the top_n worst rows ranked by severity.",
   input: inputSchema,
+  annotations: READS_GAM,
   async handler(input, ctx) {
     try {
       switch (input.kind) {
@@ -50,111 +57,134 @@ export const findAnomaliesTool: ToolDefinition<typeof inputSchema> = {
   },
 };
 
+// find_anomalies' one and only pacing kind: line items whose GAM
+// delivery_indicator (live, over last_7_days) says they are under threshold.
+// Shares pacingRows() with pacing_status rather than writing the eleven
+// dimensions a second time (spec §4.3).
 async function pacingUnderdelivery(
   ctx: ToolContext,
   thresholdPct: number,
   topN: number,
 ) {
-  const range = resolveDateRange({ relative: 'month_to_date' }, ctx.timezone, ctx.now);
-  // Pro-rated expected delivery: today's day-of-month / total days in month.
-  // Pacing % = (impressions / goal) / expected_progress.
-  const { daysElapsed, daysInMonth } = monthProgress(range, ctx.timezone, ctx.now);
-  const expectedProgress = daysElapsed / daysInMonth;
+  const range = lastDays(7, ctx.timezone, ctx.now);
+  const result = await pacingRows(ctx, range, [], TOOL);
+  if ('error' in result) return result;
 
-  const query: ReportQuery = {
-    dimensions: ['LINE_ITEM_ID', 'LINE_ITEM_NAME', 'LINE_ITEM_TYPE', 'LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE'],
-    metrics: ['IMPRESSIONS'],
-    // Restrict to line-item types that have meaningful goals (skip backfill).
-    filters: [{
-      field: 'LINE_ITEM_TYPE',
-      op: 'IN',
-      value: ['STANDARD', 'SPONSORSHIP', 'NETWORK', 'BULK', 'PRICE_PRIORITY'],
-    }],
-  };
-  const rows = await runAndRead(ctx, query, range);
-
-  const annotated: Record<string, string>[] = [];
-  for (const r of rows) {
-    const goal = Number(r.LINE_ITEM_PRIMARY_GOAL_UNITS_ABSOLUTE) || 0;
-    const imps = Number(r.IMPRESSIONS) || 0;
-    if (goal < 1000) continue; // skip tiny / non-goaled line items
-    const actualProgress = imps / goal;
-    const pacing = expectedProgress === 0 ? 0 : (actualProgress / expectedProgress) * 100;
-    if (pacing >= thresholdPct) continue;
-    const expectedImps = goal * expectedProgress;
-    const shortfall = Math.max(0, Math.round(expectedImps - imps));
-    annotated.push({
-      LINE_ITEM_ID: r.LINE_ITEM_ID,
-      LINE_ITEM_NAME: r.LINE_ITEM_NAME,
-      LINE_ITEM_TYPE: r.LINE_ITEM_TYPE,
-      goal: String(goal),
-      impressions_mtd: String(imps),
-      expected_mtd: String(Math.round(expectedImps)),
-      shortfall: String(shortfall),
-      pacing_pct: pacing.toFixed(1),
-    });
-  }
-  annotated.sort((a, b) => Number(b.shortfall) - Number(a.shortfall));
-  const top = annotated.slice(0, topN);
+  const threshold = thresholdPct / 100;
+  const flagged = result.rows.filter((r) => {
+    const indicator = r.delivery_indicator;
+    // Only a LIFETIME primary goal has a meaningful indicator; a null
+    // indicator (absent from GAM) cannot be compared against the threshold.
+    return r.LINE_ITEM_PRIMARY_GOAL_TYPE === 'LIFETIME' && typeof indicator === 'number' && indicator < threshold;
+  });
+  // Worst first: the lowest indicator is the furthest under pace.
+  flagged.sort((a, b) => (a.delivery_indicator as number) - (b.delivery_indicator as number));
+  const top = flagged.slice(0, topN);
   const summary =
-    `Pacing underdelivery (MTD ${range.start}..${range.end}, day ${daysElapsed}/${daysInMonth}, ` +
-    `expected ${(expectedProgress * 100).toFixed(0)}%, threshold ${thresholdPct}%): ` +
-    `${annotated.length} line items at risk, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+    `Pacing underdelivery (last 7 days ${range.start}..${range.end}, LIFETIME-goal items with delivery_indicator ` +
+    `below ${threshold.toFixed(2)} [threshold_pct=${thresholdPct}]): ${flagged.length} line items at risk, ` +
+    `top ${top.length} returned, worst first.`;
+  return derivedEnvelope(ctx, {
+    summary,
+    inputs: [result.input],
+    rows: top,
+    total_row_count: flagged.length,
+    warnings: [...result.warnings, PACING_LIVE_VALUE_WARNING],
+    null_input_rows: result.nullInputRows,
+  });
 }
+
+// lastDays(7, ...) plus the equal-length window immediately before it, as
+// fillRateDrops, ecpmRegression and viewabilityDrops all compare.
+function weekOverWeek(ctx: ToolContext): { baseRange: ResolvedRange; prevRange: ResolvedRange } {
+  const baseRange = lastDays(7, ctx.timezone, ctx.now);
+  return { baseRange, prevRange: previousPeriod(baseRange) };
+}
+
+const FILL_RATE_DROP_METHOD =
+  'Week-over-week drop in fill rate (IMPRESSIONS / AD_REQUESTS), in percentage points, restricted to ad units with ' +
+  'at least 1,000 AD_REQUESTS in the current period; flagged when the drop is at least threshold_pct percentage ' +
+  'points (default 10). A period whose fill rate cannot be computed (a missing or zero AD_REQUESTS) is never flagged.';
 
 async function fillRateDrops(
   ctx: ToolContext,
   thresholdPct: number,
   topN: number,
 ) {
-  const baseRange = resolveDateRange({ relative: 'last_7_days' }, ctx.timezone, ctx.now);
-  const prevRange = previousPeriod(baseRange);
+  const { baseRange, prevRange } = weekOverWeek(ctx);
   const query: ReportQuery = {
     dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
     metrics: ['AD_REQUESTS', 'IMPRESSIONS'],
   };
   const [base, prev] = await Promise.all([
-    runAndRead(ctx, query, baseRange),
-    runAndRead(ctx, query, prevRange),
+    executeReportRows(ctx, query, baseRange, TOOL),
+    executeReportRows(ctx, query, prevRange, TOOL),
   ]);
-  const prevByKey = new Map(prev.map((r) => [r.AD_UNIT_ID, r]));
+  if ('error' in base) return base;
+  if ('error' in prev) return prev;
+  const prevByKey = new Map(prev.rows.map((r) => [cellText(r.AD_UNIT_ID), r]));
 
-  const drops: Record<string, string>[] = [];
-  for (const b of base) {
-    const p = prevByKey.get(b.AD_UNIT_ID);
+  const drops: { dropPp: number; row: Record<string, unknown> }[] = [];
+  let nullInputRows = 0;
+  for (const b of base.rows) {
+    const p = prevByKey.get(cellText(b.AD_UNIT_ID));
     if (!p) continue;
-    const baseFr = pctOrZero(b.IMPRESSIONS, b.AD_REQUESTS);
-    const prevFr = pctOrZero(p.IMPRESSIONS, p.AD_REQUESTS);
-    const dropPp = prevFr - baseFr; // positive = fill rate decreased
+    const reqNow = num(b.AD_REQUESTS);
+    const reqPrev = num(p.AD_REQUESTS);
+    const impNow = num(b.IMPRESSIONS);
+    const impPrev = num(p.IMPRESSIONS);
+    const frNow = ratio(impNow, reqNow);
+    const frPrev = ratio(impPrev, reqPrev);
+    if (frNow === null || frPrev === null) { nullInputRows++; continue; } // can't compute a drop without both fill rates
+    if (reqNow === null || reqNow < 1000) continue; // low-volume noise, not a missing-input case (frNow proved reqNow is a known, nonzero number)
+    const dropPp = frPrev * 100 - frNow * 100; // positive = fill rate decreased
     if (dropPp < thresholdPct) continue;
-    if (Number(b.AD_REQUESTS) < 1000) continue; // skip noise
     drops.push({
-      AD_UNIT_ID: b.AD_UNIT_ID,
-      AD_UNIT_NAME: b.AD_UNIT_NAME,
-      fill_rate_now_pct: baseFr.toFixed(2),
-      fill_rate_prev_pct: prevFr.toFixed(2),
-      drop_pp: dropPp.toFixed(2),
-      ad_requests_now: b.AD_REQUESTS,
-      ad_requests_prev: p.AD_REQUESTS,
+      dropPp,
+      row: {
+        AD_UNIT_ID: cellText(b.AD_UNIT_ID),
+        AD_UNIT_NAME: cellText(b.AD_UNIT_NAME),
+        derived: derived({
+          value: Number(dropPp.toFixed(2)),
+          method: FILL_RATE_DROP_METHOD,
+          heuristic: true,
+          inputs: { AD_REQUESTS_now: reqNow, IMPRESSIONS_now: impNow, AD_REQUESTS_prev: reqPrev, IMPRESSIONS_prev: impPrev },
+        }),
+        fill_rate_now_pct: pct(frNow),
+        fill_rate_prev_pct: pct(frPrev),
+        ad_requests_now: String(reqNow),
+        ad_requests_prev: reqPrev === null ? null : String(reqPrev),
+      },
     });
   }
-  drops.sort((a, b) => Number(b.drop_pp) - Number(a.drop_pp));
-  const top = drops.slice(0, topN);
+  drops.sort((a, b) => b.dropPp - a.dropPp);
+  const top = drops.slice(0, topN).map((d) => d.row);
   const summary =
     `Fill-rate drops (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPct}pp drop): ` +
     `${drops.length} ad units flagged, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+  return derivedEnvelope(ctx, {
+    summary,
+    inputs: [base.input, prev.input],
+    rows: top,
+    total_row_count: drops.length,
+    warnings: [...base.warnings, ...prev.warnings],
+    null_input_rows: nullInputRows,
+  });
 }
+
+const ECPM_REGRESSION_METHOD =
+  'Week-over-week drop in AD_EXCHANGE_AVERAGE_ECPM, as a percent of the prior period\'s eCPM, restricted to buyer ' +
+  'networks with at least 10,000 AD_EXCHANGE_IMPRESSIONS on both sides; flagged when the drop is at least ' +
+  'threshold_pct percent (default 15). A side whose eCPM or impression count is missing, or whose prior eCPM is ' +
+  'zero or negative, is never flagged.';
 
 async function ecpmRegression(
   ctx: ToolContext,
   thresholdPct: number,
   topN: number,
 ) {
-  const baseRange = resolveDateRange({ relative: 'last_7_days' }, ctx.timezone, ctx.now);
-  const prevRange = previousPeriod(baseRange);
+  const { baseRange, prevRange } = weekOverWeek(ctx);
   // AdX-only metrics so we don't dilute named bidders' eCPM with direct-sold revenue.
   // BUYER_NETWORK_NAME slices by demand source (DSP, AdSense, open-auction AdX).
   const query: ReportQuery = {
@@ -162,146 +192,147 @@ async function ecpmRegression(
     metrics: ['AD_EXCHANGE_IMPRESSIONS', 'AD_EXCHANGE_REVENUE', 'AD_EXCHANGE_AVERAGE_ECPM'],
   };
   const [base, prev] = await Promise.all([
-    runAndRead(ctx, query, baseRange),
-    runAndRead(ctx, query, prevRange),
+    executeReportRows(ctx, query, baseRange, TOOL),
+    executeReportRows(ctx, query, prevRange, TOOL),
   ]);
-  const prevByKey = new Map(prev.map((r) => [r.BUYER_NETWORK_NAME, r]));
+  if ('error' in base) return base;
+  if ('error' in prev) return prev;
+  const prevByKey = new Map(prev.rows.map((r) => [cellText(r.BUYER_NETWORK_NAME), r]));
 
-  const regressions: Record<string, string>[] = [];
-  for (const b of base) {
-    const p = prevByKey.get(b.BUYER_NETWORK_NAME);
+  const regressions: { dropPct: number; row: Record<string, unknown> }[] = [];
+  let nullInputRows = 0;
+  for (const b of base.rows) {
+    const p = prevByKey.get(cellText(b.BUYER_NETWORK_NAME));
     if (!p) continue;
-    const baseImps = Number(b.AD_EXCHANGE_IMPRESSIONS) || 0;
-    const prevImps = Number(p.AD_EXCHANGE_IMPRESSIONS) || 0;
+    const baseImps = num(b.AD_EXCHANGE_IMPRESSIONS);
+    const prevImps = num(p.AD_EXCHANGE_IMPRESSIONS);
+    const baseEcpm = num(b.AD_EXCHANGE_AVERAGE_ECPM);
+    const prevEcpm = num(p.AD_EXCHANGE_AVERAGE_ECPM);
+    if (baseImps === null || prevImps === null || baseEcpm === null || prevEcpm === null) {
+      nullInputRows++;
+      continue;
+    }
     if (baseImps < 10_000 || prevImps < 10_000) continue; // low-volume noise
-    const baseEcpm = Number(b.AD_EXCHANGE_AVERAGE_ECPM) || 0;
-    const prevEcpm = Number(p.AD_EXCHANGE_AVERAGE_ECPM) || 0;
     if (prevEcpm <= 0) continue;
     const dropPct = ((prevEcpm - baseEcpm) / prevEcpm) * 100;
     if (dropPct < thresholdPct) continue;
     regressions.push({
-      BUYER_NETWORK_NAME: b.BUYER_NETWORK_NAME,
-      ecpm_now: baseEcpm.toFixed(2),
-      ecpm_prev: prevEcpm.toFixed(2),
-      drop_pct: dropPct.toFixed(2),
-      adx_impressions_now: String(baseImps),
-      adx_impressions_prev: String(prevImps),
-      adx_revenue_now: b.AD_EXCHANGE_REVENUE ?? '',
-      adx_revenue_prev: p.AD_EXCHANGE_REVENUE ?? '',
+      dropPct,
+      row: {
+        BUYER_NETWORK_NAME: cellText(b.BUYER_NETWORK_NAME),
+        derived: derived({
+          value: Number(dropPct.toFixed(2)),
+          method: ECPM_REGRESSION_METHOD,
+          heuristic: true,
+          inputs: {
+            AD_EXCHANGE_AVERAGE_ECPM_now: baseEcpm,
+            AD_EXCHANGE_AVERAGE_ECPM_prev: prevEcpm,
+            AD_EXCHANGE_IMPRESSIONS_now: baseImps,
+            AD_EXCHANGE_IMPRESSIONS_prev: prevImps,
+          },
+        }),
+        ecpm_now: baseEcpm.toFixed(2),
+        ecpm_prev: prevEcpm.toFixed(2),
+        adx_impressions_now: String(baseImps),
+        adx_impressions_prev: String(prevImps),
+        adx_revenue_now: cellText(b.AD_EXCHANGE_REVENUE),
+        adx_revenue_prev: cellText(p.AD_EXCHANGE_REVENUE),
+      },
     });
   }
-  regressions.sort((a, b) => Number(b.drop_pct) - Number(a.drop_pct));
-  const top = regressions.slice(0, topN);
+  regressions.sort((a, b) => b.dropPct - a.dropPct);
+  const top = regressions.slice(0, topN).map((r) => r.row);
   const summary =
     `eCPM regression (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPct}% AdX-eCPM drop): ` +
     `${regressions.length} buyer networks flagged, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
+  return derivedEnvelope(ctx, {
+    summary,
+    inputs: [base.input, prev.input],
+    rows: top,
+    total_row_count: regressions.length,
+    warnings: [...base.warnings, ...prev.warnings],
+    null_input_rows: nullInputRows,
+  });
 }
+
+const VIEWABILITY_DROP_METHOD =
+  'Week-over-week drop in ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE, in percentage points, restricted to ad units with ' +
+  'at least 10,000 IMPRESSIONS on both sides; flagged when the drop is at least threshold_pct percentage points ' +
+  '(default 5). A side whose impressions or viewable rate is missing is never flagged.';
 
 async function viewabilityDrops(
   ctx: ToolContext,
   thresholdPp: number,
   topN: number,
 ) {
-  const baseRange = resolveDateRange({ relative: 'last_7_days' }, ctx.timezone, ctx.now);
-  const prevRange = previousPeriod(baseRange);
+  const { baseRange, prevRange } = weekOverWeek(ctx);
   const query: ReportQuery = {
     dimensions: ['AD_UNIT_ID', 'AD_UNIT_NAME'],
     metrics: ['IMPRESSIONS', 'ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE'],
   };
   const [base, prev] = await Promise.all([
-    runAndRead(ctx, query, baseRange),
-    runAndRead(ctx, query, prevRange),
+    executeReportRows(ctx, query, baseRange, TOOL),
+    executeReportRows(ctx, query, prevRange, TOOL),
   ]);
-  const prevByKey = new Map(prev.map((r) => [r.AD_UNIT_ID, r]));
+  if ('error' in base) return base;
+  if ('error' in prev) return prev;
+  const prevByKey = new Map(prev.rows.map((r) => [cellText(r.AD_UNIT_ID), r]));
 
-  const drops: Record<string, string>[] = [];
-  for (const b of base) {
-    const p = prevByKey.get(b.AD_UNIT_ID);
+  const drops: { dropPp: number; row: Record<string, unknown> }[] = [];
+  let nullInputRows = 0;
+  for (const b of base.rows) {
+    const p = prevByKey.get(cellText(b.AD_UNIT_ID));
     if (!p) continue;
-    const baseImps = Number(b.IMPRESSIONS) || 0;
-    const prevImps = Number(p.IMPRESSIONS) || 0;
+    const baseImps = num(b.IMPRESSIONS);
+    const prevImps = num(p.IMPRESSIONS);
+    const rateNow = num(b.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE);
+    const ratePrev = num(p.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE);
+    if (baseImps === null || prevImps === null || rateNow === null || ratePrev === null) {
+      nullInputRows++;
+      continue;
+    }
     if (baseImps < 10_000 || prevImps < 10_000) continue;
     // GAM returns viewable-rate as a 0..1 fraction; render in pp for humans.
-    const baseRate = (Number(b.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE) || 0) * 100;
-    const prevRate = (Number(p.ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE) || 0) * 100;
+    const baseRate = rateNow * 100;
+    const prevRate = ratePrev * 100;
     const dropPp = prevRate - baseRate;
     if (dropPp < thresholdPp) continue;
     drops.push({
-      AD_UNIT_ID: b.AD_UNIT_ID,
-      AD_UNIT_NAME: b.AD_UNIT_NAME,
-      viewability_now_pct: baseRate.toFixed(2),
-      viewability_prev_pct: prevRate.toFixed(2),
-      drop_pp: dropPp.toFixed(2),
-      impressions_now: String(baseImps),
-      impressions_prev: String(prevImps),
+      dropPp,
+      row: {
+        AD_UNIT_ID: cellText(b.AD_UNIT_ID),
+        AD_UNIT_NAME: cellText(b.AD_UNIT_NAME),
+        derived: derived({
+          value: Number(dropPp.toFixed(2)),
+          method: VIEWABILITY_DROP_METHOD,
+          heuristic: true,
+          inputs: {
+            ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE_now: rateNow,
+            ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE_prev: ratePrev,
+            IMPRESSIONS_now: baseImps,
+            IMPRESSIONS_prev: prevImps,
+          },
+        }),
+        viewability_now_pct: baseRate.toFixed(2),
+        viewability_prev_pct: prevRate.toFixed(2),
+        impressions_now: String(baseImps),
+        impressions_prev: String(prevImps),
+      },
     });
   }
-  drops.sort((a, b) => Number(b.drop_pp) - Number(a.drop_pp));
-  const top = drops.slice(0, topN);
+  drops.sort((a, b) => b.dropPp - a.dropPp);
+  const top = drops.slice(0, topN).map((d) => d.row);
   const summary =
     `Viewability drops (last 7d ${baseRange.start}..${baseRange.end} vs ` +
     `prev ${prevRange.start}..${prevRange.end}, threshold ≥${thresholdPp}pp viewable-rate drop): ` +
     `${drops.length} ad units flagged, top ${top.length} returned.`;
-  return ctx.output.fromInlineRows(top, summary);
-}
-
-async function runAndRead(
-  ctx: ToolContext,
-  query: ReportQuery,
-  range: DateRange,
-): Promise<Record<string, string>[]> {
-  const cached = ctx.reportCache?.get(query, range);
-  if (cached) return cached;
-  const op = await ctx.client.createReport(query, range);
-  const start = Date.now();
-  let delay = 2000;
-  const timeoutMs = ctx.reportTimeoutMs ?? 300_000;
-  while (Date.now() - start < timeoutMs) {
-    const s = await ctx.client.pollOperation(op.operation_name);
-    if (s.state === 'done') {
-      const dest = join(ctx.output.tempDir, `${op.operation_name.replace(/[^\w]/g, '_')}.csv.gz`);
-      await ctx.client.downloadReport(s.download_url, dest);
-      const { rows } = await readCsvGz(dest);
-      try { unlinkSync(dest); } catch { /* ignore */ }
-      ctx.reportCache?.set(query, range, rows);
-      return rows;
-    }
-    if (s.state === 'failed') throw new Error(`report failed: ${s.reason}`);
-    await new Promise((r) => setTimeout(r, delay));
-    delay = Math.min(delay * 1.5, 15_000);
-  }
-  throw new Error(`report timed out after ${timeoutMs}ms`);
-}
-
-function pctOrZero(num: string | undefined, denom: string | undefined): number {
-  const n = Number(num) || 0;
-  const d = Number(denom) || 0;
-  return d === 0 ? 0 : (n / d) * 100;
-}
-
-function monthProgress(
-  range: { start: string; end: string },
-  _timezone: string,
-  now: Date | undefined,
-): { daysElapsed: number; daysInMonth: number } {
-  const today = (now ?? new Date()).toISOString().slice(0, 10);
-  const [y, m] = range.start.split('-').map(Number);
-  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const todayDay = Number((today >= range.start ? today : range.end).split('-')[2]);
-  return { daysElapsed: Math.max(1, todayDay), daysInMonth };
-}
-
-function previousPeriod(r: { start: string; end: string }): DateRange {
-  const oneDay = 86_400_000;
-  const start = new Date(`${r.start}T00:00:00Z`);
-  const end = new Date(`${r.end}T00:00:00Z`);
-  const lengthMs = end.getTime() - start.getTime();
-  const prevEnd = new Date(start.getTime() - oneDay);
-  const prevStart = new Date(prevEnd.getTime() - lengthMs);
-  return {
-    start: prevStart.toISOString().slice(0, 10),
-    end: prevEnd.toISOString().slice(0, 10),
-  };
+  return derivedEnvelope(ctx, {
+    summary,
+    inputs: [base.input, prev.input],
+    rows: top,
+    total_row_count: drops.length,
+    warnings: [...base.warnings, ...prev.warnings],
+    null_input_rows: nullInputRows,
+  });
 }

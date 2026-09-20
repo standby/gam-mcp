@@ -1,4 +1,7 @@
 node_modules/
+# ...and the symlink form: a trailing slash matches directories only, so a
+# `node_modules` symlink (handy in a git worktree) slips past the rule above.
+node_modules
 dist/
 .env
 .DS_Store

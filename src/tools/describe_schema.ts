@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { GAM_SCHEMA, REPORT_TYPES, SUPPORTED_REPORT_TYPES } from '../schema.js';
-import type { ToolDefinition } from '../report-tool-builder.js';
+import { READS_LOCAL, type ToolDefinition } from '../report-tool-builder.js';
+import { listEnvelope } from '../envelope.js';
 
 // GAM declares ~1290 dimensions and metrics. Returning all of them with prose
 // would swamp the caller's context, so an unfiltered call returns names and
@@ -26,7 +27,7 @@ const inputSchema = z.object({
     .describe('Force descriptions on or off. Defaults to on when any filter is set, off otherwise.'),
   limit: z.number().int().min(1).max(1000).default(300)
     .describe('Maximum entries to return.'),
-});
+}).strict();
 
 export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
   name: 'describe_schema',
@@ -38,13 +39,14 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
     'combine — e.g. KEY_VALUES_NAME ⊥ AD_REQUESTS. That matrix is best-effort: an empty ' +
     '`incompatible_with` does not guarantee GAM will accept the combination.',
   input: inputSchema,
+  annotations: READS_LOCAL,
   async handler(input, ctx) {
     const filtered = input.report_type || input.family || input.search;
     const withDescriptions = input.include_descriptions ?? Boolean(filtered);
 
     const reportType = input.report_type?.toUpperCase();
     if (reportType && !(REPORT_TYPES as readonly string[]).includes(reportType)) {
-      return ctx.output.fromInlineRows(
+      return listEnvelope(
         [],
         `Unknown report_type '${input.report_type}'. Valid: ${REPORT_TYPES.join(', ')}`,
       );
@@ -115,6 +117,6 @@ export const describeSchemaTool: ToolDefinition<typeof inputSchema> = {
       ] : []),
     ];
 
-    return ctx.output.fromInlineRows(rows, `GAM schema — ${bits.join('; ')}`, schema);
+    return listEnvelope(rows, `GAM schema — ${bits.join('; ')}`, schema);
   },
 };
