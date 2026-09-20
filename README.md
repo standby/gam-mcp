@@ -195,7 +195,7 @@ Things an LLM with this MCP attached can answer directly. (No prompts engineerin
 5. **Fill-rate regression.** *"Did any ad units have a fill-rate drop this week?"* → `find_anomalies({kind:"fill_rate_drops", threshold_pct:5})`.
 5a. **eCPM regression.** *"Which DSPs are paying us less this week than last?"* → `find_anomalies({kind:"ecpm_regression", threshold_pct:10})`.
 5b. **Viewability regression.** *"Any ad units where viewability tanked?"* → `find_anomalies({kind:"viewability_drops", threshold_pct:5})`.
-5d. **Fill-rate root cause.** *"Why is the homepage_top ad unit only filling 30%?"* → `diagnose_fill_rate({ad_unit_query:"homepage_top"})`. Returns funnel-position ratios with an attributed cause per row.
+5d. **Fill-rate root cause.** *"Why is one of my ad units only filling 30%?"* → `diagnose_fill_rate({ad_unit_query:"<part of the ad unit name>"})`. Returns funnel-position ratios with an attributed cause per row.
 5c. **Open Bidding yield.** *"Which Open Bidding bidders drove the most revenue last week, and on which devices?"* → `bidder_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, group_by:"device"})`.
 5e. **Yield-group waterfall health.** *"Which Open Bidding partners have low fill and high passbacks?"* → `yield_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"buyer"})`.
 5f. **Video drop-off.** *"Where do viewers abandon my video ads by placement type?"* → `video_breakdown({date_range:{start:"2026-05-04", end:"2026-05-10"}, by:"placement"})`.
