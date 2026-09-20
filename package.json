@@ -3,6 +3,24 @@
   "version": "0.5.2",
   "license": "MIT",
   "description": "Read-only MCP server for Google Ad Manager analytics. Installable via npx.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "google-ad-manager",
+    "gam",
+    "ad-manager",
+    "adops",
+    "ad-ops",
+    "analytics",
+    "reporting",
+    "advertising",
+    "programmatic",
+    "publisher",
+    "yield",
+    "llm",
+    "claude",
+    "ai"
+  ],
   "type": "module",
   "bin": {
     "gam-mcp": "./dist/cli.js"
