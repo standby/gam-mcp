@@ -165,7 +165,7 @@ Draft:
 | 5 | "12 tools" (see §1.1). |
 
 **Generic-MCP check for all README drafts:** no network codes, no advertiser or key names. Note
-`README.md:142,152` already carry a publisher-ish ad-unit string (`homepage_top`, `sports`) — pre-existing,
+`README.md:142,152` already carry publisher-ish ad-unit and placement strings — pre-existing,
 out of PR 5's mandate, but flag it to the owner rather than adding more of the same. Do not copy the live
 the network code out of the spec into the README or the release notes.
 

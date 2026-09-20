@@ -46,11 +46,18 @@ the tag exists it should settle, but check it does not surface as a surprise PR.
 
 ## Where the records are
 
-**The SDD ledgers are at `~/workspace/gam_mcp-0.6.0-ledgers/`, outside the repo, and
-deliberately not committed.** They hold every ruling and deferred item from the five PRs, but they
-also describe the publisher-data scrub *by naming what it removed*, and one records a real report
-ID. Committing them would reintroduce exactly what the scrub took out. They were rescued from the
-per-task worktrees before those were deleted; nothing else in them exists anywhere else.
+**The SDD ledgers are committed at `docs/superpowers/ledgers/`.** They hold every ruling and
+deferred item from the five PRs, and were rescued from the per-task worktrees before those were
+deleted — nothing else in them exists anywhere else.
+
+They were generalised before being committed. As written they described the publisher-data scrub
+*by naming what it removed* — the market, the placement name, the currency — and one carried a real
+report ID. Each of those statements is true of any network, so it now reads that way: "the
+publisher's zones were its own network zone and a different deployment zone", not the zone names.
+The same pass caught a survivor the original scrub had missed entirely, in `tasks/pr5-scope.md`,
+which was tracked. **That fix is a new commit; the string is still in history before it.** Rewriting
+history again was not worth invalidating the published `v0.6.0` tag over a planning document in a
+private repo — but it is a live decision if this repo is ever made public.
 
 `tasks/lessons.md` holds the corrections worth keeping. `docs/superpowers/specs/` and
 `docs/superpowers/plans/` hold the spec and the five plans.
