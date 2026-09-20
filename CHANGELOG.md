@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-* **readme:** the fill-rate example named a real-looking ad unit ([d8ea460](https://github.com/standby/gam_mcp/commit/d8ea46008818d5f0ddb47bec97b8700906c39e85))
 * **readme:** the fill-rate example named a real-looking ad unit ([91e0314](https://github.com/standby/gam_mcp/commit/91e0314bb515a15f37a55956973debfc1358ba3e))
 
 ## [0.6.0](https://github.com/standby/gam_mcp/compare/v0.5.2...v0.6.0) (2026-09-20)
