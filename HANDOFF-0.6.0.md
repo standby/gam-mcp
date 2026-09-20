@@ -92,18 +92,45 @@ keeps resolving to it even after 0.6.0 publishes — a stale local build that lo
 - **No publisher data in any file, doc or commit** (owner instruction, categorical). This handoff
   deliberately refers to the MCP config's env values rather than repeating them.
 
+## Live verification — done 2026-09-20
+
+0.6.0 was installed from the packed tarball, wired into Claude Code as a second MCP entry beside
+the 0.5.2 one, and exercised against a live network. Everything passed:
+
+| check | result |
+|---|---|
+| tool count | 33 — 29 shared + 4 saved-query, as expected for 0.6.0 (0.5.2 served 32) |
+| `health_check` | pass, ~1.8 s — auth, network and permissions |
+| `describe_schema` | filtered search returns matches with descriptions auto-enabled |
+| `lookup` | real entity read, ids and display names |
+| strict inputs | a misspelled key returns `INVALID_INPUT` naming it — 0.5.2 dropped it silently |
+| `list_saved_queries` | responds, proving the stdio-only registry loaded |
+| report path | create → poll → page, full provenance block, 7 rows, no truncation |
+| **report reuse** | a second identical call returned `cache.hit: true` with the same report name, the same result name and the same run time — it reused the report instead of defining a second |
+
+Cost of the whole exercise: **one** new hidden report object, because the date range was pinned.
+
+**A zone warning correctly did NOT appear, and that is worth remembering.** The network counts days
+in one zone and `GAM_TIMEZONE` chooses dates in another, but both share a UTC offset and neither
+observes DST, so the offsets agree on every day in the range. `src/zones.ts` warns only when the
+offsets actually diverge. Empty `warnings` here is the feature working. Do not "fix" it.
+
 ## Do these next
 
-1. **Test 0.6.0 in Claude** against a real network — the one step nobody has done. A live
-   credentialed handshake was never run by the assistant; `verify:pack` only covers env-less startup.
-2. **Merge #12** (pick squash vs merge commit above).
-3. **Let release-please open "Release v0.6.0"**, then merge it — that is the publish.
-4. **Clean up:** `npm uninstall -g gam-mcp`, restore `@latest` in the MCP config, delete the
-   per-task worktrees (`../gam_mcp-0.6.0-pr1` … `-pr5`, `-smoke`) and their branches.
-5. **Then the original request:** port the GA4 and GAM MCP servers into
+1. **Merge #12 into `main` with a merge commit** — decided, not squash. A merge commit keeps all
+   122 commits, so release-please generates the full changelog and surfaces all 18 breaking changes
+   from the commits themselves. (The PR body carries them too, which a squash would have needed.)
+2. **Let release-please open "Release v0.6.0", then merge it.** That tags `v0.6.0`, which triggers
+   `publish.yml` → `npm publish`. **That is the irreversible step.**
+3. **Clean up:** `npm uninstall -g gam-mcp` (while it is installed, `npx -y gam-mcp` keeps resolving
+   to it even after 0.6.0 publishes), remove the temporary `gam-mcp-060` MCP entry, restore
+   `@latest` on the main entry, and delete the per-task worktrees (`../gam_mcp-0.6.0-pr1` …
+   `-pr5`, `-smoke`, `../gam_mcp-release`) and their branches.
+4. **Then the original request:** port the GA4 and GAM MCP servers into
    `~/workspace/ask-data-agent`. Known inputs: a `GAM_TIMEZONE` that differs from the
-   network's own zone (deliberate, must keep working); `GAM_REPORT_TIMEOUT_MS` below that client's
-   120 s; bearer token as `${GAM_MCP_TOKEN}`; `describe_line_item` treated as sensitive.
+   network's own zone (deliberate, must keep working, and verified above); `GAM_REPORT_TIMEOUT_MS`
+   below that client's 120 s; bearer token as `${GAM_MCP_TOKEN}`; `describe_line_item` treated as
+   sensitive.
 
 Spec §9 holds the rest of the follow-ups: per-request GAM timeout, a `date_range` input and
 structured `listed`/`excluded` counts for `find_unused_ad_units`, `AdUnit.hasChildren` confirmation,
