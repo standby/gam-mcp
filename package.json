@@ -23,7 +23,7 @@
   ],
   "type": "module",
   "bin": {
-    "gam-mcp": "./dist/cli.js"
+    "gam-mcp": "dist/cli.js"
   },
   "files": [
     "dist/**/*",

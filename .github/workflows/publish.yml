@@ -49,9 +49,10 @@ jobs:
 
       - run: npm run build
 
-      # With a trusted publisher configured on npmjs.com for this workflow, npm
-      # authenticates via OIDC and attaches provenance automatically; NPM_TOKEN
-      # is only a fallback.
+      # npm authenticates via the trusted publisher configured on npmjs.com for
+      # this workflow (OIDC) and attaches provenance automatically. That
+      # publisher must allow "npm publish", not only "npm stage publish". Once a
+      # trusted publisher exists npm uses OIDC instead of NPM_TOKEN.
       - name: Publish (dry run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         run: npm publish --access public --dry-run
