@@ -36,7 +36,7 @@ export const filterInput = z
         'CONTAINS and NOT_CONTAINS match part of a text value.',
       ),
     value: z
-      .union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))])
+      .union([z.string(), z.number(), z.array(z.union([z.string(), z.number()])).max(500)])
       .describe('The value to compare with, or a list of values. Numbers are sent as IDs.'),
   })
   .strict()

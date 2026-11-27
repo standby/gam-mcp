@@ -12,7 +12,7 @@ const inputSchema = z.object({
   entity_type: z.enum(ENTITY_TYPES).describe('The kind of entity to find.'),
   query: z.string().min(1).optional()
     .describe('Text to match: part of the display name by default, or the whole name with match="exact".'),
-  ids: z.array(z.number().int().positive()).optional()
+  ids: z.array(z.number().int().positive()).max(500).optional()
     .describe('Look up exactly these IDs.'),
   // Pagination is transparent — values up to 1000 page through GAM
   // automatically. Default 50 keeps responses small for exploratory queries.

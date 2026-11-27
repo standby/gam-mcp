@@ -35,7 +35,7 @@ const FILL_RATE_METHOD =
 const inputSchema = z.object({
   ad_unit_query: z.string().min(1).optional()
     .describe('Only ad units whose name contains this text.'),
-  ad_unit_ids: z.array(z.number().int().positive()).optional()
+  ad_unit_ids: z.array(z.number().int().positive()).max(500).optional()
     .describe('Only these ad units.'),
   lookback_days: z.number().int().min(1).max(90).default(7)
     .describe('How many complete days, ending yesterday, to diagnose, 1-90.'),

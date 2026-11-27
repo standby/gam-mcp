@@ -139,9 +139,9 @@ const inputSchema = z.object({
     `${HISTORICAL_RANGE} Defaults to last_7_days. delivery_indicator is a live GAM value either way -- the range only ` +
     'selects which line items appear -- and a month_to_date default would fail on the first day of every month.',
   ).default({ relative: 'last_7_days' }),
-  line_item_ids: z.array(z.number().int().positive()).optional()
+  line_item_ids: z.array(z.number().int().positive()).max(500).optional()
     .describe('Only these line items.'),
-  order_ids: z.array(z.number().int().positive()).optional()
+  order_ids: z.array(z.number().int().positive()).max(500).optional()
     .describe('Only line items of these orders.'),
 }).strict();
 

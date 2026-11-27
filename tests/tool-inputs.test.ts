@@ -72,3 +72,29 @@ describe('H5: every field of every advertised input has a description (spec §3.
     expect(range.properties.date_range.anyOf[0].properties.start).toMatchObject({ type: 'string', format: 'date' });
   });
 });
+
+// Every array a tool accepts must be bounded: zod accumulates one issue per
+// failing element with no cap (GHSA-mrhx-c7xc-m3w5), so an unbounded array is a
+// memory-exhaustion vector until zod is upgraded to v4.
+function* arrays(node: JsonSchema, path: string): Generator<{ path: string; node: JsonSchema }> {
+  if (node.type === 'array') yield { path, node };
+  for (const [key, child] of Object.entries((node.properties ?? {}) as Record<string, JsonSchema>)) {
+    yield* arrays(child, `${path}.${key}`);
+  }
+  for (const [i, branch] of ((node.anyOf ?? []) as JsonSchema[]).entries()) yield* arrays(branch, `${path}|${i}`);
+  if (node.items) yield* arrays(node.items as JsonSchema, `${path}[]`);
+}
+
+describe('every array input has a maximum length', () => {
+  it('advertises maxItems on every array of every tool', () => {
+    const unbounded = listed.flatMap((t) =>
+      [...arrays(t.inputSchema, t.name)].filter((a) => a.node.maxItems === undefined).map((a) => a.path),
+    );
+    expect(unbounded).toEqual([]);
+  });
+  it('rejects an oversized array before any GAM call', async () => {
+    const res = await client.callTool({ name: 'lookup', arguments: { ...argsFor('lookup'), ids: Array.from({ length: 501 }, (_, i) => i + 1) } });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(payloadOf(res))).toContain('INVALID_INPUT');
+  });
+});

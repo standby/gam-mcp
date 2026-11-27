@@ -43,7 +43,7 @@ const FLOOR_METHOD_MISSING =
 const inputSchema = z.object({
   ad_unit_query: z.string().min(1).optional()
     .describe('Substring match on AD_UNIT_NAME to scope the analysis.'),
-  ad_unit_ids: z.array(z.number().int().positive()).optional()
+  ad_unit_ids: z.array(z.number().int().positive()).max(500).optional()
     .describe('Restrict to specific ad unit IDs.'),
   lookback_days: z.number().int().min(1).max(90).default(7)
     .describe('Window length in days, ending yesterday.'),

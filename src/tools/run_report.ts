@@ -25,12 +25,12 @@ const inputSchema = z.object({
     'The dates to report on: { start, end } or { relative }. A historical report must end by yesterday; ' +
     'a sell-through forecast must start today or later and be given as dates. Dates are judged in the date time zone (GAM_TIMEZONE).',
   ),
-  filters: z.array(filterInput).optional()
+  filters: z.array(filterInput).max(20).optional()
     .describe('Conditions every row must meet; all of them apply.'),
   // Required when querying CUSTOM_DIMENSION_<N>_VALUE dimensions. Index N in
   // the dimension name maps to index N in this array (i.e., slot 0 = key at
   // index 0). Find IDs via lookup(entity_type='custom_targeting_key').
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional()
+  custom_dimension_key_ids: z.array(z.number().int().positive()).max(10).optional()
     .describe(
       'Custom targeting key IDs for CUSTOM_DIMENSION_<N>_VALUE dimensions: the ID at index N fills slot N. ' +
       'Find them with lookup(entity_type="custom_targeting_key").',
