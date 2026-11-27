@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write # to dispatch publish.yml
 
 jobs:
   release-please:
@@ -16,8 +17,19 @@ jobs:
       # Maintains an always-open "Release vX.Y.Z" PR that aggregates Conventional
       # Commits on main since the last release. Merging that PR bumps the version
       # in package.json + package-lock.json, promotes the CHANGELOG [Unreleased]
-      # block to a dated section, and tags vX.Y.Z — which triggers publish.yml.
-      - uses: googleapis/release-please-action@v4
+      # block to a dated section, and tags vX.Y.Z.
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # A tag created with GITHUB_TOKEN does not trigger other workflows, so the
+      # tag push alone never starts publish.yml. workflow_dispatch is one of the two
+      # events GITHUB_TOKEN may trigger (with repository_dispatch), so dispatch publish.yml on the new tag.
+      - name: Publish the release
+        if: ${{ steps.release.outputs.release_created }}
+        run: gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}

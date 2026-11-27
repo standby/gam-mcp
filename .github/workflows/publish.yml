@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
 
     steps:
       - uses: actions/checkout@v5
@@ -24,6 +25,9 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10.
+      - run: npm install -g npm@^11.5.1
 
       - name: Verify tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -45,8 +49,9 @@ jobs:
 
       - run: npm run build
 
-      # Provenance is intentionally not used: it requires a public source
-      # repository, and this repo is private.
+      # With a trusted publisher configured on npmjs.com for this workflow, npm
+      # authenticates via OIDC and attaches provenance automatically; NPM_TOKEN
+      # is only a fallback.
       - name: Publish (dry run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         run: npm publish --access public --dry-run
