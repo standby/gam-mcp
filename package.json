@@ -32,12 +32,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/standby/gam_mcp.git"
+    "url": "git+https://github.com/standby/gam-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/standby/gam_mcp/issues"
+    "url": "https://github.com/standby/gam-mcp/issues"
   },
-  "homepage": "https://github.com/standby/gam_mcp#readme",
+  "homepage": "https://github.com/standby/gam-mcp#readme",
   "engines": {
     "node": ">=22"
   },
