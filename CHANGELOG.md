@@ -5,14 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1](https://github.com/standby/gam_mcp/compare/v0.6.0...v0.6.1) (2026-09-20)
+## [0.6.2](https://github.com/standby/gam-mcp/compare/v0.6.1...v0.6.2) (2026-11-27)
 
 
 ### Fixed
 
-* **readme:** the fill-rate example named a real-looking ad unit ([91e0314](https://github.com/standby/gam_mcp/commit/91e0314bb515a15f37a55956973debfc1358ba3e))
+* bound every array a tool accepts ([47a8118](https://github.com/standby/gam-mcp/commit/47a81187a273202c38019ffec7cca669e41ef805))
+* **deps:** patch vulnerable dependencies and raise the MCP SDK floor ([43a1aaf](https://github.com/standby/gam-mcp/commit/43a1aaf5dcc364f8f177db82f8f2136e44785387))
 
-## [0.6.0](https://github.com/standby/gam_mcp/compare/v0.5.2...v0.6.0) (2026-09-20)
+## [0.6.1](https://github.com/standby/gam-mcp/compare/v0.6.0...v0.6.1) (2026-09-20)
+
+
+### Fixed
+
+* **readme:** the fill-rate example named a real-looking ad unit ([6ad08a5](https://github.com/standby/gam-mcp/commit/6ad08a54ad02029644f039e35092943666383546))
+
+## [0.6.0](https://github.com/standby/gam-mcp/compare/v0.5.2...v0.6.0) (2026-09-20)
 
 
 ### ⚠ BREAKING CHANGES
@@ -38,111 +46,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* advertise each tool input in full and name what is wrong with an input ([cf241aa](https://github.com/standby/gam_mcp/commit/cf241aa67cba0a061a3b46b1387f2f5e92fad166))
-* annotate every tool and offer saved queries over stdio only ([c134b66](https://github.com/standby/gam_mcp/commit/c134b6681a85ae2e9d98b76448c7c0c27dad06db))
-* answer repeated reports from the cached result ([d522e09](https://github.com/standby/gam_mcp/commit/d522e09c54241b5ae284084044d742c67664c3f1))
-* check every date range in the date time zone ([adeb21f](https://github.com/standby/gam_mcp/commit/adeb21f2b08faa5e914752348bc9460a6cc1365f))
-* compare two time zones' UTC offsets over a date range ([82102c8](https://github.com/standby/gam_mcp/commit/82102c8c451a6031b4f8e8f5fa952e45d4da2b1d))
-* **compare_periods:** derived delta_pct instead of an empty-string sentinel ([348c017](https://github.com/standby/gam_mcp/commit/348c01745a593cb01d9834739be81eb51971d6a6))
-* decode GAM report values into typed cells ([c34dcfc](https://github.com/standby/gam_mcp/commit/c34dcfc6073f1359c1d769857b44ae1dcdde2743))
-* find a report by name before creating one ([c13c93c](https://github.com/standby/gam_mcp/commit/c13c93c8110f9c8eda8467b00d75f7c706273cff))
-* guard the HTTP endpoint with a bearer token, a host list and a body limit ([cde498d](https://github.com/standby/gam_mcp/commit/cde498d175709e4799a2bc222b0ed50641d2341d))
-* keep result references in the report cache instead of rows ([0d4d1ae](https://github.com/standby/gam_mcp/commit/0d4d1ae9224305bf75dcca35fe257d000a598aa9))
-* name each report after the hash of its definition ([5d865f3](https://github.com/standby/gam_mcp/commit/5d865f361c73eceb53438f880e6e1164f5ef9947))
-* name the calling tool in report logs ([0386257](https://github.com/standby/gam_mcp/commit/0386257ca2e388d0503745701e07faa2dbd7a00f))
-* one report path that returns typed pages with provenance ([f3f149d](https://github.com/standby/gam_mcp/commit/f3f149dab6957bbe2ff643be9daceb71abcb6d3c))
-* page report results with fetch_report_page ([fa4c32b](https://github.com/standby/gam_mcp/commit/fa4c32b8e059580189e4e3cc59f7129d38dede31))
-* read the HTTP settings as strictly as the rest, and stop cleanly on a busy port ([897331f](https://github.com/standby/gam_mcp/commit/897331fd350e9f1482355bdeecf81899feedad1b))
-* read the network with the configured credential before serving ([cac673a](https://github.com/standby/gam_mcp/commit/cac673af740c1f95a3578357d7a976aab7b1e914))
-* refuse unknown tool arguments and describe every field ([57f7fb5](https://github.com/standby/gam_mcp/commit/57f7fb5224c06c930463dc38c5539040687675a4))
-* report tools take any date range and check it by report type ([09a26a2](https://github.com/standby/gam_mcp/commit/09a26a2d191547b60f7ec4d4af8dcc7167549f20))
-* result envelope with qualifiers first, and page cursors ([8c5aa91](https://github.com/standby/gam_mcp/commit/8c5aa91e2a4b9307122ccf5815474ece1f16d8cf))
-* run every report in the network's zone and currency, and say so ([9d1799b](https://github.com/standby/gam_mcp/commit/9d1799b514953527c7ba5a33fbeea8e6332bf85b))
-* share identical runs and resume runs that outlive their caller ([e11472b](https://github.com/standby/gam_mcp/commit/e11472b3e5b79d318a624d781168c3b62b64c962))
-* split report create/run and fetch result pages from GAM ([3be6131](https://github.com/standby/gam_mcp/commit/3be61319a7b498df78390fd695747ab0aab6463c))
-* **tools:** derived plumbing -- null-propagating arithmetic, DUPLICATE_JOIN_KEY ([6853795](https://github.com/standby/gam_mcp/commit/6853795c0584a8b7153ac4736c4fb5e39ed9bed0))
-* **tools:** group by entity id beside the name, and refuse a duplicated join ([9e7057d](https://github.com/standby/gam_mcp/commit/9e7057d28733a5e0e016a61b3a837ae7eb01003d))
-* **tools:** heuristics carry their method, their inputs and a heuristic flag ([fff1731](https://github.com/standby/gam_mcp/commit/fff1731dd034ee7b27df25e5f0bc490883aff3ce))
-* **tools:** pacing reports GAM's delivery indicator over a chosen range ([b757312](https://github.com/standby/gam_mcp/commit/b757312dfd7d2aafb33b934a7761146dd08cc780))
-* **tools:** top_n sorts the report and returns the rows it promised ([bcd9e2c](https://github.com/standby/gam_mcp/commit/bcd9e2cfae95c8ab31fc7a7bc10db3a524a22dd7))
+* advertise each tool input in full and name what is wrong with an input ([98c5f79](https://github.com/standby/gam-mcp/commit/98c5f79871b72505a33c7a7724dc4ccf3694da90))
+* annotate every tool and offer saved queries over stdio only ([76837bd](https://github.com/standby/gam-mcp/commit/76837bd111f8f399b510ab463ab093729b0b5c3c))
+* answer repeated reports from the cached result ([0c147b2](https://github.com/standby/gam-mcp/commit/0c147b2b44a1bfc5388b000259a7b1a665d68f05))
+* check every date range in the date time zone ([15cb988](https://github.com/standby/gam-mcp/commit/15cb98816c1b3f05eb4b11cd11a635e5840960d9))
+* compare two time zones' UTC offsets over a date range ([8e407cc](https://github.com/standby/gam-mcp/commit/8e407cc847e233b62ac725a89c351857c8cd1124))
+* **compare_periods:** derived delta_pct instead of an empty-string sentinel ([269cd2a](https://github.com/standby/gam-mcp/commit/269cd2ac009508d00585cf17758f12ac8efb0244))
+* decode GAM report values into typed cells ([e5f3bf0](https://github.com/standby/gam-mcp/commit/e5f3bf00592f3329933e466b4f34e539ffb00e52))
+* find a report by name before creating one ([8fa642d](https://github.com/standby/gam-mcp/commit/8fa642d8671b252668447b9cdc0290177d563fdd))
+* guard the HTTP endpoint with a bearer token, a host list and a body limit ([0219f0f](https://github.com/standby/gam-mcp/commit/0219f0f8b11ad61dca3a6c3aba45ddbbeadcd83a))
+* keep result references in the report cache instead of rows ([13aaf35](https://github.com/standby/gam-mcp/commit/13aaf351230089001c020865c5a6b122747abf50))
+* name each report after the hash of its definition ([8d389a1](https://github.com/standby/gam-mcp/commit/8d389a1a1c2e46407a03630d93f63271b2b3207a))
+* name the calling tool in report logs ([4b732b7](https://github.com/standby/gam-mcp/commit/4b732b766581679d6b9c81cb9a9c7c43a88af427))
+* one report path that returns typed pages with provenance ([e0a45b8](https://github.com/standby/gam-mcp/commit/e0a45b8c5d92e1ebbfc53214d48a1eb129574724))
+* page report results with fetch_report_page ([d99f3dc](https://github.com/standby/gam-mcp/commit/d99f3dca0747fa93afe4e559b4aa98e366e9d02a))
+* read the HTTP settings as strictly as the rest, and stop cleanly on a busy port ([4981541](https://github.com/standby/gam-mcp/commit/4981541c194a386fe41e8e1f9930525c10213c52))
+* read the network with the configured credential before serving ([4fdc171](https://github.com/standby/gam-mcp/commit/4fdc17175dbd9df9e3c02fc82de9aa77d5c22fb8))
+* refuse unknown tool arguments and describe every field ([24f10f0](https://github.com/standby/gam-mcp/commit/24f10f0b0fc055b55766de3b3d4b71bd4812d60c))
+* report tools take any date range and check it by report type ([205d97b](https://github.com/standby/gam-mcp/commit/205d97b0b70b01bd0a677e62c6c8b1502ec58c0b))
+* result envelope with qualifiers first, and page cursors ([0e2c89b](https://github.com/standby/gam-mcp/commit/0e2c89b84cadad345ed214a14c88c0d82e289fd3))
+* run every report in the network's zone and currency, and say so ([9b96d5c](https://github.com/standby/gam-mcp/commit/9b96d5c40cea212735c1a1b81bf40c01bbad49b2))
+* share identical runs and resume runs that outlive their caller ([c36c07b](https://github.com/standby/gam-mcp/commit/c36c07becd29acd5f709ff66830dd5c4a9b1d6eb))
+* split report create/run and fetch result pages from GAM ([49491d2](https://github.com/standby/gam-mcp/commit/49491d2e0cbff17f91e1611fa525bf9241f5b178))
+* **tools:** derived plumbing -- null-propagating arithmetic, DUPLICATE_JOIN_KEY ([5e922bb](https://github.com/standby/gam-mcp/commit/5e922bb7aab1cbe7c5b77116143da61384907403))
+* **tools:** group by entity id beside the name, and refuse a duplicated join ([1e5fdce](https://github.com/standby/gam-mcp/commit/1e5fdce160c5c9069ffc5090e9832f2eb92926d1))
+* **tools:** heuristics carry their method, their inputs and a heuristic flag ([5940fae](https://github.com/standby/gam-mcp/commit/5940fae62b5f228d14866550dced00e2635439d0))
+* **tools:** pacing reports GAM's delivery indicator over a chosen range ([7e2472b](https://github.com/standby/gam-mcp/commit/7e2472b52cc11b829a6a2ed5fa7a84a4ca0b265e))
+* **tools:** top_n sorts the report and returns the rows it promised ([21a32c2](https://github.com/standby/gam-mcp/commit/21a32c2b2796c21fe78cb61727759dd25e63681a))
 
 
 ### Fixed
 
-* a call that finds a result gone no longer undoes another call's fresh run ([19b084f](https://github.com/standby/gam_mcp/commit/19b084fd5938adc50d43c211e6dce2752c867a6d))
-* a final page with no reported count knows its total ([820764b](https://github.com/standby/gam_mcp/commit/820764b7a4dc71fa599f92d338412cedd0f14f3b))
-* a malformed inline credential is reported without echoing it ([c1afb5e](https://github.com/standby/gam_mcp/commit/c1afb5ed66f8e14353caee1891d0c8fd38bcdd90))
-* a resumed run whose result is gone runs again, and a shared run lasts until its result is recorded ([3997bc7](https://github.com/standby/gam_mcp/commit/3997bc747410b23f5d848379a54f44e8b0d30156))
-* accept only this network's result references in the report cache ([5843720](https://github.com/standby/gam_mcp/commit/5843720462b52a6e3207f1d6f5fa26b6b3b49f34))
-* an inverted date range counts as differing, and tests say what they check ([ab7cbf2](https://github.com/standby/gam_mcp/commit/ab7cbf201f22cf92d957ceb23081a92ef02eb427))
-* an unreported date range stays null, and stale comments go ([7f6a7e3](https://github.com/standby/gam_mcp/commit/7f6a7e3d471c5e50e3c938ba3e988f6ef013d103))
-* build a new MCP server and transport per HTTP request ([#6](https://github.com/standby/gam_mcp/issues/6)) ([8eb94f2](https://github.com/standby/gam_mcp/commit/8eb94f245db248a99252df9e0cf51284ff3b0047))
-* check every report query against its report type before GAM sees it ([f0468f3](https://github.com/standby/gam_mcp/commit/f0468f3db8aac932a986c2ca3334df80ebcc9538))
-* close every tool call in the log and keep result keys in contract order ([66e0bf2](https://github.com/standby/gam_mcp/commit/66e0bf2d5d35e11f4d66b27afd9ba718d336190d))
-* **compare-periods:** one sentinel for a missing value, not two ([18a6ad7](https://github.com/standby/gam_mcp/commit/18a6ad71dd3bfddcad81cfa45492f9cd209f5325))
-* **find-unused-ad-units:** only active, leaf ad units can be flagged as unused ([b51280d](https://github.com/standby/gam_mcp/commit/b51280dfea994c1744e4787b5e732be07d561386))
-* **find-unused-ad-units:** warn in warnings, not only in summary, when the max_units cap is hit ([16051f1](https://github.com/standby/gam_mcp/commit/16051f13b82fa1ef965edd22883323d2443faee1))
-* flag every tool error with isError ([9f573a7](https://github.com/standby/gam_mcp/commit/9f573a77baee52dccd4f9e391a85cb3099c10f36))
-* **health-check:** classify a confirmed 404 as ENTITY_NOT_FOUND ([e0f3ea5](https://github.com/standby/gam_mcp/commit/e0f3ea522b6e2729036378bb46c8a4f319d09818))
-* **http:** a refused body does not leave its connection stuck ([71283e4](https://github.com/standby/gam_mcp/commit/71283e44c17c6655d6555277ec9a1a525bf4e0da))
-* **http:** every refusal gives its connection back, not just the 413 ([2e46e8a](https://github.com/standby/gam_mcp/commit/2e46e8a9dee8bfa21fc3867d4b2ac0a3cb9ec09e))
-* keep dimension and metric order in a report's identity ([78b7dcb](https://github.com/standby/gam_mcp/commit/78b7dcb76beb749404c3121094b1d93e1a5bf8bc))
-* later pages report the server's facts and caveats, not the cursor's ([6b495bd](https://github.com/standby/gam_mcp/commit/6b495bdbe8d46e5f28c8f7003401bba7a9bf1a53))
-* name the definition keys that differ when a report name is taken ([61898b7](https://github.com/standby/gam_mcp/commit/61898b73aeb685b5d98566294dfe1e6a13a4cbde))
-* name the zone a stored report was counted in, and bound the zone check ([521b0cb](https://github.com/standby/gam_mcp/commit/521b0cb9fda2e787dbfb54555fa3e21b5fe20f7e))
-* never pass credential-library messages to logs or errors ([cfdf57e](https://github.com/standby/gam_mcp/commit/cfdf57e324d81fc7eeb1903c76810801e058b00e))
-* **prompts:** stop steering compare_periods into a bare *_NAME group-by ([dc7e224](https://github.com/standby/gam_mcp/commit/dc7e224ac613094200632b71400a0ebea43314e5))
-* quote the port in startup errors and refuse offset time zones ([c5f31b2](https://github.com/standby/gam_mcp/commit/c5f31b276c4a942359aee1e415e2c0b810e98d5f))
-* record a pending run again if it left memory while its caller polled ([3ff9cf5](https://github.com/standby/gam_mcp/commit/3ff9cf55d5700617785ec177639ce3173526119b))
-* record a report run as pending as soon as GAM accepts it ([4376ac7](https://github.com/standby/gam_mcp/commit/4376ac73aad979cc297ced95fa7a57163ae31646))
-* report a key or ad unit name that matches more than one entity ([31191e5](https://github.com/standby/gam_mcp/commit/31191e52352e183c75a29e00807ecddf8df33c33))
-* **report-exec:** carry a caveat reminder onto later report pages ([a1aca21](https://github.com/standby/gam_mcp/commit/a1aca2176af8efa4682ccd2b23689e58a2f546a5))
-* **report-exec:** warn when executeReportRows reads fewer rows than GAM reported ([0470b44](https://github.com/standby/gam_mcp/commit/0470b448aa6c7f4a6e557b973934b6e6cb726439))
-* retry a report POST only when GAM did not act on it ([1cd5a32](https://github.com/standby/gam_mcp/commit/1cd5a32813031e84a83a6862f44018e91d04597e))
-* **saved-queries:** surface canonicalizeQuery's warnings from save_query ([d69695c](https://github.com/standby/gam_mcp/commit/d69695c63de7b837d44521a83234ef83ed17d9d3))
-* say what went wrong at startup and when a report or result is gone ([2d5a53f](https://github.com/standby/gam_mcp/commit/2d5a53fa0c06a4c3467fa44b6c28966a1c9139b8))
-* **schema:** resolve dimension aliases in filter fields too ([decf9d8](https://github.com/standby/gam_mcp/commit/decf9d8ceca2e66f00485d2ee3a49982d5f96fb8))
-* **server:** a call whose result cannot be serialised is logged failed once ([799a0f7](https://github.com/standby/gam_mcp/commit/799a0f723816f841886cb686e7fa169e6e7c9204))
-* **smoke:** gate find_unused_ad_units behind its own opt-in ([a64cbbe](https://github.com/standby/gam_mcp/commit/a64cbbe33c24ddc2e2f835091cdb6ac070f6a5ce))
-* sort a filter's values only when they form a set ([c9c1b56](https://github.com/standby/gam_mcp/commit/c9c1b561e88485f9813e6c9cfcf520ee7641848e))
-* **tools:** a failed health check is an error, and summaries name their filters ([cd23a81](https://github.com/standby/gam_mcp/commit/cd23a81dca2135c4be4320b81ce4c20eb0e63632))
-* **tools:** count every row a null input actually nulled, and cover it ([b066f1b](https://github.com/standby/gam_mcp/commit/b066f1b52ab7017165c07ee38d03ff859d5b36a0))
-* **tools:** kv_report's summary stops doubling its filter clause, health_check classifies real HTTP status ([b2c1fe4](https://github.com/standby/gam_mcp/commit/b2c1fe486202e61acc1bd5bc39592e068a620a9e))
-* **tools:** trust neither wire form for LINE_ITEM_UNLIMITED_END, and cover the gaps review found ([bd3fdce](https://github.com/standby/gam_mcp/commit/bd3fdcef19282bd65ae14179df4d19f19d5c8bca))
-* **tools:** warning and summary text stop implying every null-input row is still visible ([0ea54e7](https://github.com/standby/gam_mcp/commit/0ea54e739abe45868e798264902b468f0c579e55))
-* type GAM errors and keep the operation when a poll fails ([2719cb9](https://github.com/standby/gam_mcp/commit/2719cb9c985a77c8e6da2ed5e6c2bc7bdc6d91f1))
-* **values:** index dimensions and metrics separately; normalise a numeric intValue ([7f2692c](https://github.com/standby/gam_mcp/commit/7f2692c0ffa2a7fdaffc804871c3c5f8f893260c))
-* **zones:** say which part of a report's time zone this server cannot use ([20143b8](https://github.com/standby/gam_mcp/commit/20143b882b267554bcbb0df2d6d76df75f1c2c0b))
+* a call that finds a result gone no longer undoes another call's fresh run ([ae059f5](https://github.com/standby/gam-mcp/commit/ae059f51cdb2592f4a7c07b71dbdb9f9026229ce))
+* a final page with no reported count knows its total ([3a3eb78](https://github.com/standby/gam-mcp/commit/3a3eb7831b3adf32fba97693775c3baf14025088))
+* a malformed inline credential is reported without echoing it ([b1dc455](https://github.com/standby/gam-mcp/commit/b1dc455424bdf1e2f1374361e1e77d4ee898edfa))
+* a resumed run whose result is gone runs again, and a shared run lasts until its result is recorded ([b9debe7](https://github.com/standby/gam-mcp/commit/b9debe7e3af53927fd4e4e2e7b0328765c3677b5))
+* accept only this network's result references in the report cache ([07667a2](https://github.com/standby/gam-mcp/commit/07667a2d09c015850e27938b9f5c94a7acafe668))
+* an inverted date range counts as differing, and tests say what they check ([c206d73](https://github.com/standby/gam-mcp/commit/c206d733863254411ac6a6e5daeddb1f88bc1e90))
+* an unreported date range stays null, and stale comments go ([5fbf490](https://github.com/standby/gam-mcp/commit/5fbf490bd49095c0bcb8c8ed2394f8191ebe1549))
+* build a new MCP server and transport per HTTP request ([#6](https://github.com/standby/gam-mcp/issues/6)) ([1a63668](https://github.com/standby/gam-mcp/commit/1a63668be2f4d9377ebf4b0e4475665a61bad5d0))
+* check every report query against its report type before GAM sees it ([6bd92a0](https://github.com/standby/gam-mcp/commit/6bd92a0ff3e1451ef2518423c8de403ffb478296))
+* close every tool call in the log and keep result keys in contract order ([e89a5f3](https://github.com/standby/gam-mcp/commit/e89a5f387e05120cab7183dfb4ee9b034d4eb9a5))
+* **compare-periods:** one sentinel for a missing value, not two ([24ad066](https://github.com/standby/gam-mcp/commit/24ad06621908d7244c01279889abce6682cb42d1))
+* **find-unused-ad-units:** only active, leaf ad units can be flagged as unused ([546e6f3](https://github.com/standby/gam-mcp/commit/546e6f39c3664c6697e907f1cf5d2b8b4552e4ad))
+* **find-unused-ad-units:** warn in warnings, not only in summary, when the max_units cap is hit ([343da6c](https://github.com/standby/gam-mcp/commit/343da6ca9fa8ff981b8b2474fc1c8c24fb2d19fa))
+* flag every tool error with isError ([38c656b](https://github.com/standby/gam-mcp/commit/38c656beaafee4e954a19673b54f39eb851512fa))
+* **health-check:** classify a confirmed 404 as ENTITY_NOT_FOUND ([b3d9c51](https://github.com/standby/gam-mcp/commit/b3d9c5190aed447173f2db5c7657588fe280fff9))
+* **http:** a refused body does not leave its connection stuck ([98e17e8](https://github.com/standby/gam-mcp/commit/98e17e80c59453689335201d568fc584a855fff0))
+* **http:** every refusal gives its connection back, not just the 413 ([73ac3e8](https://github.com/standby/gam-mcp/commit/73ac3e843e88323fc327bb7e107f97b7ce3ae9fa))
+* keep dimension and metric order in a report's identity ([2611b9e](https://github.com/standby/gam-mcp/commit/2611b9e9e5659db0d44b990baa1792ea0fbd4bd2))
+* later pages report the server's facts and caveats, not the cursor's ([95e8a00](https://github.com/standby/gam-mcp/commit/95e8a005d5b6dd846302d0b5ee29d9ed19f4c1ba))
+* name the definition keys that differ when a report name is taken ([f45ac9d](https://github.com/standby/gam-mcp/commit/f45ac9d7b718b527692f1ba09f2ff2f492858084))
+* name the zone a stored report was counted in, and bound the zone check ([6d1c694](https://github.com/standby/gam-mcp/commit/6d1c694fba8c1c4b331d007459fe235bba39298e))
+* never pass credential-library messages to logs or errors ([c777861](https://github.com/standby/gam-mcp/commit/c77786104b9973b9a3c0e49248f9fa117bfdf0cd))
+* **prompts:** stop steering compare_periods into a bare *_NAME group-by ([4789d98](https://github.com/standby/gam-mcp/commit/4789d989d75425e3397539c00d3ca1d45a25da7d))
+* quote the port in startup errors and refuse offset time zones ([1e2c9e7](https://github.com/standby/gam-mcp/commit/1e2c9e7d611828f3dff72da36a64ff36fa8a8c0a))
+* record a pending run again if it left memory while its caller polled ([37ecfc3](https://github.com/standby/gam-mcp/commit/37ecfc313c5673b685cc59a581ab3d62482d98f9))
+* record a report run as pending as soon as GAM accepts it ([12b303e](https://github.com/standby/gam-mcp/commit/12b303e538a9a60508583fca11469eaf16375fdd))
+* report a key or ad unit name that matches more than one entity ([fe47a3a](https://github.com/standby/gam-mcp/commit/fe47a3aa82813f77c944c238a755c975cbb1ee05))
+* **report-exec:** carry a caveat reminder onto later report pages ([930db32](https://github.com/standby/gam-mcp/commit/930db3241b136d6f03ace54eaa5b1918879669a2))
+* **report-exec:** warn when executeReportRows reads fewer rows than GAM reported ([aaa3ffa](https://github.com/standby/gam-mcp/commit/aaa3ffaa20d365b9287560faf969c0b5e41062cb))
+* retry a report POST only when GAM did not act on it ([fae1404](https://github.com/standby/gam-mcp/commit/fae14041c66b50c8a65fcfc14edc01748f081746))
+* **saved-queries:** surface canonicalizeQuery's warnings from save_query ([7e1c9a0](https://github.com/standby/gam-mcp/commit/7e1c9a0a97c9c563288d43d4eac9be76dfa7aff2))
+* say what went wrong at startup and when a report or result is gone ([ab9efe5](https://github.com/standby/gam-mcp/commit/ab9efe529579e0a0cbe3bf0534f3cfe079525a59))
+* **schema:** resolve dimension aliases in filter fields too ([c19babb](https://github.com/standby/gam-mcp/commit/c19babb2b28413f5ed8c60abdcc5bcabb09501bc))
+* **server:** a call whose result cannot be serialised is logged failed once ([e3f68c1](https://github.com/standby/gam-mcp/commit/e3f68c19eb911af62ae51254282a60a700c6c03b))
+* **smoke:** gate find_unused_ad_units behind its own opt-in ([e3d8032](https://github.com/standby/gam-mcp/commit/e3d8032f886d4590bd63e97a2d58ab667d041202))
+* sort a filter's values only when they form a set ([42974f4](https://github.com/standby/gam-mcp/commit/42974f497ed81a4696a31d81195fcd0eed23b899))
+* **tools:** a failed health check is an error, and summaries name their filters ([e9e255a](https://github.com/standby/gam-mcp/commit/e9e255aef1d847ce057ca93da2f2afe3cff354b8))
+* **tools:** count every row a null input actually nulled, and cover it ([115f3df](https://github.com/standby/gam-mcp/commit/115f3dfdb54489f2064ad2bc00ddbcff2c212ed1))
+* **tools:** kv_report's summary stops doubling its filter clause, health_check classifies real HTTP status ([a161d6f](https://github.com/standby/gam-mcp/commit/a161d6f30b8c7839ceaf11044f29d72b98d237eb))
+* **tools:** trust neither wire form for LINE_ITEM_UNLIMITED_END, and cover the gaps review found ([ea2e218](https://github.com/standby/gam-mcp/commit/ea2e2185624a83f2f9946efcc19abc074c196a50))
+* **tools:** warning and summary text stop implying every null-input row is still visible ([9fab06f](https://github.com/standby/gam-mcp/commit/9fab06fd9710c47b09fe3e33715eb426550613f5))
+* type GAM errors and keep the operation when a poll fails ([6ad7fee](https://github.com/standby/gam-mcp/commit/6ad7fee696dfbafd7e6bde23b52c75a96623ecf0))
+* **values:** index dimensions and metrics separately; normalise a numeric intValue ([5160b66](https://github.com/standby/gam-mcp/commit/5160b66cfc9d6b3c24bc17cd10a1054e9a670a58))
+* **zones:** say which part of a report's time zone this server cannot use ([4236135](https://github.com/standby/gam-mcp/commit/423613525133930148e35e8c978754288bd73b53))
 
 
 ### Changed
 
-* build each report definition once and share the first-page step ([13db9fc](https://github.com/standby/gam_mcp/commit/13db9fcf098a15103550c790c0e2e90d81cf4617))
-* remove the CSV and file-path result path ([7358482](https://github.com/standby/gam_mcp/commit/7358482609e6a0e659106c669ac52b1659862392))
-* run_report, kv_report and pacing_status use the report path ([8201dc1](https://github.com/standby/gam_mcp/commit/8201dc126d02e722ff932d1805da20789638da06))
-* tools that compute from rows read typed pages and name their inputs ([ebffa22](https://github.com/standby/gam_mcp/commit/ebffa22f3762f6184a28e7920cccd29d2dabe54b))
-* **tools:** name the stdio-only set once and test the property behind it ([b640555](https://github.com/standby/gam_mcp/commit/b6405555d2e12a7945a265b27b594ca0a5d03573))
+* build each report definition once and share the first-page step ([f58ed78](https://github.com/standby/gam-mcp/commit/f58ed78350f10258ac6f1186eb6b0f173e2d0e73))
+* remove the CSV and file-path result path ([0465f37](https://github.com/standby/gam-mcp/commit/0465f3719dc9fe7c98317afc214a47264f923b1a))
+* run_report, kv_report and pacing_status use the report path ([89b9231](https://github.com/standby/gam-mcp/commit/89b923183baf23622412473f7f31a7b06c1fee52))
+* tools that compute from rows read typed pages and name their inputs ([dfbe42f](https://github.com/standby/gam-mcp/commit/dfbe42f2943ecbcf41980d6ed950220f9a253fa9))
+* **tools:** name the stdio-only set once and test the property behind it ([68a1354](https://github.com/standby/gam-mcp/commit/68a1354febd22fea3583a333f268bc4762f46ab3))
 
-## [0.5.2](https://github.com/standby/gam_mcp/compare/v0.5.1...v0.5.2) (2026-09-12)
+## [0.5.2](https://github.com/standby/gam-mcp/compare/v0.5.1...v0.5.2) (2026-09-12)
 
 
 ### Fixed
 
-* build a new MCP server and transport per HTTP request ([d8a4755](https://github.com/standby/gam_mcp/commit/d8a4755499cc1dcfc3a1224d559f3e42e9d76627))
+* build a new MCP server and transport per HTTP request ([9e2cd95](https://github.com/standby/gam-mcp/commit/9e2cd955194d86623f0e44fa9ce0821323f10188))
 
-## [0.5.1](https://github.com/standby/gam_mcp/compare/v0.5.0...v0.5.1) (2026-08-15)
+## [0.5.1](https://github.com/standby/gam-mcp/compare/v0.5.0...v0.5.1) (2026-08-15)
 
 
 ### Added
 
-* add describe_line_item tool ([9767d1c](https://github.com/standby/gam_mcp/commit/9767d1cf4910915f2c8804c1404ee383749d8329))
+* add describe_line_item tool ([6726a99](https://github.com/standby/gam-mcp/commit/6726a9917eaceb40124e861caaf0cdbe888c382b))
 
 
 ### Fixed
 
-* bound path resolution and stop swallowing fetch failures ([f9fb906](https://github.com/standby/gam_mcp/commit/f9fb906))
-* surface custom-targeting literal fields describe_line_item does not map ([d54ae11](https://github.com/standby/gam_mcp/commit/d54ae11359d0ec8f48236253aa5d572818ecd6b1))
-* use per-id direct GETs for all entity lookups ([59a1e0a](https://github.com/standby/gam_mcp/commit/59a1e0ae8af734dcd799349f29fac5e22bcc6cf7))
+* bound path resolution and stop swallowing fetch failures ([630c458](https://github.com/standby/gam-mcp/commit/630c458dde5fc62d425aabe55aa94cb3e27b17ce))
+* surface custom-targeting literal fields describe_line_item does not map ([3f5ee4e](https://github.com/standby/gam-mcp/commit/3f5ee4e156883958fa97e281f9abdb01dd263d82))
+* use per-id direct GETs for all entity lookups ([76d2871](https://github.com/standby/gam-mcp/commit/76d28717de63585cf51834014529ced60c1815fa))
 
 ## [Unreleased]
 
@@ -500,22 +508,22 @@ Initial public release on npm.
 - CI and `engines` bumped to Node 24; `checkout` and `setup-node` actions
   updated to v5.
 
-[Unreleased]: https://github.com/standby/gam_mcp/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/standby/gam_mcp/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/standby/gam_mcp/compare/v0.3.1...v0.4.0
-[0.2.2]: https://github.com/standby/gam_mcp/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/standby/gam_mcp/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/standby/gam_mcp/compare/v0.1.12...v0.2.0
-[0.1.12]: https://github.com/standby/gam_mcp/compare/v0.1.11...v0.1.12
-[0.1.11]: https://github.com/standby/gam_mcp/compare/v0.1.10...v0.1.11
-[0.1.10]: https://github.com/standby/gam_mcp/compare/v0.1.9...v0.1.10
-[0.1.9]: https://github.com/standby/gam_mcp/compare/v0.1.8...v0.1.9
-[0.1.8]: https://github.com/standby/gam_mcp/compare/v0.1.7...v0.1.8
-[0.1.7]: https://github.com/standby/gam_mcp/compare/v0.1.6...v0.1.7
-[0.1.6]: https://github.com/standby/gam_mcp/compare/v0.1.5...v0.1.6
-[0.1.5]: https://github.com/standby/gam_mcp/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/standby/gam_mcp/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/standby/gam_mcp/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/standby/gam_mcp/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/standby/gam_mcp/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/standby/gam_mcp/releases/tag/v0.1.0
+[Unreleased]: https://github.com/standby/gam-mcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/standby/gam-mcp/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/standby/gam-mcp/compare/v0.3.1...v0.4.0
+[0.2.2]: https://github.com/standby/gam-mcp/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/standby/gam-mcp/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/standby/gam-mcp/compare/v0.1.12...v0.2.0
+[0.1.12]: https://github.com/standby/gam-mcp/compare/v0.1.11...v0.1.12
+[0.1.11]: https://github.com/standby/gam-mcp/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/standby/gam-mcp/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/standby/gam-mcp/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/standby/gam-mcp/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/standby/gam-mcp/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/standby/gam-mcp/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/standby/gam-mcp/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/standby/gam-mcp/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/standby/gam-mcp/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/standby/gam-mcp/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/standby/gam-mcp/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/standby/gam-mcp/releases/tag/v0.1.0
