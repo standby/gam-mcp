@@ -51,6 +51,7 @@ const inputSchema = z.object({
     ),
   ids: z
     .array(z.number().int().positive())
+    .max(500)
     .optional()
     .describe('Restrict to specific IDs of the `by` entity. Find them via lookup.'),
 }).strict();

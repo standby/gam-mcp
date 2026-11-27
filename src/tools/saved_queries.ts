@@ -9,8 +9,8 @@ import { dateRangeInput, filterInput } from '../tool-input.js';
 const savedBodySchema = z.object({
   dimensions: z.array(z.string()).min(1).max(10),
   metrics: z.array(z.string()).min(1).max(20),
-  filters: z.array(filterInput).optional(),
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional(),
+  filters: z.array(filterInput).max(20).optional(),
+  custom_dimension_key_ids: z.array(z.number().int().positive()).max(10).optional(),
 });
 
 // ------------------------------- save_query -------------------------------
@@ -24,9 +24,9 @@ const saveInput = z.object({
     .describe('1-10 dimension names, as run_report takes them.'),
   metrics: z.array(z.string()).min(1).max(20)
     .describe('1-20 metric names, as run_report takes them.'),
-  filters: z.array(filterInput).optional()
+  filters: z.array(filterInput).max(20).optional()
     .describe('Filters, as run_report takes them.'),
-  custom_dimension_key_ids: z.array(z.number().int().positive()).optional()
+  custom_dimension_key_ids: z.array(z.number().int().positive()).max(10).optional()
     .describe('Custom targeting key IDs for CUSTOM_DIMENSION_<N>_VALUE dimensions, as run_report takes them.'),
   replace: z.boolean().default(false)
     .describe('Overwrite a template that already has this name. Without it, saving under a taken name fails.'),

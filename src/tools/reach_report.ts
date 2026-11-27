@@ -35,7 +35,7 @@ const inputSchema = z.object({
       "Optional secondary slice. 'country' is also what makes GAM populate the " +
       'UNIQUE_REACH_FREQUENCY column; rows still cannot be summed back into a total.',
     ),
-  ids: z.array(z.number().int().positive()).optional()
+  ids: z.array(z.number().int().positive()).max(500).optional()
     .describe('Restrict to specific IDs of the `by` entity (e.g. the line item IDs of one campaign). Find them via lookup.'),
 }).strict();
 

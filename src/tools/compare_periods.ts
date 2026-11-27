@@ -33,7 +33,7 @@ const inputSchema = z.object({
       end: dateField('Last day of the comparison period, inclusive, as YYYY-MM-DD. It must be yesterday or earlier.'),
     }).strict().describe('Explicit comparison dates.'),
   ]).describe('The period to compare base_range with.'),
-  filters: z.array(filterInput).optional()
+  filters: z.array(filterInput).max(20).optional()
     .describe('Conditions every row must meet in both periods; all of them apply.'),
   top_n: z.number().int().min(1).max(500).default(50)
     .describe('Most rows to return, 1-500, largest first by the first metric.'),
