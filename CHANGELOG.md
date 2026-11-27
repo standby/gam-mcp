@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2](https://github.com/standby/gam-mcp/compare/v0.6.1...v0.6.2) (2026-11-27)
+
+
+### Fixed
+
+* bound every array a tool accepts ([47a8118](https://github.com/standby/gam-mcp/commit/47a81187a273202c38019ffec7cca669e41ef805))
+* **deps:** patch vulnerable dependencies and raise the MCP SDK floor ([43a1aaf](https://github.com/standby/gam-mcp/commit/43a1aaf5dcc364f8f177db82f8f2136e44785387))
+* patch vulnerable dependencies and bound array inputs ([2278ff4](https://github.com/standby/gam-mcp/commit/2278ff442b2deb54f0bab2982a706113a879d8ca))
+
 ## [0.6.1](https://github.com/standby/gam_mcp/compare/v0.6.0...v0.6.1) (2026-09-20)
 
 
