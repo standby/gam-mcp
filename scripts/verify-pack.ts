@@ -30,7 +30,13 @@ function fail(msg: string): never {
 }
 
 function run(cmd: string, args: string[], opts: { cwd?: string } = {}): { stdout: string; stderr: string; status: number } {
-  const r = spawnSync(cmd, args, { cwd: opts.cwd ?? repoRoot, encoding: 'utf8' });
+  // Under `npm publish --dry-run` npm exports npm_config_dry_run=true to this
+  // script, and every nested npm command would inherit it: `npm pack` would
+  // write no tarball and `npm install` would install nothing. This gate must
+  // really pack and install, so drop it.
+  const env = { ...process.env };
+  delete env.npm_config_dry_run;
+  const r = spawnSync(cmd, args, { cwd: opts.cwd ?? repoRoot, encoding: 'utf8', env });
   return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', status: r.status ?? -1 };
 }
 
