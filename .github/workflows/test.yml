@@ -2,8 +2,12 @@ name: test
 
 # Runs on every pull request, including ones from forks. pull_request (not
 # pull_request_target) gives fork PRs a read-only token and no secrets.
+# workflow_dispatch lets release-please.yml run it on the release PR, whose
+# GITHUB_TOKEN-made pushes trigger no pull_request event; `test` is a required
+# check on main, so that PR could not merge otherwise.
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

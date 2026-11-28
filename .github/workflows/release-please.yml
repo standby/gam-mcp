@@ -33,3 +33,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag_name }}
+
+      # The release PR is created and updated with GITHUB_TOKEN, which triggers
+      # no pull_request event, so test.yml would never report the required
+      # `test` check on it. Run it on the release branch directly.
+      - name: Test the release PR
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        run: gh workflow run test.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
